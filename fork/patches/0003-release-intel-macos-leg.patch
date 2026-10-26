@@ -1,0 +1,170 @@
+diff --git a/.github/workflows/release-desktop.yml b/.github/workflows/release-desktop.yml
+index 6d56d49f..d24e86c3 100644
+--- a/.github/workflows/release-desktop.yml
++++ b/.github/workflows/release-desktop.yml
+@@ -106,42 +106,27 @@ jobs:
+       fail-fast: false
+       matrix:
+         include:
+-          - name: macOS Apple Silicon
+-            runner: macos-14
++          # To conserve GitHub Actions minutes, this fork publishes new
++          # desktop builds only for Intel macOS. Keep the manifest as the
++          # standard macOS update feed; no cross-architecture merge is needed.
++          - name: macOS Intel
++            runner: macos-15-intel
+             platform: macos
+-            target: aarch64-apple-darwin
+-            builder_args: --mac --arm64 -c.mac.forceCodeSigning=true
++            target: x86_64-apple-darwin
++            builder_args: --mac --x64
+             update_manifest: latest-mac.yml
+-          # Windows NSIS installer. It is unsigned until WINDOWS_CSC_LINK
+-          # and WINDOWS_CSC_KEY_PASSWORD are configured in repository secrets.
+-          - name: Windows x64
+-            runner: windows-2022
+-            platform: windows
+-            target: x86_64-pc-windows-msvc
+-            builder_args: --win --x64
+-            update_manifest: latest.yml
+-          - name: Linux x64
+-            runner: ubuntu-22.04
+-            platform: linux
+-            target: x86_64-unknown-linux-gnu
+-            builder_args: --linux --x64
+-            update_manifest: latest-linux.yml
+-          # Built natively on an arm64 runner, so electron-builder installs
+-          # and rebuilds the native modules (better-sqlite3, node-pty) for the
+-          # host CPU and prepare-sidecar fetches the arm64 opencode. Same
+-          # Ubuntu release as x64, so both need the same glibc.
+-          - name: Linux arm64
+-            runner: ubuntu-22.04-arm
+-            platform: linux
+-            target: aarch64-unknown-linux-gnu
+-            builder_args: --linux --arm64
+-            update_manifest: latest-linux-arm64.yml
++            feed_asset: latest-mac.yml
+     runs-on: ${{ matrix.runner }}
+     env:
+       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+       PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: "false"
+       CSC_IDENTITY_AUTO_DISCOVERY: "false"
++      # Without an Apple Developer ID the macOS build is ad-hoc signed: the
++      # signing, notarization and signature-verification steps are skipped and
++      # electron-builder is not asked to force a code signature. Set
++      # MAC_CSC_LINK (and the notarization secrets) to turn them back on.
++      MAC_SIGNING: ${{ secrets.MAC_CSC_LINK != '' }}
+     steps:
+       - name: Check out release tag
+         uses: actions/checkout@v4
+@@ -197,10 +182,18 @@ jobs:
+         shell: bash
+         run: pnpm --filter @omnirush/desktop build:electron
+ 
++      # `secrets` is not available in an `if:` expression, so the decision is
++      # made once here and read by the steps below.
++      - name: Resolve macOS signing
++        id: signing
++        shell: bash
++        run: echo "enabled=${{ secrets.MAC_CSC_LINK != '' && 'true' || 'false' }}" >> "$GITHUB_OUTPUT"
++
+       # Developer ID signature, hardened runtime and notarization. Refuses to
+-      # package a mac build without the signing secrets.
++      # package a mac build without the signing secrets, so a fork without an
++      # Apple Developer ID skips the step entirely.
+       - name: Prepare macOS signing
+-        if: matrix.platform == 'macos'
++        if: matrix.platform == 'macos' && steps.signing.outputs.enabled == 'true'
+         env:
+           MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+           MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+@@ -229,10 +222,24 @@ jobs:
+           CSC_IDENTITY_AUTO_DISCOVERY: ${{ (matrix.platform == 'macos' && 'true') || (matrix.platform == 'windows' && secrets.WINDOWS_CSC_LINK != '' && 'true') || 'false' }}
+         shell: bash
+         run: |
+-          pnpm --dir apps/desktop exec electron-builder \
+-            --config electron-builder.yml \
+-            ${{ matrix.builder_args }} \
+-            --publish never
++          set -euo pipefail
++          # An empty CSC_LINK is worse than none: electron-builder resolves it
++          # against the project directory and fails with "<dir> not a file"
++          # (app-builder-lib/out/codeSign/codesign.js importCertificate). A fork
++          # without an Apple Developer ID has no secret, and Actions always
++          # defines the variable, so drop it and let the app be ad-hoc signed.
++          if [ "${MAC_SIGNING:-false}" != "true" ]; then
++            unset CSC_LINK CSC_KEY_PASSWORD CSC_INSTALLER_LINK CSC_INSTALLER_KEY_PASSWORD
++            export CSC_IDENTITY_AUTO_DISCOVERY=false
++          fi
++          args=(--config electron-builder.yml)
++          for arg in ${{ matrix.builder_args }}; do args+=("$arg"); done
++          # forceCodeSigning would fail the build without a Developer ID.
++          if [ "${MAC_SIGNING:-false}" = "true" ] && [ "${{ matrix.platform }}" = "macos" ]; then
++            args+=(-c.mac.forceCodeSigning=true)
++          fi
++          args+=(--publish never)
++          pnpm --dir apps/desktop exec electron-builder "${args[@]}"
+ 
+       - name: Report Windows Authenticode signature
+         if: matrix.platform == 'windows'
+@@ -249,7 +256,7 @@ jobs:
+       # the DMG is signed, notarized and stapled here, and its sha512 in
+       # latest-mac.yml rewritten to match.
+       - name: Notarize macOS disk image
+-        if: matrix.platform == 'macos'
++        if: matrix.platform == 'macos' && steps.signing.outputs.enabled == 'true'
+         shell: bash
+         run: |
+           node apps/desktop/scripts/macos-notarize.cjs \
+@@ -258,7 +265,7 @@ jobs:
+             --keychain "$MACOS_SIGNING_KEYCHAIN"
+ 
+       - name: Verify macOS signature and notarization
+-        if: matrix.platform == 'macos'
++        if: matrix.platform == 'macos' && steps.signing.outputs.enabled == 'true'
+         shell: bash
+         run: scripts/release/verify-macos-signing.sh apps/desktop/dist-electron
+ 
+@@ -318,6 +325,7 @@ jobs:
+         env:
+           GH_TOKEN: ${{ github.token }}
+           UPDATE_MANIFEST: ${{ matrix.update_manifest }}
++          FEED_ASSET: ${{ matrix.feed_asset }}
+         shell: bash
+         run: |
+           set -euo pipefail
+@@ -333,6 +341,13 @@ jobs:
+             echo "Update manifest $manifest is missing; refusing to publish installers the app cannot update to." >&2
+             exit 1
+           fi
++          # The Intel-only macOS leg writes directly to the standard update
++          # manifest; keep the copy path available if a future leg needs it.
++          feed_asset="${FEED_ASSET:-$UPDATE_MANIFEST}"
++          if [ "$feed_asset" != "$UPDATE_MANIFEST" ]; then
++            cp "$manifest" "apps/desktop/dist-electron/$feed_asset"
++            manifest="apps/desktop/dist-electron/$feed_asset"
++          fi
+           assets+=("$manifest")
+           printf 'Uploading %s\n' "${assets[@]}"
+           gh release upload "$RELEASE_TAG" "${assets[@]}" \
+@@ -394,8 +409,8 @@ jobs:
+         shell: bash
+         run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest="$MARK_LATEST"
+ 
+-      # What installed apps will read: every Latest manifest names this
+-      # version, and every file it lists is an asset of this release.
++      # What Intel Mac installs will read: the Latest macOS manifest names
++      # this version, and every file it lists is an asset of this release.
+       - name: Verify the update feed
+         if: steps.latest.outputs.mark_latest == 'true'
+         env:
+@@ -406,7 +421,7 @@ jobs:
+         run: |
+           set -euo pipefail
+           assets="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+-          for manifest in latest.yml latest-mac.yml latest-linux.yml latest-linux-arm64.yml; do
++          for manifest in latest-mac.yml; do
+             ok=""
+             for attempt in 1 2 3 4 5 6 7 8 9 10; do
+               body="$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/$manifest?attempt=$attempt" || true)"

@@ -1,0 +1,415 @@
+diff --git a/README.md b/README.md
+index 76ee16e9..e055e5ac 100644
+--- a/README.md
++++ b/README.md
+@@ -11,22 +11,20 @@
+ 
+   <p>
+     <a href="https://omnirush.ai"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fomnirush.ai%2Fomnirush%2Fpublic%2Fusers-badge&style=for-the-badge&logo=rocket&logoColor=white" alt="Users" /></a>
+-    <a href="https://github.com/omnirush-ai/omnirush-gui/releases"><img src="https://img.shields.io/github/downloads/omnirush-ai/omnirush-gui/total?style=for-the-badge&color=blue&label=downloads" alt="Downloads" /></a>
++    <a href="https://github.com/vernikr/omnirush-gui/releases"><img src="https://img.shields.io/github/downloads/vernikr/omnirush-gui/total?style=for-the-badge&color=blue&label=downloads" alt="Downloads" /></a>
+     <a href="https://github.com/omnirush-ai/omnirush-gui"><img src="https://visitor-badge.laobi.icu/badge?page_id=omnirush-ai.omnirush-gui&left_text=views&left_color=%23555&right_color=%23f97316" height="28" alt="Views" /></a>
+   </p>
+   <p>
+-    <a href="https://github.com/omnirush-ai/omnirush-gui/releases/latest"><img src="https://img.shields.io/github/v/release/omnirush-ai/omnirush-gui?label=latest&color=f97316" alt="Latest release" /></a>
+-    <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple" alt="macOS" />
+-    <img src="https://img.shields.io/badge/Linux-x64%20%7C%20arm64-FCC624?logo=linux&logoColor=black" alt="Linux" />
++    <a href="https://github.com/vernikr/omnirush-gui/releases/latest"><img src="https://img.shields.io/github/v/release/vernikr/omnirush-gui?label=latest&color=f97316" alt="Latest release" /></a>
++    <img src="https://img.shields.io/badge/macOS-Intel-black?logo=apple" alt="macOS Intel" />
+     <a href="https://github.com/omnirush-ai/omnirush-gui/stargazers"><img src="https://img.shields.io/github/stars/omnirush-ai/omnirush-gui?style=social" alt="Stars" /></a>
+   </p>
+ 
+   <p>
+-    <a href="https://omnirush.ai/download/mac"><img src="https://img.shields.io/badge/Download%20for%20macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS" /></a>
+-    <a href="https://omnirush.ai/download/linux-appimage"><img src="https://img.shields.io/badge/Download%20for%20Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Download for Linux" /></a>
++    <a href="https://github.com/vernikr/omnirush-gui/releases/latest"><img src="https://img.shields.io/badge/Download%20for%20macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS" /></a>
+   </p>
+ 
+-  <p><a href="https://omnirush.ai">Website</a> · <a href="https://github.com/omnirush-ai/omnirush-gui/releases">Releases</a> · <a href="https://www.npmjs.com/package/omnirush">CLI</a></p>
++  <p><a href="https://omnirush.ai">Website</a> · <a href="https://github.com/vernikr/omnirush-gui/releases">Releases</a> · <a href="https://www.npmjs.com/package/omnirush">CLI</a></p>
+ </div>
+ 
+ ---
+@@ -35,26 +33,26 @@ omnirush.ai is a desktop app for working with a coding agent on your own
+ projects. GPT 6 Astra is the default model; GPT 6.1 Sol and the other models in
+ your account's catalog are available from the model picker.
+ 
++## Why this fork
++
++The official release covers Apple Silicon Macs only — this fork keeps the same app installable on Intel Macs, so nobody has to replace working hardware to use it.
++
++Long agent runs stay cheap on those machines too: since 3.6.2 the Mac stays responsive and cool while the model is thinking, instead of being tied up for the whole run.
++
+ ## Download
+ 
+-Download the latest build from the
+-[releases page](https://github.com/omnirush-ai/omnirush-gui/releases/latest).
+-File names include the version, for example `omnirush-mac-arm64-3.0.1.dmg`.
++Starting with v3.7.2, builds are limited to Intel macOS to reduce GitHub
++Actions usage. Earlier releases retain their original platform assets; no new
++Apple Silicon, Windows, or Linux installers will be produced.
+ 
+-| Platform | File |
++| Platform | File in new releases |
+ | --- | --- |
+-| macOS, Apple Silicon | `omnirush-mac-arm64-<version>.dmg` (a `.zip` is also attached) |
+-| Linux x64, Debian/Ubuntu | `omnirush-linux-amd64-<version>.deb` |
+-| Linux x64, Arch | `omnirush-linux-x64-<version>.pacman` |
+-| Linux x64, Fedora/RHEL | `omnirush-linux-x86_64-<version>.rpm` |
+-| Linux x64, other | `omnirush-linux-x86_64-<version>.AppImage` or `omnirush-linux-x64-<version>.tar.gz` |
+-| Linux arm64, Debian/Ubuntu | `omnirush-linux-arm64-<version>.deb` |
+-| Linux arm64, Arch | `omnirush-linux-aarch64-<version>.pacman` |
+-| Linux arm64, Fedora/RHEL | `omnirush-linux-aarch64-<version>.rpm` |
+-| Linux arm64, other | `omnirush-linux-arm64-<version>.AppImage` or `omnirush-linux-arm64-<version>.tar.gz` |
+-
+-Each release includes `SHA256SUMS.txt` for verifying downloads. There is no
+-build for Intel Macs.
++| macOS, Intel | `omnirush-mac-x64-<version>.dmg` (a `.zip` is also attached) |
++
++Download the latest build from the
++[releases page](https://github.com/vernikr/omnirush-gui/releases/latest).
++Each release includes `SHA256SUMS.txt` for verifying downloads. The Intel Mac
++build is ad-hoc signed and not notarized.
+ 
+ ## First launch
+ 
+diff --git a/RELEASING.md b/RELEASING.md
+index 714bd1c8..33f7853b 100644
+--- a/RELEASING.md
++++ b/RELEASING.md
+@@ -44,3 +44,28 @@ A run is safe to repeat. An image or WSL asset that already exists with the same
+ ## Desktop release
+ 
+ Push a signed `v<version>` tag on `main`. `release-desktop.yml` checks the sandbox pins first, then builds, signs and publishes.
++
++### Intel-only desktop release builds
++
++To keep GitHub Actions usage low, the fork's release matrix has one leg:
++Intel macOS on `macos-15-intel` (`--mac --x64`). It builds natively for x86_64,
++so electron-builder rebuilds native modules for Intel and `prepare-sidecar`
++fetches `opencode-x86_64-apple-darwin`. The leg writes the standard
++`latest-mac.yml` update manifest directly; no architecture-feed merge job is
++needed. New releases do not build Apple Silicon, Windows, or Linux installers;
++older releases keep their original assets.
++
++`macos-15-intel` is GitHub's last x86_64 hosted image and is scheduled to be
++retired in **August 2027**. After that an Intel build needs a self-hosted Intel
++runner or a universal package.
++
++### Building without an Apple Developer ID
++
++`MAC_SIGNING` is derived from whether the `MAC_CSC_LINK` secret exists. Without
++it the release skips `macos-signing-env.sh`, the notarization step and
++`verify-macos-signing.sh`, and drops `-c.mac.forceCodeSigning=true`. The app is
++then ad-hoc signed: updates install through the DMG (`manual-dmg`), and macOS
++shows the unverified-developer warning on first open (see
++`docs/updates.md`). Add `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPLE_API_KEY`,
++`APPLE_API_KEY_ID` and `APPLE_API_ISSUER` to turn signing and notarization back
++on; no workflow change is needed.
+diff --git a/docs/intel-mac-plan.md b/docs/intel-mac-plan.md
+new file mode 100644
+index 00000000..f51d7931
+--- /dev/null
++++ b/docs/intel-mac-plan.md
+@@ -0,0 +1,251 @@
++# План: поддержка Intel (x64) macOS в форке `vernikr/omnirush-gui`
++
++Дата: 2026-10-17 · Апстрим: `omnirush-ai/omnirush-gui` (v3.5.2, 16 окт 2026)
++
++> **Статус (2026-10-17): реализовано и опубликовано.** v3.6.0 этого форка собирает
++> `omnirush-mac-x64-3.6.0.dmg` / `.zip` на раннере `macos-15-intel` и публикует их
++> рядом с Apple Silicon-артефактами; обе архитектуры делят один `latest-mac.yml`,
++> который собирает джоба `merge-mac-feed`. См. issue #2 и PR #1. Осталось только
++> прогнать чек-лист приёмки (§5) на самом Intel Mac.
++
++---
++
++## 0. Что сделано прямо сейчас
++
++- Форк создан: **https://github.com/vernikr/omnirush-gui** (`main`, только дефолтная ветка).
++- Проверены все 79 форков апстрима: ни один не собирает Intel-сборку (ни одной ветки/тега/релиза с `omnirush-mac-x64-*`).
++- ⚠️ **Безопасность:** PAT, который ты прислал в чате — классический `ghp_*` с полными правами (`repo`, `workflow`, `admin:org` и т.д.). Он уже «засвечен», поэтому **отзови его** (Settings → Developer settings → Personal access tokens → Delete) и при необходимости выпусти новый с минимальными скоупами (`repo`, `workflow`). Я использовал его только для создания форка и пуша плана.
++
++---
++
++## 1. Исходные факты (проверено по исходникам)
++
++| # | Факт | Где |
++|---|------|-----|
++| 1 | Релиз v3.5.2 содержит только `omnirush-mac-arm64-3.5.2.dmg/.zip`; в README прямо сказано «There is no build for Intel Macs» | релиз, `README.md` |
++| 2 | Матрица релиза: macOS Apple Silicon (`macos-14`, `--mac --arm64`), Windows x64, Linux x64, Linux arm64 | `.github/workflows/release-desktop.yml:98-133` |
++| 3 | **Движок под Intel уже собирается**: `x86_64-apple-darwin → omnirush-engine-darwin-x64-1.18.32.tar.gz` | `apps/desktop/scripts/engine-release.json` |
++| 4 | `prepare-sidecar.mjs` читает `TARGET` → на Intel-раннере скачает x64-движок; `prepare-box-helpers.mjs` соберёт `box/darwin-amd64/boxsh` | `apps/desktop/scripts/prepare-sidecar.mjs:60-73`, `prepare-box-helpers.mjs:33-44` |
++| 5 | `electron-builder.base.yml` уже кладёт в mac-extraResources `opencode-x86_64-apple-darwin` и `versions.json-x86_64-apple-darwin`; `mac.target` = `dmg` + `zip` без фиксации архитектуры; `artifactName: omnirush-${os}-${arch}-${version}.${ext}` | `apps/desktop/electron-builder.base.yml` |
++| 6 | Приложение **умеет** выбирать архитектуру: `selectDownloadFile()` ищет `-x64-`/`-arm64-` в списке файлов манифеста; `installerAssetArch()`/`selectReleaseAsset(..., arch)` — то же самое; `archLabel("x64") = "Intel"` | `apps/desktop/electron/main.mjs:370-395`, `apps/desktop/electron/updater.mjs:419-476` |
++| 7 | `publish-electron-assets.mjs` **уже требует**, чтобы `latest-mac.yml` содержал и `mac-arm64`, и `mac-x64` артефакты, и умеет сливать одноимённые манифесты (`mergeManifests`) | `scripts/release/publish-electron-assets.mjs:160-200` |
++| 8 | `electron-updater@6.3.9` `MacUpdater` сам фильтрует файлы по архитектуре: на arm64-Mac оставляет файлы с `arm64` в URL, иначе — без `arm64`, затем `findFile(files, "zip")` | `node_modules`-эквивалент: `MacUpdater.js:70-77` (проверено в исходниках пакета) |
++| 9 | Имя файла фида = `${channel}${prefix}.yml`; префикс для macOS — `-mac`, **без** arch-суффикса (в отличие от Linux, где `-linux`/`-linux-arm64`) | `electron-updater` → `providers/Provider.js:20-36` |
++| 10 | Electron **43.2.0** → минимальная macOS **12.0**; Electron 44+ требует macOS 13 | breaking changes Electron 44 |
++
++**Главный вывод:** код и упаковка почти готовы к Intel. Не хватает только ноги в CI и слияния манифеста обновлений. Факты 6–9 означают, что **менять код приложения не нужно** — достаточно одного общего `latest-mac.yml` с артефактами обеих архитектур (это и есть целевая схема апстрима, см. факт 7).
++
++---
++
++## 2. Архитектурное решение
++
++Схема: **один общий `latest-mac.yml` на обе архитектуры** (аналог того, как на Linux — два фида, потому что electron-updater сам добавляет arch-суффикс; на macOS он этого не делает).
++
++```
++build (macOS Apple Silicon, macos-15) ──> omnirush-mac-arm64-<v>.{dmg,zip} + latest-mac-arm64.yml
++build (macOS Intel,        macos-15-intel) ─> omnirush-mac-x64-<v>.{dmg,zip}   + latest-mac-x64.yml
++                                   │
++                          merge-mac-feed (ubuntu-latest)
++                                   ↓
++                      latest-mac.yml (version + 4 файла: zip/dmg × arm64/x64)
++                                   ↓
++                              publish (проверка фида)
++```
++
++Почему так:
++- `MacUpdater` (факт 8) по URL сам выберет нужный zip → in-place обновление (Squirrel.Mac) работает на обеих архитектурах.
++- Свой путь обновления апстрима (`self-install.mjs` + `selectReleaseAsset(..., arch)`) тоже выбирает по `-x64-` → для неподписанных сборок работает.
++- Отдельный фид `latest-mac-x64.yml` был бы возможен, но electron-updater соберёт имя как `${channel}-mac.yml`, т.е. придётся переопределять URL фида в коде — лишний diff и конфликты при синхронизации с апстримом.
++
++**Альтернатива (отложить):** universal-сборка `--mac --universal` на arm64-машине. Теоретически даёт один артефакт, но требует кросс-компиляции нативных модулей (`better-sqlite3`, `node-pty`) и целевого sidecar'а под обе архитектуры — `prepare-sidecar.mjs` сейчас выбирает движок по `TARGET`/`process.arch`, т.е. пришлось бы его дорабатывать. Рискованнее, чем два раннера.
++
++---
++
++## 3. Шаги реализации
++
++Каждый шаг — отдельный коммит (так проще ребейзить на апстрим).
++
++### Шаг 1. Нога Intel в матрице релиза
++
++`.github/workflows/release-desktop.yml`, секция `strategy.matrix.include`:
++
++```yaml
++          - name: macOS Apple Silicon
++            runner: macos-15            # см. шаг 8: macos-14 retiring 2026-11-02
++            platform: macos
++            target: aarch64-apple-darwin
++            builder_args: --mac --arm64
++            update_manifest: latest-mac.yml
++            feed_asset: latest-mac-arm64.yml
++          - name: macOS Intel
++            runner: macos-15-intel      # последний x86_64-образ Actions, до авг. 2027
++            platform: macos
++            target: x86_64-apple-darwin
++            builder_args: --mac --x64
++            update_manifest: latest-mac.yml
++            feed_asset: latest-mac-x64.yml
++```
++
++Остальным ногам добавить `feed_asset: ${{ matrix.update_manifest }}` (или не задавать — см. шаг 3, там есть фолбэк).
++`timeout-minutes` для macOS уже 300 (нотаризация) — трогать не надо.
++`-c.mac.forceCodeSigning=true` убрать, пока нет Developer ID (см. шаг 2).
++
++### Шаг 2. Условная подпись macOS (иначе сборка упадёт без секретов)
++
++Сейчас `scripts/release/macos-signing-env.sh` **жёстко падает**, если `MAC_CSC_LINK` не задан. Нужно сделать шаги `Prepare macOS signing`, `Notarize macOS disk image`, `Verify macOS signature and notarization` условными:
++
++```yaml
++    env:
++      MAC_SIGNING: ${{ secrets.MAC_CSC_LINK != '' }}
++...
++      - name: Prepare macOS signing
++        if: matrix.platform == 'macos' && env.MAC_SIGNING == 'true'
++...
++      - name: Notarize macOS disk image
++        if: matrix.platform == 'macos' && env.MAC_SIGNING == 'true'
++...
++      - name: Verify macOS signature and notarization
++        if: matrix.platform == 'macos' && env.MAC_SIGNING == 'true'
++```
++
++Плюс проверить, что `apps/desktop/scripts/electron-after-sign.cjs` корректно работает в ad-hoc режиме (без сертификата) — первый же прогон покажет.
++
++### Шаг 3. Уникальное имя манифеста при загрузке
++
++В шаге `Verify and upload installers and update manifest` (сейчас обе mac-ноги залили бы `latest-mac.yml` и перетёрли друг друга через `--clobber`):
++
++```bash
++          manifest="apps/desktop/dist-electron/$UPDATE_MANIFEST"      # latest-mac.yml — для проверок
++          node apps/desktop/scripts/verify-update-manifest.mjs --manifest "$manifest" --version "$RELEASE_VERSION"
++          feed_asset="${FEED_ASSET:-$UPDATE_MANIFEST}"                # latest-mac-arm64.yml / latest-mac-x64.yml
++          if [ "$feed_asset" != "$UPDATE_MANIFEST" ]; then
++            cp "$manifest" "apps/desktop/dist-electron/$feed_asset"
++            manifest="apps/desktop/dist-electron/$feed_asset"
++          fi
++          assets+=("$manifest")
++```
++и в `env:` шага добавить `FEED_ASSET: ${{ matrix.feed_asset }}`.
++Проверка `verify-update-manifest.mjs` остаётся на «родном» `latest-mac.yml`: `requiredInstallerExtensions()` требует `.zip` + `.dmg` — для x64-ноги это выполняется.
++
++### Шаг 4. Новый скрипт слияния манифестов
++
++`scripts/release/merge-mac-update-manifests.mjs` + `merge-mac-update-manifests.test.mjs` (в репо у каждого release-скрипта есть тест-двойник — держим стиль):
++
++```
++node scripts/release/merge-mac-update-manifests.mjs \
++  --release v3.5.2 --repo $GITHUB_REPOSITORY \
++  --inputs latest-mac-arm64.yml,latest-mac-x64.yml \
++  --output latest-mac.yml [--keep-inputs]
++```
++
++Логика:
++1. `gh release download` обоих входных манифестов.
++2. Проверки: `version` совпадает у обоих; в сумме файлов есть `mac-arm64` **и** `mac-x64`; у каждого файла есть `url`, `sha512`, `size`; нет дублей `url` и «чужих» дистрибутивов (префикс `omnirush-`).
++3. Итог — как у апстрима (`mergeManifests`): `{ version, files, releaseDate }`, при этом `files` отсортированы стабильно (arm64 раньше x64, внутри — zip перед dmg). Поля `path`/`sha512` намеренно **не** пишем: `electron-updater` 6.3.9 использует `files` (`Provider.resolveFiles → getFileList`), а свой парсер (`main.mjs`) тоже читает `files`. Если оставить `path` от arm64 — старые клиенты на Intel рискуют скачать arm64.
++4. `gh release upload … --clobber` итогового `latest-mac.yml`; по умолчанию удалить входные `latest-mac-*.yml` (`gh release delete-asset`).
++
++### Шаг 5. Job `merge-mac-feed` и зависимость publish
++
++```yaml
++  merge-mac-feed:
++    name: Merge macOS update feed
++    needs: build
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++        with: { ref: ${{ needs.prepare.outputs.tag }}, fetch-depth: 1, sparse-checkout: scripts/release }
++      - name: Merge latest-mac.yml
++        env: { GH_TOKEN: ${{ github.token }}, RELEASE_TAG: ${{ needs.prepare.outputs.tag }} }
++        run: |
++          node scripts/release/merge-mac-update-manifests.mjs \
++            --release "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
++            --inputs latest-mac-arm64.yml,latest-mac-x64.yml --output latest-mac.yml
++
++  publish:
++    needs: [prepare, build, merge-mac-feed]
++```
++
++Цикл проверки фида в `publish` (`for manifest in latest.yml latest-mac.yml latest-linux.yml latest-linux-arm64.yml`) **менять не нужно**: теперь `latest-mac.yml` обязан содержать обе архитектуры, и проверка «каждый файл из манифеста — ассет этого релиза» автоматически покроет x64.
++`SHA256SUMS.txt` соберётся сам: publish качает `omnirush-*`, куда попадают и `omnirush-mac-x64-*`.
++
++### Шаг 6. Координаты фида обновлений → твой репозиторий
++
++Иначе установленное приложение продолжит искать обновления в релизах апстрима (там x64 нет → Intel-сборка никогда не обновится).
++
++Заменить `omnirush-ai/omnirush-gui` → `vernikr/omnirush-gui`:
++- `apps/desktop/electron/main.mjs:184-186` (`RELEASE_DOWNLOAD_BASE_URL`, `RELEASE_PAGE_URL`, `DOCS_PAGE_URL`)
++- `apps/desktop/electron/updater.mjs:69, 242, 433, 979` (`STABLE_UPDATER_FEED_URL`, targeted feed, recovery manifest)
++- `apps/desktop/electron/recovery.mjs:106, 127, 130` (префикс URL релиза и его проверка)
++- `apps/desktop/electron-builder.yml` → `publish.owner/repo`
++
++**Не трогать:** `apps/desktop/scripts/engine-release.json` — тарболлы движка лежат в pre-release апстрима и запинены по sha256; если переключить, `prepare-sidecar` их не найдёт.
++Тесты `updater.test.mjs`/`recovery` держат захардкоженные URL — их тоже обновить.
++
++### Шаг 7. Документация
++
++- `README.md`: добавить строку `| macOS, Intel | omnirush-mac-x64-<version>.dmg (+ .zip) |` и убрать фразу «There is no build for Intel Macs».
++- `docs/updates.md`: в таблицах фидов/ассетов добавить macOS Intel и абзац про то, что `latest-mac.yml` — общий для двух архитектур и собирается job'ой слияния.
++- `RELEASING.md`: описать ногу macOS Intel, `merge-mac-feed` и что Intel-сборка пока неподписанная.
++
++### Шаг 8. Опционально / вторая очередь
++
++1. **Перенести arm64-ногу с `macos-14`** → `macos-15` (или `macos-26`): образ `macos-14` retiring **2026-11-02**, brownouts уже идут. Отдельным коммитом и с проверкой, что `LSMinimumSystemVersion` остался `12.0`.
++2. `scripts/release/check-macos-installer.sh:98-99` — захардкожены репозиторий и `omnirush-mac-arm64-$latest.zip`; параметризовать `--repo/--arch`.
++3. `.github/workflows/build-electron-desktop.yml` — добавить smoke-пакетирование x64 на `macos-15-intel`; строка 338 проверяет `sidecars/opencode-aarch64-apple-darwin` → сделать путь зависимым от архитектуры.
++
++---
++
++## 4. Быстрый путь: собрать локально прямо сейчас (до CI)
++
++На Intel Mac (Node 24, pnpm 11.4.0, bun 1.3.10, Go — как в workflow):
++
++```bash
++git clone https://github.com/vernikr/omnirush-gui && cd omnirush-gui
++pnpm install --frozen-lockfile
++cd apps/desktop
++TARGET=x86_64-apple-darwin pnpm run build:electron
++CSC_IDENTITY_AUTO_DISCOVERY=false pnpm exec electron-builder \
++  --config electron-builder.yml --mac --x64 --publish never \
++  -c.extraMetadata.version=3.5.2
++# → apps/desktop/dist-electron/omnirush-mac-x64-3.5.2.dmg (и .zip)
++```
++
++Первый запуск (сборка ad-hoc, без нотаризации):
++```bash
++xattr -dr com.apple.quarantine /Applications/omnirush.app
++```
++
++---
++
++## 5. Чек-лист приёмки Intel-сборки
++
++- [ ] `file /Applications/omnirush.app/Contents/Resources/sidecars/opencode-x86_64-apple-darwin` → `Mach-O 64-bit executable x86_64`
++- [ ] `ls /Applications/omnirush.app/Contents/Resources/sidecars/box/` → `darwin-amd64/boxsh`
++- [ ] `uname -m` → `x86_64`; в приложении (диагностика/About) архитектура = `x64 / Intel`, а не Rosetta
++- [ ] Агент запускается: модель отвечает, терминал/файлы/инструменты работают
++- [ ] Linux-sandbox поднимается (образ `linux/amd64`)
++- [ ] Обновление vN → vN+1 скачивает `omnirush-mac-x64-*.zip`, а не arm64
++- [ ] `latest-mac.yml` релиза: `version` = версии релиза, 4 файла (`zip`+`dmg` × `arm64`+`x64`)
++- [ ] `SHA256SUMS.txt` содержит x64-ассеты
++
++---
++
++## 6. Риски и развилки
++
++| Риск | Что делать |
++|------|-----------|
++| `macos-15-intel` — последний x86_64-образ Actions, EOL **август 2027** (есть и `macos-26-intel`) | После 2027: self-hosted Intel-раннер или universal-сборка. Заложить в комментарий к workflow |
++| Apple Silicon-нога на `macos-14` retiring **2026-11-02** | Перенести на `macos-15`/`macos-26` (шаг 8.1) |
++| Electron 43 → macOS 12.0 minimum. Electron 44+ отсекает Monterey | Если твой Mac на macOS 12 — держать Electron `43.x`, не принимать мажорные апдейты зависимостей |
++| Нет Apple Developer ID → сборка ad-hoc | Gatekeeper предупреждение + путь обновления через `self-install.mjs` (DMG), как описано в `docs/updates.md`. Опционально: подписать своим сертификатом |
++| В форке CI (`ci-tests.yml`) uses раннеры `blacksmith-16vcpu-ubuntu-2204` — их у тебя нет | На релиз не влияет (`release-desktop.yml` на стандартных раннерах). Для PR-проверок отключить лишние workflow или перевести на `ubuntu-22.04` |
++| Апстрим коммитит ~ежедневно (572 коммита за месяц) | Держать изменения минимальными и в новых/изолированных файлах; регулярно делать sync fork + rebase ветки `intel-mac` |
++
++---
++
++## 7. Что делать дальше — твой выбор
++
++1. **Реализовать шаги 1–7** в ветке `intel-mac` и открыть PR в твоём форке (готов сделать сразу).
++2. **Сначала показать диффы** без пуша — ты смотришь и утверждаешь.
++3. Уточнить про **подпись**: собираем неподписанные сборки (быстро, но Gatekeeper + self-install) или у тебя есть Apple Developer ID для подписи/нотаризации?
++4. Уточнить **какую macOS** стоит на твоём Intel Mac (определяет, можно ли переходить на Electron 44+).
+diff --git a/docs/updates.md b/docs/updates.md
+index 4e7ddba2..ee8a529e 100644
+--- a/docs/updates.md
++++ b/docs/updates.md
+@@ -18,20 +18,30 @@ Failures are shown verbatim on the page, minus the `Error invoking remote method
+ 
+ | Channel | Feed directory | Manifest read by the app |
+ | --- | --- | --- |
+-| Stable (the only public channel) | `https://github.com/omnirush-ai/omnirush-gui/releases/latest/download` | `latest-mac.yml`, `latest.yml` (Windows), `latest-linux.yml` |
+-| Targeted recovery/rollback | `https://github.com/omnirush-ai/omnirush-gui/releases/download/v<version>` | same names |
++| Stable (the only public channel) | `https://github.com/vernikr/omnirush-gui/releases/latest/download` | `latest-mac.yml` (Intel macOS builds in this fork) |
++| Targeted recovery/rollback | `https://github.com/vernikr/omnirush-gui/releases/download/v<version>` | same names |
++
++The fork's release workflow builds Intel macOS only. electron-updater uses the
++standard `latest-mac.yml` channel file, which the single Intel build produces
++directly; there is no architecture-feed merge job. New fork releases do not
++publish Apple Silicon, Windows, or Linux installers or update manifests.
++Earlier releases keep their historical assets, but those platforms do not
++receive new builds from this fork.
+ 
+ There is no public Alpha feed. A persisted or requested "alpha" channel is normalized back to "stable" and the channel selector stays hidden. A custom distribution can enable an Alpha channel by shipping an https feed directory in its electron-builder `extraMetadata` as `omnirushAlphaUpdateFeedUrl` (development runs may set `OMNIRUSH_DESKTOP_ALPHA_UPDATE_FEED_URL`); the Cloud and Enterprise flavors keep their parallel `cloud*.yml` / `enterprise*.yml` manifests on the stable feed.
+ 
+ ## What a release must contain
+ 
+-For each platform the release needs the installers **and** the electron-builder update manifest next to them, all uploaded to the same GitHub release:
++For each supported release platform the release needs the installers **and**
++the electron-builder update manifest next to them, uploaded to the same GitHub
++release. This fork currently supports new Intel macOS builds only:
+ 
+ | Platform | Installers | Manifest |
+ | --- | --- | --- |
+-| macOS Apple Silicon | `omnirush-mac-arm64-<version>.zip` (+`.blockmap`), `omnirush-mac-arm64-<version>.dmg` (+`.blockmap`) | `latest-mac.yml` |
+-| Windows x64 | `omnirush-win-x64-<version>.exe` (+`.blockmap`) | `latest.yml` |
+-| Linux x64 | `omnirush-linux-x86_64-<version>.AppImage`, `omnirush-linux-x64-<version>.tar.gz` | `latest-linux.yml` |
++| macOS Intel | `omnirush-mac-x64-<version>.zip` (+`.blockmap`), `omnirush-mac-x64-<version>.dmg` (+`.blockmap`) | `latest-mac.yml` |
++
++Older releases may contain Apple Silicon, Windows, and Linux assets; those are
++not produced by current release jobs.
+ 
+ The manifest is the file electron-updater reads; a release without it makes every installed app report a 404 when checking for updates (this is what happened to v1.0.2 through v1.0.4). electron-builder writes the manifest into `apps/desktop/dist-electron/` whenever a `publish` block is configured, even with `--publish never`; the release workflow verifies it with `apps/desktop/scripts/verify-update-manifest.mjs` (version, listed files, sizes, sha512 checksums, and the required installer types) and fails the job if it is missing or inconsistent, then uploads it together with the installers.
+ 
+@@ -48,7 +58,7 @@ Squirrel.Mac, which electron-updater uses to swap the app bundle on macOS, only
+ 
+ The app therefore checks its own signature once at startup (`codesign -dv --verbose=2` on the bundle). When the bundle is not Developer ID signed the Updates page reports install mode `manual-dmg`:
+ 
+-- "Download" fetches `omnirush-mac-arm64-<version>.dmg` from the same feed directory and verifies the `sha512` listed in `latest-mac.yml`.
++- "Download" fetches `omnirush-mac-<arch>-<version>.dmg` (`arm64` on Apple Silicon, `x64` on Intel) from the same feed directory and verifies the `sha512` listed in `latest-mac.yml`.
+ - "Open installer" opens the verified DMG, shows "Installer opened. Drag omnirush.ai to Applications, replace the old copy, then reopen it." and quits the app after a short delay.
+ 
+ Once releases are signed with a Developer ID (and notarized), the same code path detects the signature and uses the normal Squirrel in-place install and restart. Windows and Linux installs are in place regardless of signing.

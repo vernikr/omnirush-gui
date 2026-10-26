@@ -23,6 +23,12 @@ function applyShellDocumentMarkers() {
     root.classList.add("omnirush-electron");
     if (process.platform === "darwin") {
       root.classList.add("omnirush-platform-mac");
+      // This fork ships an Intel build next to upstream's Apple Silicon one, and
+      // some window-sized effects are priced for an Apple GPU. The stylesheet
+      // keys those decisions off the architecture of the running binary.
+      if (process.arch === "x64") {
+        root.classList.add("omnirush-platform-mac-intel");
+      }
     } else if (process.platform === "win32") {
       root.classList.add("omnirush-platform-windows");
     } else if (process.platform === "linux") {

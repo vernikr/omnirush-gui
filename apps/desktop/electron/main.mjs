@@ -214,9 +214,9 @@ if (BLANK_SLATE_LAUNCH.enabled || process.env.OMNIRUSH_ELECTRON_USE_MOCK_KEYCHAI
   // system keychain normally.
   app.commandLine.appendSwitch("use-mock-keychain");
 }
-const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/omnirush-ai/omnirush-gui/releases/latest/download";
-const RELEASE_PAGE_URL = "https://github.com/omnirush-ai/omnirush-gui/releases/latest";
-const DOCS_PAGE_URL = "https://github.com/omnirush-ai/omnirush-gui#readme";
+const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/vernikr/omnirush-gui/releases/latest/download";
+const RELEASE_PAGE_URL = "https://github.com/vernikr/omnirush-gui/releases/latest";
+const DOCS_PAGE_URL = "https://github.com/vernikr/omnirush-gui#readme";
 const applicationMenu = createApplicationMenu({
   appName: DISPLAY_APP_NAME,
   docsUrl: DOCS_PAGE_URL,
