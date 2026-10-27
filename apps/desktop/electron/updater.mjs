@@ -67,7 +67,7 @@ function resolveAppVersion(app) {
 // The public distribution reads `latest*.yml` from the latest GitHub release.
 // There is no public Alpha feed: the Alpha channel exists only when a
 // distribution ships its own feed directory (see updaterFeedOptions).
-const GITHUB_RELEASES_URL = "https://github.com/omnirush-ai/omnirush-gui/releases";
+const GITHUB_RELEASES_URL = "https://github.com/vernikr/omnirush-gui/releases";
 export const STABLE_UPDATER_FEED_URL = `${GITHUB_RELEASES_URL}/latest/download`;
 
 /**
@@ -241,7 +241,7 @@ export function targetedStableUpdaterFeed(currentVersion, targetVersion, allowOl
       ? "Recovery target version must differ from the installed version."
       : "Target update version must be newer than the installed version.");
   }
-  return `https://github.com/omnirush-ai/omnirush-gui/releases/download/v${normalizedTarget}`;
+  return `https://github.com/vernikr/omnirush-gui/releases/download/v${normalizedTarget}`;
 }
 
 function updaterChannelState(app, channel, targetVersion, feedOptions) {
@@ -439,7 +439,7 @@ function installerAssetArch(arch) {
 export function releaseAssetDirectory(feedUrl, version) {
   const base = typeof feedUrl === "string" ? feedUrl.replace(/\/+$/, "") : "";
   if (base === STABLE_UPDATER_FEED_URL && typeof version === "string" && /^\d+\.\d+\.\d+/.test(version)) {
-    return `https://github.com/omnirush-ai/omnirush-gui/releases/download/v${version}`;
+    return `https://github.com/vernikr/omnirush-gui/releases/download/v${version}`;
   }
   return base;
 }
@@ -986,7 +986,7 @@ export function registerUpdaterIpc({
   async function resolveRecoveryArtifact(version) {
     if (!electronNet?.fetch) return null;
     try {
-      const manifestUrl = `https://github.com/omnirush-ai/omnirush-gui/releases/download/v${version}/${recoveryManifestName(platform, arch, distribution)}`;
+      const manifestUrl = `https://github.com/vernikr/omnirush-gui/releases/download/v${version}/${recoveryManifestName(platform, arch, distribution)}`;
       const response = await electronNet.fetch(manifestUrl, { headers: { Accept: "text/yaml, text/plain, */*" } });
       if (!response.ok) return null;
       return selectRecoveryArtifact(parseRecoveryManifest(await response.text()), {

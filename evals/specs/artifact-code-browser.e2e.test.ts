@@ -8,6 +8,14 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
   await user.click("Select tab: overflow-tab-12.md");
   await user.see({ placeholder: "Search files" }, { timeoutMs: 30_000 });
 
+  await step("Cmd/Ctrl+F in the artifact panel opens document Find, not chat Find", async () => {
+    await user.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
+    await user.see({ placeholder: "Find in document" });
+    await user.notSee({ placeholder: "Find in conversation" });
+    await user.press("Escape");
+    await user.notSee({ placeholder: "Find in document" });
+  });
+
   await step("A TypeScript file opens beside the workspace tree", async () => {
     await user.type({ placeholder: "Search files" }, "omnirush-artifact-proof.ts");
     await user.press("Tab");

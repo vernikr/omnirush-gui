@@ -67,6 +67,31 @@ test(`attaching an image in ${entryPoint} retains the draft until the upload is 
   expect(attached.chipStatus).toBe("ready");
   await user.screenshot();
 
+  await step("Select All highlights prompt text without selecting the attachment name", async () => {
+    await user.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    const selected = await probe.eval(() => {
+      const chip = document.querySelector<HTMLElement>("[data-attachment-id]");
+      return {
+        text: window.getSelection()?.toString() ?? "",
+        userSelect: chip ? getComputedStyle(chip).userSelect : "missing attachment chip",
+      };
+    });
+    if (!isRecord(selected)) throw new Error(`Selection result was invalid: ${JSON.stringify(selected)}`);
+    expect(selected.text).toContain("Describe the attached image.");
+    expect(selected.text).not.toContain(attachmentName);
+    expect(selected.userSelect).toBe("none");
+  });
+
+  await step("the native Select All editing command excludes attachment names too", async () => {
+    const selected = await probe.eval(() => {
+      document.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
+      document.execCommand("selectAll");
+      return window.getSelection()?.toString() ?? "";
+    });
+    expect(selected).toContain("Describe the attached image.");
+    expect(selected).not.toContain(attachmentName);
+  });
+
   await step("paste a video alongside the image", async () => {
     expect(await seed.evalIn(world.app, () => {
       const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');

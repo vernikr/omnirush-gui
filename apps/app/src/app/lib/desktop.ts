@@ -196,6 +196,10 @@ declare global {
       fileSystem?: {
         getPathForFile?: (file: File) => string;
       };
+      zoom?: {
+        getFactor?: () => number;
+        setFactor?: (factor: number) => boolean;
+      };
       shell?: {
         openExternal?: (url: string) => Promise<{ ok: boolean; error?: string } | void>;
         relaunch?: () => Promise<void>;
@@ -724,8 +728,28 @@ export async function joinDesktopPath(...parts: string[]): Promise<string> {
   return invokeElectronHelper("__joinPath", ...parts);
 }
 
+export function getDesktopZoomFactor(): number | null {
+  const getFactor = typeof window !== "undefined" ? window.__OMNIRUSH_ELECTRON__?.zoom?.getFactor : undefined;
+  if (!getFactor) return null;
+  try {
+    const value = getFactor();
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function setDesktopZoomFactor(value: number): Promise<boolean> {
-  return invokeElectronHelper("__setZoomFactor", value);
+  const appliedInRenderer = Boolean(
+    typeof window !== "undefined" && window.__OMNIRUSH_ELECTRON__?.zoom?.setFactor?.(value),
+  );
+  try {
+    const appliedInMain = await invokeElectronHelper("__setZoomFactor", value);
+    return appliedInRenderer || appliedInMain;
+  } catch (error) {
+    if (appliedInRenderer) return true;
+    throw error;
+  }
 }
 
 export async function subscribeDesktopDeepLinks(

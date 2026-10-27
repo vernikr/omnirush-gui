@@ -879,7 +879,7 @@ function SessionRunStatus(props: SessionRunStatusProps) {
       data-testid="session-run-status"
       role={props.acceptanceUnknown ? "alert" : "status"}
       aria-live="polite"
-      className={`mx-3 mb-2 flex items-start gap-3 rounded-xl border px-3 py-2.5 text-xs ${tone}`}
+      className={`mx-auto mb-2 flex w-full max-w-[800px] items-start gap-3 rounded-xl border px-3 py-2.5 text-xs ${tone}`}
     >
       <Icon aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${iconClass}`} />
       <div className="min-w-0 flex-1">
@@ -3061,6 +3061,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
     const mod = isMac ? event.metaKey : event.ctrlKey;
     if (!mod || event.shiftKey || event.altKey || event.key?.toLowerCase() !== "f") return;
+    if (event.composedPath().some((target) => target instanceof Element && target.closest("[data-artifact-panel]"))) return;
 
     event.preventDefault();
     if (resolveFindOwnerSessionId() === props.sessionId) {

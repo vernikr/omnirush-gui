@@ -1,0 +1,30 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 82a42408..0add8d71 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -82,3 +82,9 @@ frontend updates, reset and teardown.
+ ## Reusable scenarios
+ 
+ Start at [scenarios/README.md](scenarios/README.md) for workflows, videos, and documentation screenshots. Keep each scenario together; reuse the existing world, testkit, behavior, and DocShot packages. Author ordinary TypeScript functions and React/Remotion components.
++
++## Upstream Compatibility
++
++Treat every fork-specific change as a downstream patch that must remain easy to merge or rebase onto `omnirush-ai/omnirush-gui`. Prefer existing extension points, configuration, adapters, and isolated modules over modifying upstream-owned code. Keep changes small, logically separate, and free of unrelated refactoring, bulk formatting, or dependency churn. Before modifying upstream code, inspect its current implementation and preserve upstream behavior unless a fork requirement explicitly overrides it. Add tests for fork-specific behavior. Resolve sync conflicts by preserving the intent of both sides, never by blindly preferring one.
++
++Fork difference registry: `FORK_DIFFS.md`. Keep updated.
+diff --git a/FORK_DIFFS.md b/FORK_DIFFS.md
+new file mode 100644
+index 00000000..a2a42fc4
+--- /dev/null
++++ b/FORK_DIFFS.md
+@@ -0,0 +1,10 @@
++# Fork differences
++
++Compared with `omnirush-ai/omnirush-gui`:
++
++- Intel-only macOS releases; app updates use this fork's GitHub feed.
++- Upstream sync is maintained as a small, testable downstream patch stack.
++- Reasoning/streaming render and transcript-progress performance optimizations; reduced Intel window blur.
++- Find in artifact previews; prompt Select All excludes attachment chips; editor scroll position is preserved.
++- Markdown code blocks follow dark/custom themes.
++- Saved desktop UI zoom (`Cmd+` / `Cmd-` / `Cmd+0`) is restored immediately on launch and preserved across route transitions.

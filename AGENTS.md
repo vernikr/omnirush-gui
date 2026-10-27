@@ -82,3 +82,9 @@ frontend updates, reset and teardown.
 ## Reusable scenarios
 
 Start at [scenarios/README.md](scenarios/README.md) for workflows, videos, and documentation screenshots. Keep each scenario together; reuse the existing world, testkit, behavior, and DocShot packages. Author ordinary TypeScript functions and React/Remotion components.
+
+## Upstream Compatibility
+
+Treat every fork-specific change as a downstream patch that must remain easy to merge or rebase onto `omnirush-ai/omnirush-gui`. Prefer existing extension points, configuration, adapters, and isolated modules over modifying upstream-owned code. Keep changes small, logically separate, and free of unrelated refactoring, bulk formatting, or dependency churn. Before modifying upstream code, inspect its current implementation and preserve upstream behavior unless a fork requirement explicitly overrides it. Add tests for fork-specific behavior. Resolve sync conflicts by preserving the intent of both sides, never by blindly preferring one.
+
+Fork difference registry: `FORK_DIFFS.md`. Keep updated.
