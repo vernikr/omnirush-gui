@@ -25,6 +25,7 @@ import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./run
 import { installAppRequestSecret } from "./app-request-secret.mjs";
 import { registerUpdaterIpc } from "./updater.mjs";
 import { initialWindowSize } from "./window-size.mjs";
+import { createWindowZoomController } from "./window-zoom.mjs";
 import {
   browserActApproval,
   browserPermissionMode,
@@ -215,14 +216,15 @@ if (BLANK_SLATE_LAUNCH.enabled || process.env.OMNIRUSH_ELECTRON_USE_MOCK_KEYCHAI
   // system keychain normally.
   app.commandLine.appendSwitch("use-mock-keychain");
 }
-const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/omnirush-ai/omnirush-gui/releases/latest/download";
-const RELEASE_PAGE_URL = "https://github.com/omnirush-ai/omnirush-gui/releases/latest";
-const DOCS_PAGE_URL = "https://github.com/omnirush-ai/omnirush-gui#readme";
+const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/vernikr/omnirush-gui/releases/latest/download";
+const RELEASE_PAGE_URL = "https://github.com/vernikr/omnirush-gui/releases/latest";
+const DOCS_PAGE_URL = "https://github.com/vernikr/omnirush-gui#readme";
 const applicationMenu = createApplicationMenu({
   appName: DISPLAY_APP_NAME,
   docsUrl: DOCS_PAGE_URL,
   getWindow: () => createMainWindow(),
 });
+const windowZoom = createWindowZoomController();
 
 let browserPanel = null;
 
@@ -2932,11 +2934,7 @@ const desktopCommandHandlers = {
   "__setZoomFactor": async (event, ...args) => {
       const factor = Number(args[0]);
       const window = activeWindowFromEvent(event);
-      if (!window || !Number.isFinite(factor) || factor <= 0) {
-        return false;
-      }
-      window.webContents.setZoomFactor(factor);
-      return true;
+      return windowZoom.setFactor(window, factor);
   },
   "__setNativeTheme": async (event, ...args) => {
       return applyNativeTheme(String(args[0]));
@@ -3153,6 +3151,7 @@ async function createMainWindow() {
     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
   }
   applicationMenu.applyVisibility(mainWindow);
+  windowZoom.attach(mainWindow);
   // Sponsored placements: the page's viewability timer stops while the window is blurred, minimized or hidden.
   watchWindowForPlacements(mainWindow);
 

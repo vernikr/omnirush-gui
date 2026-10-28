@@ -1199,6 +1199,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     // Oversized images are compressed at send time (see image-compression.ts)
     // so the chip appears instantly instead of blocking on canvas work here.
     props.onAttachFiles(inputFiles);
+    // The native picker returns focus to its launcher. Restore the prompt now
+    // and after React commits the attachment chip so Cmd/Ctrl+A reaches Lexical.
+    const focusPrompt = () => {
+      const editable = rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']");
+      editable?.focus({ preventScroll: true });
+      editorRef.current?.focus();
+    };
+    focusPrompt();
+    requestAnimationFrame(() => requestAnimationFrame(focusPrompt));
   };
 
   const panelRoundedClass =

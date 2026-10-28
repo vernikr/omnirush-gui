@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 const NATIVE_DEEP_LINK_EVENT = "omnirush:deep-link-native";
 const NATIVE_MENU_OPEN_SETTINGS_EVENT = "omnirush:native-menu:open-settings";
@@ -7,6 +7,54 @@ const NATIVE_MENU_CHECK_UPDATES_EVENT = "omnirush:native-menu:check-updates";
 const NATIVE_MENU_ZOOM_EVENT = "omnirush:native-menu:zoom";
 const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "omnirush:automation-runner:credential-rejected";
 const FINISH_GUARD_EVENT = "omnirush:finish-guard:finish";
+const DESKTOP_FONT_ZOOM_STORAGE_KEY = "omnirush.desktop-font-zoom.v1";
+const MIN_DESKTOP_FONT_ZOOM = 0.8;
+const MAX_DESKTOP_FONT_ZOOM = 1.6;
+const DESKTOP_FONT_ZOOM_STEP = 0.1;
+
+/**
+ * @param {number} value
+ */
+function normalizeDesktopZoomFactor(value) {
+  if (!Number.isFinite(value)) return 1;
+  const clamped = Math.min(MAX_DESKTOP_FONT_ZOOM, Math.max(MIN_DESKTOP_FONT_ZOOM, value));
+  const snapped = Math.round(clamped / DESKTOP_FONT_ZOOM_STEP) * DESKTOP_FONT_ZOOM_STEP;
+  return Number(snapped.toFixed(2));
+}
+
+/**
+ * @param {number} value
+ */
+function applyRendererZoomFactor(value) {
+  const factor = Number(value);
+  if (!Number.isFinite(factor) || factor <= 0) return false;
+  try {
+    webFrame.setZoomFactor(factor);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readInitialStoredZoomFactor() {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  if (window.location?.href === "about:blank") return null;
+  const raw = window.localStorage.getItem(DESKTOP_FONT_ZOOM_STORAGE_KEY);
+  if (raw == null || raw === "") return null;
+  const parsed = Number.parseFloat(raw);
+  if (!Number.isFinite(parsed)) return null;
+  return normalizeDesktopZoomFactor(parsed);
+}
+
+function applyInitialStoredZoomFactor() {
+  try {
+    const factor = readInitialStoredZoomFactor();
+    if (factor === null) return false;
+    return applyRendererZoomFactor(factor);
+  } catch {
+    return false;
+  }
+}
 
 function normalizePlatform(value) {
   if (value === "darwin" || value === "linux") return value;
@@ -23,6 +71,12 @@ function applyShellDocumentMarkers() {
     root.classList.add("omnirush-electron");
     if (process.platform === "darwin") {
       root.classList.add("omnirush-platform-mac");
+      // This fork ships an Intel build next to upstream's Apple Silicon one, and
+      // some window-sized effects are priced for an Apple GPU. The stylesheet
+      // keys those decisions off the architecture of the running binary.
+      if (process.arch === "x64") {
+        root.classList.add("omnirush-platform-mac-intel");
+      }
     } else if (process.platform === "win32") {
       root.classList.add("omnirush-platform-windows");
     } else if (process.platform === "linux") {
@@ -111,6 +165,21 @@ contextBridge.exposeInMainWorld("__OMNIRUSH_ELECTRON__", {
   fileSystem: {
     getPathForFile(file) {
       return webUtils.getPathForFile(file);
+    },
+  },
+  zoom: {
+    getFactor() {
+      try {
+        return webFrame.getZoomFactor();
+      } catch {
+        return 1;
+      }
+    },
+    /**
+     * @param {number} factor
+     */
+    setFactor(factor) {
+      return applyRendererZoomFactor(factor);
     },
   },
   shell: {
@@ -411,6 +480,11 @@ ipcRenderer.on(NATIVE_MENU_ZOOM_EVENT, (_event, action) => {
 
 if (!applyShellDocumentMarkers() && typeof document !== "undefined") {
   document.addEventListener("DOMContentLoaded", applyShellDocumentMarkers, { once: true });
+}
+
+applyInitialStoredZoomFactor();
+if (typeof document !== "undefined" && document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", applyInitialStoredZoomFactor, { once: true });
 }
 
 if (!installMenuOverlayDismissListeners() && typeof document !== "undefined") {
