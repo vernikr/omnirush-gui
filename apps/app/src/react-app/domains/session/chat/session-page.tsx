@@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
 import { BuildathonChip, useBuildathonMenuItem } from "../../buildathon/buildathon";
-import { ArrowLeft, Cloud, Code2, FileDiff, Layers, MessageSquare, LayoutGrid, Library, MessageSquareOff, PanelLeft, FileText, Gauge, Redo2, Undo2, Globe, ListChecks, Maximize2, MoreHorizontal, PanelRight, TextSearch, Trophy, X, Zap } from "lucide-react";
+import { ArrowLeft, Cloud, Code2, Download, FileDiff, Layers, MessageSquare, LayoutGrid, Library, MessageSquareOff, PanelLeft, FileText, Gauge, Redo2, Undo2, Globe, ListChecks, Maximize2, MoreHorizontal, PanelRight, TextSearch, Trophy, X, Zap } from "lucide-react";
 import { SessionCommandControls } from "../commands/session-command-controls";
 import { useSessionCommandBridge, useSessionCommandsStore } from "../commands/session-commands-store";
 
@@ -293,6 +293,7 @@ export type SessionPageProps = {
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
   onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
+  onExportSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
   archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
@@ -1734,6 +1735,15 @@ export function SessionPage(props: SessionPageProps) {
                       {t("session.changes")}
                     </DropdownMenuItem>
                   ) : null}
+                  {commandSessionId && headerActions?.exportMarkdown ? (
+                    <DropdownMenuItem
+                      disabled={Boolean(headerActions.exportingMarkdown)}
+                      onClick={() => void headerActions.exportMarkdown?.()}
+                    >
+                      <Download className="size-4" />
+                      {t("session.export_markdown")}
+                    </DropdownMenuItem>
+                  ) : null}
                   {commandSessionId ? (
                     <DropdownMenuItem
                       disabled={!commandBridge || commandBridge.busy}
@@ -2129,7 +2139,7 @@ export function SessionPage(props: SessionPageProps) {
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
           developerMode={props.sidebar.developerMode}
           selectedSessionId={props.sidebar.selectedSessionId}
-          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
+          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession || props.onExportSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
@@ -2149,6 +2159,9 @@ export function SessionPage(props: SessionPageProps) {
           } : undefined}
           onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
             void props.onArchiveSession?.(sessionId, archived);
+          } : undefined}
+          onExportSession={props.onExportSession ? (workspaceId, sessionId) => {
+            void props.onExportSession?.(workspaceId, sessionId);
           } : undefined}
           archiveDisabledReason={props.archiveDisabledReason}
           onOpenCreateGroupModal={(workspaceId) => {

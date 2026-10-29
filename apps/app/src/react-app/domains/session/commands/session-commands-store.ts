@@ -11,12 +11,14 @@ export type SessionCommandBridge = {
   busy: boolean;
 };
 
-/** The header's undo / redo for the header menu of narrow windows (session-command-controls.tsx). */
+/** The header's undo / redo / export for the header menu of narrow windows (session-command-controls.tsx). */
 export type SessionHeaderActions = {
   canUndo: boolean;
   canRedo: boolean;
   undo: () => void | Promise<void>;
   redo: () => void | Promise<void>;
+  exportMarkdown?: () => void | Promise<void>;
+  exportingMarkdown?: boolean;
 };
 
 type SessionCommandsStore = {

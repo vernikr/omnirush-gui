@@ -1,8 +1,8 @@
 diff --git a/apps/app/src/lib/favicon.ts b/apps/app/src/lib/favicon.ts
-index d4876fa8..6db07576 100644
+index d4876fa8..b34a6a80 100644
 --- a/apps/app/src/lib/favicon.ts
 +++ b/apps/app/src/lib/favicon.ts
-@@ -1,14 +1,107 @@
+@@ -1,14 +1,106 @@
  /**
   * Paper rule "Pasted links get favicons": any http(s) URL in user or
   * assistant text renders with the site's favicon next to it.
@@ -104,7 +104,6 @@ index d4876fa8..6db07576 100644
 +    try {
 +      window
 +        .matchMedia?.("(prefers-color-scheme: dark)")
-+        // @ts-expect-error old API
 +        ?.addListener?.(() => syncFaviconTheme());
 +    } catch {
 +      // ignore

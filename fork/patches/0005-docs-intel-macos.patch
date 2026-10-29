@@ -1,5 +1,5 @@
 diff --git a/README.md b/README.md
-index 76ee16e9..5a2b8be6 100644
+index 76ee16e9..6418af69 100644
 --- a/README.md
 +++ b/README.md
 @@ -11,22 +11,20 @@
@@ -40,7 +40,7 @@ index 76ee16e9..5a2b8be6 100644
 +
 +Long agent runs stay cheap on those machines too: since 3.6.2 the Mac stays responsive and cool while the model is thinking, instead of being tied up for the whole run.
 +
-+It also includes small desktop UX fixes ahead of upstream, such as restoring your saved UI zoom level immediately on app launch instead of only after pressing `Cmd+` / `Cmd-`.
++It also includes desktop workflow additions and UX fixes ahead of upstream — such as exporting full chat branches (with reasoning, tool calls, and sub-agent transcripts) to `.md` files via `/export`, and restoring your saved UI zoom level immediately on app launch instead of only after pressing `Cmd+` / `Cmd-`.
 +
  ## Download
  
@@ -74,6 +74,14 @@ index 76ee16e9..5a2b8be6 100644
 +build is ad-hoc signed and not notarized.
  
  ## First launch
+ 
+@@ -104,6 +104,7 @@ account is connected.
+ | MCP servers | Local MCP servers from the account's supported list, such as filesystem, git, SQLite, memory, sequential thinking, time, and Playwright on local pages. Remote and account-linked servers are not supported. Configure them in Settings > MCP. | [skills-and-mcp.md](docs/skills-and-mcp.md) |
+ | Git workflows | The agent clones, branches, creates worktrees, commits, pushes, and opens and reviews pull requests with `gh`. Write commands ask once per session; destructive ones always ask. | [git-workflows.md](docs/git-workflows.md) |
+ | Approvals | The composer's full-permissions toggle switches between asking and allowing every tool call. | [approvals.md](docs/approvals.md) |
++| Markdown export | Export the full contents of a chat branch — including reasoning, tool calls, and sub-agent runs — to a `.md` file from the header, sidebar, Command Palette, or `/export [filename]`. | [session-markdown-export.md](docs/session-markdown-export.md) |
+ 
+ ## Updating
  
 diff --git a/RELEASING.md b/RELEASING.md
 index 714bd1c8..33f7853b 100644

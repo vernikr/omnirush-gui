@@ -104,6 +104,7 @@ sync fetches that commit so `--3way` has the blobs it needs.
 | `0010-upstream-compatibility.patch` | `AGENTS.md` and `FORK_DIFFS.md` | never — fork-only docs |
 | `0011-github-favicon-theme.patch` | theme-aware GitHub favicon in link chips | when upstream edits `favicon.ts` |
 | `0012-desktop-startup-zoom-restore.patch` | restore saved desktop UI zoom on launch and across `#` routes | when upstream edits desktop zoom or preload/main |
+| `0013-session-markdown-export.patch` | export full session/branch (reasoning, tool calls, sub-agents) to `.md` | when upstream edits session commands, sidebar menu, or `session-route.tsx` |
 
 ## Secrets
 

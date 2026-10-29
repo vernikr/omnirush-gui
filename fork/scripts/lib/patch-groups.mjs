@@ -132,6 +132,28 @@ export const PATCH_GROUPS = [
     ],
     addsOnly: false,
   },
+  {
+    file: "0013-session-markdown-export.patch",
+    title: "export full session/branch (reasoning, tool calls, sub-agents) to Markdown",
+    paths: [
+      "packages/types/src/desktop-ipc.ts",
+      "apps/desktop/electron/save-file.mjs",
+      "apps/desktop/electron/save-file.test.mjs",
+      "apps/app/src/app/lib/session-markdown-export.ts",
+      "apps/app/src/react-app/domains/session/commands/export-session-markdown.ts",
+      "apps/app/src/react-app/domains/session/commands/session-command-controls.tsx",
+      "apps/app/src/react-app/domains/session/commands/session-commands-store.ts",
+      "apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx",
+      "apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx",
+      "apps/app/src/react-app/shell/session-route.tsx",
+      "apps/app/src/i18n/locales/en.ts",
+      "apps/app/src/i18n/locales/zh.ts",
+      "apps/app/src/i18n/locales/ru.ts",
+      "apps/app/tests/session-markdown-export.test.ts",
+      "docs/session-markdown-export.md",
+    ],
+    addsOnly: false,
+  },
 ];
 
 /** Paths no group may touch: the engine tarballs are pinned in upstream releases. */

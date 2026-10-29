@@ -48,6 +48,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { applyBackgroundRenderingSwitches } from "./background-rendering.mjs";
+import { handleSaveFileDialog } from "./save-file.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
   START_REPORT_FILE,
@@ -2607,12 +2608,18 @@ const desktopCommandHandlers = {
   },
   "saveFile": async (event, ...args) => {
       const options = args[0] ?? {};
-      const result = await dialog.showSaveDialog(activeWindowFromEvent(event), {
-        title: options.title,
-        defaultPath: options.defaultPath,
-        filters: options.filters,
+      let downloadsDir = null;
+      try {
+        downloadsDir = app.getPath("downloads");
+      } catch {
+        downloadsDir = null;
+      }
+      return handleSaveFileDialog({
+        dialog,
+        parentWindow: activeWindowFromEvent(event),
+        downloadsDir,
+        options,
       });
-      return result.canceled ? null : (result.filePath ?? null);
   },
   "importSkill": async (event, ...args) => {
       const projectDir = String(args[0] ?? "").trim();

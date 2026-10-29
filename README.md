@@ -39,7 +39,7 @@ The official release covers Apple Silicon Macs only — this fork keeps the same
 
 Long agent runs stay cheap on those machines too: since 3.6.2 the Mac stays responsive and cool while the model is thinking, instead of being tied up for the whole run.
 
-It also includes small desktop UX fixes ahead of upstream, such as restoring your saved UI zoom level immediately on app launch instead of only after pressing `Cmd+` / `Cmd-`.
+It also includes desktop workflow additions and UX fixes ahead of upstream — such as exporting full chat branches (with reasoning, tool calls, and sub-agent transcripts) to `.md` files via `/export`, and restoring your saved UI zoom level immediately on app launch instead of only after pressing `Cmd+` / `Cmd-`.
 
 ## Download
 
@@ -104,6 +104,7 @@ account is connected.
 | MCP servers | Local MCP servers from the account's supported list, such as filesystem, git, SQLite, memory, sequential thinking, time, and Playwright on local pages. Remote and account-linked servers are not supported. Configure them in Settings > MCP. | [skills-and-mcp.md](docs/skills-and-mcp.md) |
 | Git workflows | The agent clones, branches, creates worktrees, commits, pushes, and opens and reviews pull requests with `gh`. Write commands ask once per session; destructive ones always ask. | [git-workflows.md](docs/git-workflows.md) |
 | Approvals | The composer's full-permissions toggle switches between asking and allowing every tool call. | [approvals.md](docs/approvals.md) |
+| Markdown export | Export the full contents of a chat branch — including reasoning, tool calls, and sub-agent runs — to a `.md` file from the header, sidebar, Command Palette, or `/export [filename]`. | [session-markdown-export.md](docs/session-markdown-export.md) |
 
 ## Updating
 

@@ -136,10 +136,10 @@ index 00000000..5162bb6f
 +          fi
 diff --git a/fork/README.md b/fork/README.md
 new file mode 100644
-index 00000000..72a5527e
+index 00000000..dcf45615
 --- /dev/null
 +++ b/fork/README.md
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,127 @@
 +# The Intel macOS port, as code
 +
 +This fork exists for one reason: upstream `omnirush-ai/omnirush-gui` ships
@@ -246,6 +246,7 @@ index 00000000..72a5527e
 +| `0010-upstream-compatibility.patch` | `AGENTS.md` and `FORK_DIFFS.md` | never — fork-only docs |
 +| `0011-github-favicon-theme.patch` | theme-aware GitHub favicon in link chips | when upstream edits `favicon.ts` |
 +| `0012-desktop-startup-zoom-restore.patch` | restore saved desktop UI zoom on launch and across `#` routes | when upstream edits desktop zoom or preload/main |
++| `0013-session-markdown-export.patch` | export full session/branch (reasoning, tool calls, sub-agents) to `.md` | when upstream edits session commands, sidebar menu, or `session-route.tsx` |
 +
 +## Secrets
 +
@@ -275,11 +276,11 @@ index 00000000..dfad7861
 +vernikr/omnirush-gui
 diff --git a/fork/UPSTREAM_BASE b/fork/UPSTREAM_BASE
 new file mode 100644
-index 00000000..c85f7836
+index 00000000..b2de6e62
 --- /dev/null
 +++ b/fork/UPSTREAM_BASE
 @@ -0,0 +1 @@
-+facb4d68f67fd424103f5fd24ece9467d866a311
++e5b7b0bf76bd362f31661c6a3b5f76bfcde5dc8d
 diff --git a/fork/patches/0002-merge-mac-update-manifests.patch b/fork/patches/0002-merge-mac-update-manifests.patch
 new file mode 100644
 index 00000000..04ec3b8e
@@ -924,15 +925,31 @@ index 00000000..382fd810
 +               body="$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/$manifest?attempt=$attempt" || true)"
 diff --git a/fork/patches/0004-releases-from-this-fork.patch b/fork/patches/0004-releases-from-this-fork.patch
 new file mode 100644
-index 00000000..d1538871
+index 00000000..d6b9c485
 --- /dev/null
 +++ b/fork/patches/0004-releases-from-this-fork.patch
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,989 @@
 +diff --git a/apps/desktop/electron/main.mjs b/apps/desktop/electron/main.mjs
-+index 5f765e2e..de5a4c2a 100644
++index 5d7dab44..64523caf 100644
 +--- a/apps/desktop/electron/main.mjs
 ++++ b/apps/desktop/electron/main.mjs
-+@@ -214,9 +214,9 @@ if (BLANK_SLATE_LAUNCH.enabled || process.env.OMNIRUSH_ELECTRON_USE_MOCK_KEYCHAI
++@@ -25,6 +25,7 @@ import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./run
++ import { installAppRequestSecret } from "./app-request-secret.mjs";
++ import { registerUpdaterIpc } from "./updater.mjs";
++ import { initialWindowSize } from "./window-size.mjs";
+++import { createWindowZoomController } from "./window-zoom.mjs";
++ import {
++   browserActApproval,
++   browserPermissionMode,
++@@ -47,6 +48,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
++ import { createBrowserLoginSync } from "./browser-login-sync.mjs";
++ import { createBrowserPanel } from "./browser-panel.mjs";
++ import { applyBackgroundRenderingSwitches } from "./background-rendering.mjs";
+++import { handleSaveFileDialog } from "./save-file.mjs";
++ import { createWorkspaceStore } from "./workspace-store.mjs";
++ import {
++   START_REPORT_FILE,
++@@ -215,14 +217,15 @@ if (BLANK_SLATE_LAUNCH.enabled || process.env.OMNIRUSH_ELECTRON_USE_MOCK_KEYCHAI
 +   // system keychain normally.
 +   app.commandLine.appendSwitch("use-mock-keychain");
 + }
@@ -945,11 +962,123 @@ index 00000000..d1538871
 + const applicationMenu = createApplicationMenu({
 +   appName: DISPLAY_APP_NAME,
 +   docsUrl: DOCS_PAGE_URL,
++   getWindow: () => createMainWindow(),
++ });
+++const windowZoom = createWindowZoomController();
++ 
++ let browserPanel = null;
++ 
++@@ -2605,12 +2608,18 @@ const desktopCommandHandlers = {
++   },
++   "saveFile": async (event, ...args) => {
++       const options = args[0] ?? {};
++-      const result = await dialog.showSaveDialog(activeWindowFromEvent(event), {
++-        title: options.title,
++-        defaultPath: options.defaultPath,
++-        filters: options.filters,
+++      let downloadsDir = null;
+++      try {
+++        downloadsDir = app.getPath("downloads");
+++      } catch {
+++        downloadsDir = null;
+++      }
+++      return handleSaveFileDialog({
+++        dialog,
+++        parentWindow: activeWindowFromEvent(event),
+++        downloadsDir,
+++        options,
++       });
++-      return result.canceled ? null : (result.filePath ?? null);
++   },
++   "importSkill": async (event, ...args) => {
++       const projectDir = String(args[0] ?? "").trim();
++@@ -2932,11 +2941,7 @@ const desktopCommandHandlers = {
++   "__setZoomFactor": async (event, ...args) => {
++       const factor = Number(args[0]);
++       const window = activeWindowFromEvent(event);
++-      if (!window || !Number.isFinite(factor) || factor <= 0) {
++-        return false;
++-      }
++-      window.webContents.setZoomFactor(factor);
++-      return true;
+++      return windowZoom.setFactor(window, factor);
++   },
++   "__setNativeTheme": async (event, ...args) => {
++       return applyNativeTheme(String(args[0]));
++@@ -3153,6 +3158,7 @@ async function createMainWindow() {
++     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
++   }
++   applicationMenu.applyVisibility(mainWindow);
+++  windowZoom.attach(mainWindow);
++   // Sponsored placements: the page's viewability timer stops while the window is blurred, minimized or hidden.
++   watchWindowForPlacements(mainWindow);
++ 
 +diff --git a/apps/desktop/electron/preload.mjs b/apps/desktop/electron/preload.mjs
-+index 89a4310c..b7f32ed1 100644
++index 1b5c303e..4a88edf8 100644
 +--- a/apps/desktop/electron/preload.mjs
 ++++ b/apps/desktop/electron/preload.mjs
-+@@ -23,6 +23,12 @@ function applyShellDocumentMarkers() {
++@@ -1,4 +1,4 @@
++-import { contextBridge, ipcRenderer, webUtils } from "electron";
+++import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
++ 
++ const NATIVE_DEEP_LINK_EVENT = "omnirush:deep-link-native";
++ const NATIVE_MENU_OPEN_SETTINGS_EVENT = "omnirush:native-menu:open-settings";
++@@ -7,6 +7,54 @@ const NATIVE_MENU_CHECK_UPDATES_EVENT = "omnirush:native-menu:check-updates";
++ const NATIVE_MENU_ZOOM_EVENT = "omnirush:native-menu:zoom";
++ const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "omnirush:automation-runner:credential-rejected";
++ const FINISH_GUARD_EVENT = "omnirush:finish-guard:finish";
+++const DESKTOP_FONT_ZOOM_STORAGE_KEY = "omnirush.desktop-font-zoom.v1";
+++const MIN_DESKTOP_FONT_ZOOM = 0.8;
+++const MAX_DESKTOP_FONT_ZOOM = 1.6;
+++const DESKTOP_FONT_ZOOM_STEP = 0.1;
+++
+++/**
+++ * @param {number} value
+++ */
+++function normalizeDesktopZoomFactor(value) {
+++  if (!Number.isFinite(value)) return 1;
+++  const clamped = Math.min(MAX_DESKTOP_FONT_ZOOM, Math.max(MIN_DESKTOP_FONT_ZOOM, value));
+++  const snapped = Math.round(clamped / DESKTOP_FONT_ZOOM_STEP) * DESKTOP_FONT_ZOOM_STEP;
+++  return Number(snapped.toFixed(2));
+++}
+++
+++/**
+++ * @param {number} value
+++ */
+++function applyRendererZoomFactor(value) {
+++  const factor = Number(value);
+++  if (!Number.isFinite(factor) || factor <= 0) return false;
+++  try {
+++    webFrame.setZoomFactor(factor);
+++    return true;
+++  } catch {
+++    return false;
+++  }
+++}
+++
+++function readInitialStoredZoomFactor() {
+++  if (typeof window === "undefined" || !window.localStorage) return null;
+++  if (window.location?.href === "about:blank") return null;
+++  const raw = window.localStorage.getItem(DESKTOP_FONT_ZOOM_STORAGE_KEY);
+++  if (raw == null || raw === "") return null;
+++  const parsed = Number.parseFloat(raw);
+++  if (!Number.isFinite(parsed)) return null;
+++  return normalizeDesktopZoomFactor(parsed);
+++}
+++
+++function applyInitialStoredZoomFactor() {
+++  try {
+++    const factor = readInitialStoredZoomFactor();
+++    if (factor === null) return false;
+++    return applyRendererZoomFactor(factor);
+++  } catch {
+++    return false;
+++  }
+++}
++ 
++ function normalizePlatform(value) {
++   if (value === "darwin" || value === "linux") return value;
++@@ -23,6 +71,12 @@ function applyShellDocumentMarkers() {
 +     root.classList.add("omnirush-electron");
 +     if (process.platform === "darwin") {
 +       root.classList.add("omnirush-platform-mac");
@@ -962,6 +1091,40 @@ index 00000000..d1538871
 +     } else if (process.platform === "win32") {
 +       root.classList.add("omnirush-platform-windows");
 +     } else if (process.platform === "linux") {
++@@ -113,6 +167,21 @@ contextBridge.exposeInMainWorld("__OMNIRUSH_ELECTRON__", {
++       return webUtils.getPathForFile(file);
++     },
++   },
+++  zoom: {
+++    getFactor() {
+++      try {
+++        return webFrame.getZoomFactor();
+++      } catch {
+++        return 1;
+++      }
+++    },
+++    /**
+++     * @param {number} factor
+++     */
+++    setFactor(factor) {
+++      return applyRendererZoomFactor(factor);
+++    },
+++  },
++   shell: {
++     openExternal(url) {
++       return ipcRenderer.invoke("omnirush:shell:openExternal", url);
++@@ -413,6 +482,11 @@ if (!applyShellDocumentMarkers() && typeof document !== "undefined") {
++   document.addEventListener("DOMContentLoaded", applyShellDocumentMarkers, { once: true });
++ }
++ 
+++applyInitialStoredZoomFactor();
+++if (typeof document !== "undefined" && document.readyState === "loading") {
+++  document.addEventListener("DOMContentLoaded", applyInitialStoredZoomFactor, { once: true });
+++}
+++
++ if (!installMenuOverlayDismissListeners() && typeof document !== "undefined") {
++   document.addEventListener("DOMContentLoaded", installMenuOverlayDismissListeners, { once: true });
++ }
 +diff --git a/apps/desktop/electron/recovery.mjs b/apps/desktop/electron/recovery.mjs
 +index 3b7906a8..ed094f1a 100644
 +--- a/apps/desktop/electron/recovery.mjs
@@ -988,6 +1151,333 @@ index 00000000..d1538871
 +       continue;
 +     }
 +     const artifact = {
++diff --git a/apps/desktop/electron/save-file.mjs b/apps/desktop/electron/save-file.mjs
++new file mode 100644
++index 00000000..a94902d4
++--- /dev/null
+++++ b/apps/desktop/electron/save-file.mjs
++@@ -0,0 +1,195 @@
+++import { randomBytes } from "node:crypto";
+++import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
+++import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
+++import path from "node:path";
+++
+++/**
+++ * Find the deepest ancestor of `targetPath` that already exists on disk so we
+++ * can resolve symlinks before creating any missing parent directories.
+++ *
+++ * @param {string} targetPath
+++ * @returns {string}
+++ */
+++function deepestExistingAncestor(targetPath) {
+++  let current = path.resolve(targetPath);
+++  while (!existsSync(current)) {
+++    const parent = path.dirname(current);
+++    if (parent === current) break;
+++    current = parent;
+++  }
+++  return current;
+++}
+++
+++/**
+++ * True when `childPath` is strictly inside `rootPath` (not equal to root, not
+++ * traversing above root, and not crossing Windows drive letters).
+++ *
+++ * @param {string} rootPath
+++ * @param {string} childPath
+++ * @returns {boolean}
+++ */
+++function isStrictlyInsideDirectory(rootPath, childPath) {
+++  const rel = path.relative(rootPath, childPath);
+++  return Boolean(rel) && rel !== "." && !rel.startsWith("..") && !path.isAbsolute(rel);
+++}
+++
+++/**
+++ * Resolve a relative export target inside `workspaceRoot`, refusing path
+++ * traversal, symlink escapes, and overwriting existing files (matching
+++ * FreeBuff's `/export <filename>` safety guarantees).
+++ *
+++ * @param {{ workspaceRoot: string; relativePath: string }} input
+++ * @returns {string}
+++ */
+++export function resolveDirectExportPath({ workspaceRoot, relativePath }) {
+++  const rootTrimmed = typeof workspaceRoot === "string" ? workspaceRoot.trim() : "";
+++  const relTrimmed = typeof relativePath === "string" ? relativePath.trim() : "";
+++  if (!rootTrimmed) {
+++    throw new Error("Project folder is not available for relative export paths");
+++  }
+++  if (!relTrimmed || relTrimmed.includes("\0")) {
+++    throw new Error("Invalid export filename");
+++  }
+++  if (path.isAbsolute(relTrimmed) || /^[a-zA-Z]:[\\/]/.test(relTrimmed)) {
+++    throw new Error("Refusing to write outside the project folder");
+++  }
+++
+++  const resolvedRoot = path.resolve(rootTrimmed);
+++  let rootReal;
+++  try {
+++    const rootStat = statSync(resolvedRoot);
+++    if (!rootStat.isDirectory()) {
+++      throw new Error("Project folder is not a local directory");
+++    }
+++    rootReal = realpathSync(resolvedRoot);
+++  } catch (error) {
+++    if (error instanceof Error && error.message === "Project folder is not a local directory") {
+++      throw error;
+++    }
+++    throw new Error("Project folder is not accessible on disk");
+++  }
+++
+++  const candidate = path.resolve(resolvedRoot, relTrimmed);
+++  if (!isStrictlyInsideDirectory(resolvedRoot, candidate)) {
+++    throw new Error("Refusing to write outside the project folder");
+++  }
+++
+++  const existingAncestor = deepestExistingAncestor(path.dirname(candidate));
+++  const existingAncestorReal = realpathSync(existingAncestor);
+++  if (existingAncestorReal !== rootReal && !isStrictlyInsideDirectory(rootReal, existingAncestorReal)) {
+++    throw new Error("Refusing to write outside the project folder");
+++  }
+++
+++  try {
+++    lstatSync(candidate);
+++    throw new Error(`${relTrimmed} already exists — pass a new filename`);
+++  } catch (error) {
+++    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+++      return candidate;
+++    }
+++    throw error;
+++  }
+++}
+++
+++/**
+++ * Write UTF-8 text atomically via a sibling temporary file + rename.
+++ *
+++ * @param {string} filePath
+++ * @param {string} content
+++ */
+++export async function writeTextFileAtomically(filePath, content) {
+++  const resolved = path.resolve(filePath);
+++  const dir = path.dirname(resolved);
+++  await mkdir(dir, { recursive: true });
+++  const nonce = randomBytes(6).toString("hex");
+++  const tempPath = path.join(dir, `.${path.basename(resolved)}.${process.pid}.${nonce}.tmp`);
+++  try {
+++    await writeFile(tempPath, content, "utf8");
+++    await rename(tempPath, resolved);
+++  } catch (error) {
+++    await unlink(tempPath).catch(() => {});
+++    throw error;
+++  }
+++}
+++
+++/**
+++ * Resolve a sensible initial path for Electron's native Save dialog when a
+++ * bare filename is supplied.
+++ *
+++ * @param {{ defaultPath?: string; workspaceRoot?: string; downloadsDir?: string | null }} input
+++ * @returns {string | undefined}
+++ */
+++export function resolveDialogDefaultPath({ defaultPath, workspaceRoot, downloadsDir }) {
+++  const trimmed = typeof defaultPath === "string" ? defaultPath.trim() : "";
+++  if (!trimmed) return undefined;
+++  if (path.isAbsolute(trimmed)) return trimmed;
+++
+++  const rootTrimmed = typeof workspaceRoot === "string" ? workspaceRoot.trim() : "";
+++  if (rootTrimmed) {
+++    try {
+++      if (statSync(rootTrimmed).isDirectory()) {
+++        return path.join(rootTrimmed, trimmed);
+++      }
+++    } catch {
+++      // Fall through to downloads directory when workspaceRoot is remote or missing.
+++    }
+++  }
+++  if (typeof downloadsDir === "string" && downloadsDir.trim()) {
+++    return path.join(downloadsDir.trim(), trimmed);
+++  }
+++  return trimmed;
+++}
+++
+++/**
+++ * Handle the renderer `saveFile` IPC request:
+++ * - Direct relative workspace write when `relativePath` is provided
+++ * - Interactive native Save dialog otherwise (writing `content` atomically when supplied)
+++ *
+++ * @param {{
+++ *   dialog: { showSaveDialog: (win: any, options: any) => Promise<{ canceled: boolean; filePath?: string }> };
+++ *   parentWindow?: any;
+++ *   downloadsDir?: string | null;
+++ *   options?: {
+++ *     title?: string;
+++ *     defaultPath?: string;
+++ *     filters?: { name: string; extensions: string[] }[];
+++ *     content?: string;
+++ *     workspaceRoot?: string;
+++ *     relativePath?: string;
+++ *   };
+++ * }} params
+++ * @returns {Promise<string | null>}
+++ */
+++export async function handleSaveFileDialog({ dialog, parentWindow, downloadsDir, options = {} }) {
+++  if (typeof options.relativePath === "string" && options.relativePath.trim()) {
+++    if (typeof options.content !== "string") {
+++      throw new Error("content is required when saving to relativePath");
+++    }
+++    const targetPath = resolveDirectExportPath({
+++      workspaceRoot: options.workspaceRoot ?? "",
+++      relativePath: options.relativePath,
+++    });
+++    await writeTextFileAtomically(targetPath, options.content);
+++    return targetPath;
+++  }
+++
+++  const resolvedDefaultPath = resolveDialogDefaultPath({
+++    defaultPath: options.defaultPath,
+++    workspaceRoot: options.workspaceRoot,
+++    downloadsDir,
+++  });
+++
+++  const dialogOptions = {
+++    title: options.title,
+++    defaultPath: resolvedDefaultPath,
+++    filters: options.filters,
+++  };
+++  const result = await dialog.showSaveDialog(parentWindow, dialogOptions);
+++  if (result.canceled || !result.filePath) {
+++    return null;
+++  }
+++  if (typeof options.content === "string") {
+++    await writeTextFileAtomically(result.filePath, options.content);
+++  }
+++  return result.filePath;
+++}
++diff --git a/apps/desktop/electron/save-file.test.mjs b/apps/desktop/electron/save-file.test.mjs
++new file mode 100644
++index 00000000..ba5f424d
++--- /dev/null
+++++ b/apps/desktop/electron/save-file.test.mjs
++@@ -0,0 +1,120 @@
+++import assert from "node:assert/strict";
+++import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
+++import os from "node:os";
+++import path from "node:path";
+++import test from "node:test";
+++
+++import {
+++  handleSaveFileDialog,
+++  resolveDialogDefaultPath,
+++  resolveDirectExportPath,
+++} from "./save-file.mjs";
+++
+++test("handleSaveFileDialog writes UTF-8 content atomically when user picks a save path", async () => {
+++  const dir = mkdtempSync(path.join(os.tmpdir(), "omnirush-save-file-"));
+++  try {
+++    const picked = path.join(dir, "exports", "thread.md");
+++    const saved = await handleSaveFileDialog({
+++      dialog: {
+++        showSaveDialog: async (_win, opts) => {
+++          assert.equal(opts.defaultPath, path.join(dir, "omnirush-chat.md"));
+++          return { canceled: false, filePath: picked };
+++        },
+++      },
+++      parentWindow: null,
+++      downloadsDir: os.tmpdir(),
+++      options: {
+++        title: "Export chat as Markdown",
+++        defaultPath: "omnirush-chat.md",
+++        workspaceRoot: dir,
+++        content: "# Session\n\n> _Reasoning_\n> привет мир\n",
+++      },
+++    });
+++
+++    assert.equal(saved, picked);
+++    assert.equal(readFileSync(picked, "utf8"), "# Session\n\n> _Reasoning_\n> привет мир\n");
+++  } finally {
+++    rmSync(dir, { recursive: true, force: true });
+++  }
+++});
+++
+++test("handleSaveFileDialog returns null without writing when canceled", async () => {
+++  const saved = await handleSaveFileDialog({
+++    dialog: {
+++      showSaveDialog: async () => ({ canceled: true, filePath: undefined }),
+++    },
+++    options: {
+++      defaultPath: "chat.md",
+++      content: "# Ignored",
+++    },
+++  });
+++  assert.equal(saved, null);
+++});
+++
+++test("resolveDirectExportPath refuses traversal, symlink escapes, and overwriting existing files", async () => {
+++  const base = mkdtempSync(path.join(os.tmpdir(), "omnirush-direct-export-"));
+++  const outside = mkdtempSync(path.join(os.tmpdir(), "omnirush-outside-"));
+++  try {
+++    assert.throws(
+++      () => resolveDirectExportPath({ workspaceRoot: base, relativePath: "../escape.md" }),
+++      /outside the project folder/,
+++    );
+++    assert.throws(
+++      () => resolveDirectExportPath({ workspaceRoot: base, relativePath: "/etc/passwd" }),
+++      /outside the project folder/,
+++    );
+++
+++    const escapeLink = path.join(base, "linked-out");
+++    symlinkSync(outside, escapeLink);
+++    assert.throws(
+++      () => resolveDirectExportPath({ workspaceRoot: base, relativePath: "linked-out/secret.md" }),
+++      /outside the project folder/,
+++    );
+++
+++    const existing = path.join(base, "already.md");
+++    writeFileSync(existing, "keep me", "utf8");
+++    assert.throws(
+++      () => resolveDirectExportPath({ workspaceRoot: base, relativePath: "already.md" }),
+++      /already exists/,
+++    );
+++
+++    const nestedSaved = await handleSaveFileDialog({
+++      dialog: {
+++        showSaveDialog: async () => {
+++          throw new Error("dialog must not open for relativePath");
+++        },
+++      },
+++      options: {
+++        workspaceRoot: base,
+++        relativePath: "notes/chat-export.md",
+++        content: "# Direct export\n",
+++      },
+++    });
+++    assert.equal(nestedSaved, path.join(base, "notes", "chat-export.md"));
+++    assert.equal(readFileSync(nestedSaved, "utf8"), "# Direct export\n");
+++  } finally {
+++    rmSync(base, { recursive: true, force: true });
+++    rmSync(outside, { recursive: true, force: true });
+++  }
+++});
+++
+++test("resolveDialogDefaultPath falls back to downloadsDir when workspaceRoot is missing", () => {
+++  const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-dl-"));
+++  try {
+++    const resolved = resolveDialogDefaultPath({
+++      defaultPath: "chat.md",
+++      workspaceRoot: path.join(downloads, "does-not-exist"),
+++      downloadsDir: downloads,
+++    });
+++    assert.equal(resolved, path.join(downloads, "chat.md"));
+++
+++    const sub = path.join(downloads, "project");
+++    mkdirSync(sub);
+++    assert.equal(
+++      resolveDialogDefaultPath({ defaultPath: "chat.md", workspaceRoot: sub, downloadsDir: downloads }),
+++      path.join(sub, "chat.md"),
+++    );
+++  } finally {
+++    rmSync(downloads, { recursive: true, force: true });
+++  }
+++});
 +diff --git a/apps/desktop/electron/updater.mjs b/apps/desktop/electron/updater.mjs
 +index 6cf82ab0..9c16f053 100644
 +--- a/apps/desktop/electron/updater.mjs
@@ -1149,14 +1639,293 @@ index 00000000..d1538871
 + const sha512Of = (bytes) => createHash("sha512").update(bytes).digest("base64");
 + const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 + 
++diff --git a/apps/desktop/electron/window-zoom.mjs b/apps/desktop/electron/window-zoom.mjs
++new file mode 100644
++index 00000000..606a062d
++--- /dev/null
+++++ b/apps/desktop/electron/window-zoom.mjs
++@@ -0,0 +1,124 @@
+++/**
+++ * Keeps each BrowserWindow's desired UI zoom factor synchronized without
+++ * calling webContents.setZoomFactor while the window is still hidden before
+++ * ready-to-show (electron#51972) or losing zoom across file:// #hash route
+++ * transitions on Electron <43.3 (electron#54381).
+++ *
+++ * @typedef {{
+++ *   isDestroyed?: () => boolean;
+++ *   getZoomFactor?: () => number;
+++ *   setZoomFactor?: (factor: number) => void;
+++ *   on?: (event: string, listener: () => void) => unknown;
+++ * }} ZoomableWebContents
+++ *
+++ * @typedef {{
+++ *   isDestroyed?: () => boolean;
+++ *   isVisible?: () => boolean;
+++ *   on?: (event: string, listener: () => void) => unknown;
+++ *   webContents?: ZoomableWebContents | null;
+++ * }} ZoomableWindow
+++ */
+++
+++/**
+++ * @param {ZoomableWindow | null | undefined} win
+++ * @returns {win is ZoomableWindow}
+++ */
+++function isUsableWindow(win) {
+++  return Boolean(win && (typeof win.isDestroyed !== "function" || !win.isDestroyed()));
+++}
+++
+++/**
+++ * @param {ZoomableWindow | null | undefined} win
+++ */
+++function isWindowVisible(win) {
+++  if (!isUsableWindow(win)) return false;
+++  return typeof win.isVisible === "function" ? Boolean(win.isVisible()) : true;
+++}
+++
+++export function createWindowZoomController() {
+++  /** @type {WeakMap<ZoomableWindow, number>} */
+++  const desiredFactors = new WeakMap();
+++  /** @type {WeakSet<ZoomableWindow>} */
+++  const attachedWindows = new WeakSet();
+++  /** @type {WeakSet<ZoomableWindow>} */
+++  const pendingWindows = new WeakSet();
+++
+++  /**
+++   * @param {ZoomableWindow | null | undefined} win
+++   */
+++  function syncVisibleWindowZoom(win) {
+++    if (!isUsableWindow(win) || !isWindowVisible(win)) return false;
+++    const factor = desiredFactors.get(win);
+++    if (typeof factor !== "number" || !Number.isFinite(factor) || factor <= 0) {
+++      return false;
+++    }
+++    const contents = win.webContents;
+++    if (!contents || (typeof contents.isDestroyed === "function" && contents.isDestroyed())) {
+++      return false;
+++    }
+++    const pending = pendingWindows.delete(win);
+++    if (!pending && typeof contents.getZoomFactor === "function") {
+++      const current = contents.getZoomFactor();
+++      if (Number.isFinite(current) && Math.abs(current - factor) <= 1e-3) {
+++        return true;
+++      }
+++    }
+++    contents.setZoomFactor?.(factor);
+++    return true;
+++  }
+++
+++  /**
+++   * @param {ZoomableWindow | null | undefined} win
+++   */
+++  function attach(win) {
+++    if (!isUsableWindow(win) || attachedWindows.has(win)) return;
+++    attachedWindows.add(win);
+++    const resync = () => {
+++      syncVisibleWindowZoom(win);
+++    };
+++    if (typeof win.on === "function") {
+++      win.on("show", resync);
+++      win.on("restore", resync);
+++    }
+++    const contents = win.webContents;
+++    if (contents && typeof contents.on === "function") {
+++      contents.on("did-finish-load", resync);
+++      contents.on("did-navigate-in-page", resync);
+++    }
+++  }
+++
+++  /**
+++   * @param {ZoomableWindow | null | undefined} win
+++   * @param {number} rawFactor
+++   */
+++  function setFactor(win, rawFactor) {
+++    const factor = Number(rawFactor);
+++    if (!isUsableWindow(win) || !Number.isFinite(factor) || factor <= 0) {
+++      return false;
+++    }
+++    attach(win);
+++    desiredFactors.set(win, factor);
+++    if (!isWindowVisible(win)) {
+++      pendingWindows.add(win);
+++      return true;
+++    }
+++    pendingWindows.delete(win);
+++    win.webContents?.setZoomFactor?.(factor);
+++    return true;
+++  }
+++
+++  /**
+++   * @param {ZoomableWindow | null | undefined} win
+++   */
+++  function getDesiredFactor(win) {
+++    if (!isUsableWindow(win)) return null;
+++    return desiredFactors.get(win) ?? null;
+++  }
+++
+++  return {
+++    attach,
+++    setFactor,
+++    getDesiredFactor,
+++    syncVisibleWindowZoom,
+++  };
+++}
++diff --git a/apps/desktop/electron/window-zoom.test.mjs b/apps/desktop/electron/window-zoom.test.mjs
++new file mode 100644
++index 00000000..0168e6a4
++--- /dev/null
+++++ b/apps/desktop/electron/window-zoom.test.mjs
++@@ -0,0 +1,143 @@
+++import assert from "node:assert/strict";
+++import { describe, it } from "node:test";
+++import { createWindowZoomController } from "./window-zoom.mjs";
+++
+++/**
+++ * @param {{ visible?: boolean; initialZoom?: number }} [options]
+++ */
+++function createFakeWindow(options = {}) {
+++  let visible = options.visible ?? false;
+++  let zoomFactor = options.initialZoom ?? 1;
+++  let destroyed = false;
+++  /** @type {Map<string, Array<() => void>>} */
+++  const windowListeners = new Map();
+++  /** @type {Map<string, Array<() => void>>} */
+++  const contentsListeners = new Map();
+++  /** @type {number[]} */
+++  const setCalls = [];
+++
+++  /**
+++   * @param {Map<string, Array<() => void>>} registry
+++   * @param {string} event
+++   * @param {() => void} listener
+++   */
+++  const addListener = (registry, event, listener) => {
+++    const list = registry.get(event) ?? [];
+++    list.push(listener);
+++    registry.set(event, list);
+++  };
+++
+++  /**
+++   * @param {Map<string, Array<() => void>>} registry
+++   * @param {string} event
+++   */
+++  const emit = (registry, event) => {
+++    for (const listener of registry.get(event) ?? []) {
+++      listener();
+++    }
+++  };
+++
+++  const win = {
+++    isDestroyed: () => destroyed,
+++    isVisible: () => visible,
+++    /**
+++     * @param {string} event
+++     * @param {() => void} listener
+++     */
+++    on(event, listener) {
+++      addListener(windowListeners, event, listener);
+++      return win;
+++    },
+++    webContents: {
+++      isDestroyed: () => destroyed,
+++      getZoomFactor: () => zoomFactor,
+++      /**
+++       * @param {number} factor
+++       */
+++      setZoomFactor(factor) {
+++        zoomFactor = factor;
+++        setCalls.push(factor);
+++      },
+++      /**
+++       * @param {string} event
+++       * @param {() => void} listener
+++       */
+++      on(event, listener) {
+++        addListener(contentsListeners, event, listener);
+++        return win.webContents;
+++      },
+++    },
+++    show() {
+++      visible = true;
+++      emit(windowListeners, "show");
+++    },
+++    emitInPageNavigation(resetZoomTo = zoomFactor) {
+++      zoomFactor = resetZoomTo;
+++      emit(contentsListeners, "did-navigate-in-page");
+++    },
+++    destroy() {
+++      destroyed = true;
+++    },
+++    get setCalls() {
+++      return setCalls;
+++    },
+++  };
+++
+++  return win;
+++}
+++
+++describe("window zoom controller", () => {
+++  it("defers webContents.setZoomFactor while the window is hidden until show", () => {
+++    const controller = createWindowZoomController();
+++    const win = createFakeWindow({ visible: false, initialZoom: 1 });
+++
+++    assert.equal(controller.setFactor(win, 1.3), true);
+++    assert.equal(controller.getDesiredFactor(win), 1.3);
+++    assert.deepEqual(win.setCalls, []);
+++
+++    win.show();
+++    assert.deepEqual(win.setCalls, [1.3]);
+++    assert.equal(win.webContents.getZoomFactor(), 1.3);
+++  });
+++
+++  it("forces pending zoom sync on show even if HostZoomMap reported the same cached factor", () => {
+++    const controller = createWindowZoomController();
+++    const win = createFakeWindow({ visible: false, initialZoom: 1.3 });
+++
+++    assert.equal(controller.setFactor(win, 1.3), true);
+++    assert.deepEqual(win.setCalls, []);
+++
+++    win.show();
+++    assert.deepEqual(win.setCalls, [1.3]);
+++  });
+++
+++  it("restores zoom when a file:// in-page hash navigation resets WebContents zoom to 1", () => {
+++    const controller = createWindowZoomController();
+++    const win = createFakeWindow({ visible: true, initialZoom: 1 });
+++
+++    assert.equal(controller.setFactor(win, 1.4), true);
+++    assert.deepEqual(win.setCalls, [1.4]);
+++
+++    // Unchanged zoom on hash navigation avoids redundant setZoomFactor calls.
+++    win.emitInPageNavigation(1.4);
+++    assert.deepEqual(win.setCalls, [1.4]);
+++
+++    // A fragment-keyed HostZoomMap reset to 1.0 is immediately corrected.
+++    win.emitInPageNavigation(1.0);
+++    assert.deepEqual(win.setCalls, [1.4, 1.4]);
+++    assert.equal(win.webContents.getZoomFactor(), 1.4);
+++  });
+++
+++  it("rejects invalid zoom values and destroyed windows", () => {
+++    const controller = createWindowZoomController();
+++    const win = createFakeWindow({ visible: true });
+++
+++    assert.equal(controller.setFactor(win, 0), false);
+++    assert.equal(controller.setFactor(win, -1), false);
+++    assert.equal(controller.setFactor(win, Number.NaN), false);
+++    assert.equal(controller.setFactor(null, 1.2), false);
+++
+++    win.destroy();
+++    assert.equal(controller.setFactor(win, 1.2), false);
+++  });
+++});
 diff --git a/fork/patches/0005-docs-intel-macos.patch b/fork/patches/0005-docs-intel-macos.patch
 new file mode 100644
-index 00000000..c3c1bc64
+index 00000000..5b6142a1
 --- /dev/null
 +++ b/fork/patches/0005-docs-intel-macos.patch
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,425 @@
 +diff --git a/README.md b/README.md
-+index 76ee16e9..5a2b8be6 100644
++index 76ee16e9..6418af69 100644
 +--- a/README.md
 ++++ b/README.md
 +@@ -11,22 +11,20 @@
@@ -1197,7 +1966,7 @@ index 00000000..c3c1bc64
 ++
 ++Long agent runs stay cheap on those machines too: since 3.6.2 the Mac stays responsive and cool while the model is thinking, instead of being tied up for the whole run.
 ++
-++It also includes small desktop UX fixes ahead of upstream, such as restoring your saved UI zoom level immediately on app launch instead of only after pressing `Cmd+` / `Cmd-`.
+++It also includes desktop workflow additions and UX fixes ahead of upstream — such as exporting full chat branches (with reasoning, tool calls, and sub-agent transcripts) to `.md` files via `/export`, and restoring your saved UI zoom level immediately on app launch instead of only after pressing `Cmd+` / `Cmd-`.
 ++
 + ## Download
 + 
@@ -1231,6 +2000,14 @@ index 00000000..c3c1bc64
 ++build is ad-hoc signed and not notarized.
 + 
 + ## First launch
++ 
++@@ -104,6 +104,7 @@ account is connected.
++ | MCP servers | Local MCP servers from the account's supported list, such as filesystem, git, SQLite, memory, sequential thinking, time, and Playwright on local pages. Remote and account-linked servers are not supported. Configure them in Settings > MCP. | [skills-and-mcp.md](docs/skills-and-mcp.md) |
++ | Git workflows | The agent clones, branches, creates worktrees, commits, pushes, and opens and reviews pull requests with `gh`. Write commands ask once per session; destructive ones always ask. | [git-workflows.md](docs/git-workflows.md) |
++ | Approvals | The composer's full-permissions toggle switches between asking and allowing every tool call. | [approvals.md](docs/approvals.md) |
+++| Markdown export | Export the full contents of a chat branch — including reasoning, tool calls, and sub-agent runs — to a `.md` file from the header, sidebar, Command Palette, or `/export [filename]`. | [session-markdown-export.md](docs/session-markdown-export.md) |
++ 
++ ## Updating
 + 
 +diff --git a/RELEASING.md b/RELEASING.md
 +index 714bd1c8..33f7853b 100644
@@ -2035,10 +2812,10 @@ index 00000000..e4415789
 +   });
 diff --git a/fork/patches/0007-mac-pane-blur-on-intel.patch b/fork/patches/0007-mac-pane-blur-on-intel.patch
 new file mode 100644
-index 00000000..62b4bf04
+index 00000000..d632dd79
 --- /dev/null
 +++ b/fork/patches/0007-mac-pane-blur-on-intel.patch
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,118 @@
 +diff --git a/apps/app/src/app/index.css b/apps/app/src/app/index.css
 +index f304d6ee..cdaf6bb2 100644
 +--- a/apps/app/src/app/index.css
@@ -2101,6 +2878,62 @@ index 00000000..62b4bf04
 + /* Quiet, small dot ticker (`:: :: ::`). Each dot pulses briefly in sequence,
 +    illuminating left-to-right like a subtle running light. Used for boot,
 +    "awaiting first token", and any idle-but-alive hint. */
++diff --git a/apps/app/src/react-app/domains/session/chat/session-page.tsx b/apps/app/src/react-app/domains/session/chat/session-page.tsx
++index 66b1eb5c..588aa847 100644
++--- a/apps/app/src/react-app/domains/session/chat/session-page.tsx
+++++ b/apps/app/src/react-app/domains/session/chat/session-page.tsx
++@@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
++ import { usePanelRef } from "react-resizable-panels";
++ import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
++ import { BuildathonChip, useBuildathonMenuItem } from "../../buildathon/buildathon";
++-import { ArrowLeft, Cloud, Code2, FileDiff, Layers, MessageSquare, LayoutGrid, Library, MessageSquareOff, PanelLeft, FileText, Gauge, Redo2, Undo2, Globe, ListChecks, Maximize2, MoreHorizontal, PanelRight, TextSearch, Trophy, X, Zap } from "lucide-react";
+++import { ArrowLeft, Cloud, Code2, Download, FileDiff, Layers, MessageSquare, LayoutGrid, Library, MessageSquareOff, PanelLeft, FileText, Gauge, Redo2, Undo2, Globe, ListChecks, Maximize2, MoreHorizontal, PanelRight, TextSearch, Trophy, X, Zap } from "lucide-react";
++ import { SessionCommandControls } from "../commands/session-command-controls";
++ import { useSessionCommandBridge, useSessionCommandsStore } from "../commands/session-commands-store";
++ 
++@@ -293,6 +293,7 @@ export type SessionPageProps = {
++   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
++   onDeleteSession?: (sessionId: string) => Promise<void> | void;
++   onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
+++  onExportSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
++   archiveDisabledReason?: string;
++   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
++   /** Settings content rendered inside the right pane when the settings rail icon is active. */
++@@ -1734,6 +1735,15 @@ export function SessionPage(props: SessionPageProps) {
++                       {t("session.changes")}
++                     </DropdownMenuItem>
++                   ) : null}
+++                  {commandSessionId && headerActions?.exportMarkdown ? (
+++                    <DropdownMenuItem
+++                      disabled={Boolean(headerActions.exportingMarkdown)}
+++                      onClick={() => void headerActions.exportMarkdown?.()}
+++                    >
+++                      <Download className="size-4" />
+++                      {t("session.export_markdown")}
+++                    </DropdownMenuItem>
+++                  ) : null}
++                   {commandSessionId ? (
++                     <DropdownMenuItem
++                       disabled={!commandBridge || commandBridge.busy}
++@@ -2129,7 +2139,7 @@ export function SessionPage(props: SessionPageProps) {
++           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
++           developerMode={props.sidebar.developerMode}
++           selectedSessionId={props.sidebar.selectedSessionId}
++-          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
+++          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession || props.onExportSession)}
++           sessionStatusById={props.sidebar.sessionStatusById}
++           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
++           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
++@@ -2150,6 +2160,9 @@ export function SessionPage(props: SessionPageProps) {
++           onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
++             void props.onArchiveSession?.(sessionId, archived);
++           } : undefined}
+++          onExportSession={props.onExportSession ? (workspaceId, sessionId) => {
+++            void props.onExportSession?.(workspaceId, sessionId);
+++          } : undefined}
++           archiveDisabledReason={props.archiveDisabledReason}
++           onOpenCreateGroupModal={(workspaceId) => {
++             setCreateGroupWorkspaceId(workspaceId);
 diff --git a/fork/patches/0008-surface-markdown-dark-theme.patch b/fork/patches/0008-surface-markdown-dark-theme.patch
 new file mode 100644
 index 00000000..577242b9
@@ -2130,10 +2963,10 @@ index 00000000..577242b9
 + });
 diff --git a/fork/patches/0009-editor-scroll-find-select-all.patch b/fork/patches/0009-editor-scroll-find-select-all.patch
 new file mode 100644
-index 00000000..a7b69b6c
+index 00000000..604275c8
 --- /dev/null
 +++ b/fork/patches/0009-editor-scroll-find-select-all.patch
-@@ -0,0 +1,618 @@
+@@ -0,0 +1,712 @@
 +diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts b/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts
 +new file mode 100644
 +index 00000000..09fcd43b
@@ -2447,10 +3280,35 @@ index 00000000..a7b69b6c
 +           <PreviewLoading />
 +         ) : isError ? (
 +diff --git a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
-+index 76a2ff62..87d9617f 100644
++index 76a2ff62..f9b718ea 100644
 +--- a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
-+@@ -1199,6 +1199,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
++@@ -747,10 +747,20 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
++     return undefined;
++   }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
++ 
++-  const slashItems = useMemo<ComposerSlashCommandOption[]>(
++-    () => [...commands, ...connectSkillSlashCommandOptions(skills)],
++-    [commands, skills],
++-  );
+++  const slashItems = useMemo<ComposerSlashCommandOption[]>(() => {
+++    const builtinItems: ComposerSlashCommandOption[] =
+++      props.sessionId && !commands.some((cmd) => cmd.name.toLowerCase() === "export")
+++        ? [
+++            {
+++              id: "builtin:export",
+++              name: "export",
+++              description: t("session.cmd_export_markdown_detail"),
+++              source: "command",
+++            },
+++          ]
+++        : [];
+++    return [...commands, ...builtinItems, ...connectSkillSlashCommandOptions(skills)];
+++  }, [commands, props.sessionId, skills]);
++   const slashFiltered = useMemo(() => {
++     if (!slashOpen) return [];
++     if (!slashQuery) return slashItems.slice(0, 8);
++@@ -1199,6 +1209,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 +     // Oversized images are compressed at send time (see image-compression.ts)
 +     // so the chip appears instantly instead of blocking on canvas work here.
 +     props.onAttachFiles(inputFiles);
@@ -2596,10 +3454,20 @@ index 00000000..a7b69b6c
 +         <ImperativeHandlePlugin editorRef={ref} />
 +       </div>
 +diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-+index e6a4472e..00c2bf1b 100644
++index e6a4472e..12f868db 100644
 +--- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-+@@ -879,7 +879,7 @@ function SessionRunStatus(props: SessionRunStatusProps) {
++@@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
++ import { FullPermissionsToggle } from "./composer/full-permissions-toggle";
++ import { SandboxStatusChip } from "./composer/sandbox-status-chip";
++ import { SandboxSetupPanel } from "./sandbox-setup-panel";
+++import { exportSessionMarkdown } from "@/react-app/domains/session/commands/export-session-markdown";
++ import { useSessionCommandsStore } from "@/react-app/domains/session/commands/session-commands-store";
+++import { parseExportSlashCommand } from "@/app/lib/session-markdown-export";
++ import { SubagentModelMenu } from "./composer/subagent-model-menu";
++ import { useSessionModelSelection } from "./session-model-store";
++ import type { ProviderCatalog } from "./use-model-behavior";
++@@ -879,7 +881,7 @@ function SessionRunStatus(props: SessionRunStatusProps) {
 +       data-testid="session-run-status"
 +       role={props.acceptanceUnknown ? "alert" : "status"}
 +       aria-live="polite"
@@ -2608,7 +3476,66 @@ index 00000000..a7b69b6c
 +     >
 +       <Icon aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${iconClass}`} />
 +       <div className="min-w-0 flex-1">
-+@@ -3061,6 +3061,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++@@ -2312,10 +2314,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
++     return true;
++   }, [clearComposer, props.client, props.sessionId, props.workspaceId]);
++ 
+++  // "/export [filename]": exports the full branch (messages, reasoning, tool calls, subagents)
+++  // locally to a Markdown file without sending a prompt to the model.
+++  const exportFromDraft = useCallback((text: string, hasAttachments = false): boolean => {
+++    if (hasAttachments) return false;
+++    const parsed = parseExportSlashCommand(text);
+++    if (!parsed) return false;
+++    setSteering(false);
+++    clearComposer();
+++    void exportSessionMarkdown({
+++      workspaceId: props.workspaceId,
+++      sessionId: props.sessionId,
+++      opencodeBaseUrl: props.opencodeBaseUrl,
+++      token: props.omnirushToken,
+++      workspaceRoot: props.workspaceRoot,
+++      serverClient: props.client,
+++      relativeFilename: parsed.filename,
+++    });
+++    return true;
+++  }, [clearComposer, props.client, props.omnirushToken, props.opencodeBaseUrl, props.sessionId, props.workspaceId, props.workspaceRoot]);
+++
++   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
++   // share the same immediate path.
++   const handleSend = useCallback(async (sourceComposer?: ComposerSessionState) => {
++     if (!sourceComposer && askSideFromDraft(draft)) return;
+++    if (!sourceComposer && exportFromDraft(draft, attachments.length > 0)) return;
+++    if (sourceComposer && exportFromDraft(sourceComposer.draft, sourceComposer.attachments.length > 0)) return;
++     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
++     const originalDraft = sourceComposer?.draft ?? draft;
++     const sourceAttachments = sourceComposer?.attachments ?? attachments;
++@@ -2434,7 +2458,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++     } finally {
++       setAttachmentsUploading(false);
++     }
++-  }, [askSideFromDraft, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, liveStatus.type, persistedDraftKey, props.onDraftChange, props.sessionId, revertMessageId, revertedMessageCount, sendDraft, sessionOwner]);
+++  }, [askSideFromDraft, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, exportFromDraft, liveStatus.type, persistedDraftKey, props.onDraftChange, props.sessionId, revertMessageId, revertedMessageCount, sendDraft, sessionOwner]);
++ 
++   // A chat command from a button ("/review", "/fix 1, 3"): sent like a typed one, the composer's draft left alone.
++   const runChatCommand = useCallback(async (text: string) => {
++@@ -2486,6 +2510,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++   // sends it once the session reports idle.
++   const handleQueue = useCallback(() => {
++     if (askSideFromDraft(draft)) return;
+++    if (exportFromDraft(draft, attachments.length > 0)) return;
++     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
++     const text = draft.trim();
++     if (!text && attachments.length === 0) return;
++@@ -2495,7 +2520,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++     if (draftHasLostPaste(queuedDraft)) { toast.error(LOST_PASTE_MESSAGE); return; }
++     appendQueuedDraft(props.sessionId, queuedDraft);
++     clearComposer();
++-  }, [appendQueuedDraft, askSideFromDraft, attachments, buildDraft, clearComposer, draft, props.sessionId, sessionOwner]);
+++  }, [appendQueuedDraft, askSideFromDraft, attachments, buildDraft, clearComposer, draft, exportFromDraft, props.sessionId, sessionOwner]);
++ 
++   const removeQueuedDraft = useCallback((id: string) => {
++     const target = queuedItems.find((item) => item.id === id);
++@@ -3061,6 +3086,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 +     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 +     const mod = isMac ? event.metaKey : event.ctrlKey;
 +     if (!mod || event.shiftKey || event.altKey || event.key?.toLowerCase() !== "f") return;
@@ -2754,10 +3681,10 @@ index 00000000..a7b69b6c
 +       const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
 diff --git a/fork/patches/0010-upstream-compatibility.patch b/fork/patches/0010-upstream-compatibility.patch
 new file mode 100644
-index 00000000..5cf00b29
+index 00000000..23fbfcfe
 --- /dev/null
 +++ b/fork/patches/0010-upstream-compatibility.patch
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,31 @@
 +diff --git a/AGENTS.md b/AGENTS.md
 +index 82a42408..0add8d71 100644
 +--- a/AGENTS.md
@@ -2774,10 +3701,10 @@ index 00000000..5cf00b29
 ++Fork difference registry: `FORK_DIFFS.md`. Keep updated.
 +diff --git a/FORK_DIFFS.md b/FORK_DIFFS.md
 +new file mode 100644
-+index 00000000..a2a42fc4
++index 00000000..5cdc5283
 +--- /dev/null
 ++++ b/FORK_DIFFS.md
-+@@ -0,0 +1,10 @@
++@@ -0,0 +1,11 @@
 ++# Fork differences
 ++
 ++Compared with `omnirush-ai/omnirush-gui`:
@@ -2788,17 +3715,18 @@ index 00000000..5cf00b29
 ++- Find in artifact previews; prompt Select All excludes attachment chips; editor scroll position is preserved.
 ++- Markdown code blocks follow dark/custom themes.
 ++- Saved desktop UI zoom (`Cmd+` / `Cmd-` / `Cmd+0`) is restored immediately on launch and preserved across route transitions.
+++- Full session/branch Markdown (`.md`) export — including model reasoning, tool call inputs/outputs/errors, and nested sub-agent transcripts — via the session header, sidebar menu, Command Palette, and `/export [filename]` ([omnirush-ai/omnirush-gui#349](https://github.com/omnirush-ai/omnirush-gui/issues/349)).
 diff --git a/fork/patches/0011-github-favicon-theme.patch b/fork/patches/0011-github-favicon-theme.patch
 new file mode 100644
-index 00000000..0d27e3b2
+index 00000000..cd8d6f44
 --- /dev/null
 +++ b/fork/patches/0011-github-favicon-theme.patch
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,140 @@
 +diff --git a/apps/app/src/lib/favicon.ts b/apps/app/src/lib/favicon.ts
-+index d4876fa8..6db07576 100644
++index d4876fa8..b34a6a80 100644
 +--- a/apps/app/src/lib/favicon.ts
 ++++ b/apps/app/src/lib/favicon.ts
-+@@ -1,14 +1,107 @@
++@@ -1,14 +1,106 @@
 + /**
 +  * Paper rule "Pasted links get favicons": any http(s) URL in user or
 +  * assistant text renders with the site's favicon next to it.
@@ -2900,7 +3828,6 @@ index 00000000..0d27e3b2
 ++    try {
 ++      window
 ++        .matchMedia?.("(prefers-color-scheme: dark)")
-++        // @ts-expect-error old API
 ++        ?.addListener?.(() => syncFaviconTheme());
 ++    } catch {
 ++      // ignore
@@ -2937,12 +3864,12 @@ index 00000000..0d27e3b2
 ++});
 diff --git a/fork/patches/0012-desktop-startup-zoom-restore.patch b/fork/patches/0012-desktop-startup-zoom-restore.patch
 new file mode 100644
-index 00000000..d9e57a87
+index 00000000..7a51461d
 --- /dev/null
 +++ b/fork/patches/0012-desktop-startup-zoom-restore.patch
-@@ -0,0 +1,769 @@
+@@ -0,0 +1,350 @@
 +diff --git a/apps/app/src/app/lib/desktop.ts b/apps/app/src/app/lib/desktop.ts
-+index 841fe975..fcb7fe96 100644
++index 526c92f2..f345acf0 100644
 +--- a/apps/app/src/app/lib/desktop.ts
 ++++ b/apps/app/src/app/lib/desktop.ts
 +@@ -196,6 +196,10 @@ declare global {
@@ -2956,7 +3883,7 @@ index 00000000..d9e57a87
 +       shell?: {
 +         openExternal?: (url: string) => Promise<{ ok: boolean; error?: string } | void>;
 +         relaunch?: () => Promise<void>;
-+@@ -724,8 +728,28 @@ export async function joinDesktopPath(...parts: string[]): Promise<string> {
++@@ -725,8 +729,28 @@ export async function joinDesktopPath(...parts: string[]): Promise<string> {
 +   return invokeElectronHelper("__joinPath", ...parts);
 + }
 + 
@@ -3291,425 +4218,1854 @@ index 00000000..d9e57a87
 ++    expect(order).toEqual(["preload:1.2", "main:__setZoomFactor:1.2"]);
 ++  });
 ++});
-+diff --git a/apps/desktop/electron/main.mjs b/apps/desktop/electron/main.mjs
-+index de5a4c2a..ff6d134d 100644
-+--- a/apps/desktop/electron/main.mjs
-++++ b/apps/desktop/electron/main.mjs
-+@@ -25,6 +25,7 @@ import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./run
-+ import { installAppRequestSecret } from "./app-request-secret.mjs";
-+ import { registerUpdaterIpc } from "./updater.mjs";
-+ import { initialWindowSize } from "./window-size.mjs";
-++import { createWindowZoomController } from "./window-zoom.mjs";
-+ import {
-+   browserActApproval,
-+   browserPermissionMode,
-+@@ -222,6 +223,7 @@ const applicationMenu = createApplicationMenu({
-+   docsUrl: DOCS_PAGE_URL,
-+   getWindow: () => createMainWindow(),
-+ });
-++const windowZoom = createWindowZoomController();
-+ 
-+ let browserPanel = null;
-+ 
-+@@ -2931,11 +2933,7 @@ const desktopCommandHandlers = {
-+   "__setZoomFactor": async (event, ...args) => {
-+       const factor = Number(args[0]);
-+       const window = activeWindowFromEvent(event);
-+-      if (!window || !Number.isFinite(factor) || factor <= 0) {
-+-        return false;
-+-      }
-+-      window.webContents.setZoomFactor(factor);
-+-      return true;
-++      return windowZoom.setFactor(window, factor);
-+   },
-+   "__setNativeTheme": async (event, ...args) => {
-+       return applyNativeTheme(String(args[0]));
-+@@ -3152,6 +3150,7 @@ async function createMainWindow() {
-+     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
-+   }
-+   applicationMenu.applyVisibility(mainWindow);
-++  windowZoom.attach(mainWindow);
-+   // Sponsored placements: the page's viewability timer stops while the window is blurred, minimized or hidden.
-+   watchWindowForPlacements(mainWindow);
-+ 
-+diff --git a/apps/desktop/electron/preload.mjs b/apps/desktop/electron/preload.mjs
-+index b7f32ed1..848907b8 100644
-+--- a/apps/desktop/electron/preload.mjs
-++++ b/apps/desktop/electron/preload.mjs
-+@@ -1,4 +1,4 @@
-+-import { contextBridge, ipcRenderer, webUtils } from "electron";
-++import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
-+ 
-+ const NATIVE_DEEP_LINK_EVENT = "omnirush:deep-link-native";
-+ const NATIVE_MENU_OPEN_SETTINGS_EVENT = "omnirush:native-menu:open-settings";
-+@@ -7,6 +7,54 @@ const NATIVE_MENU_CHECK_UPDATES_EVENT = "omnirush:native-menu:check-updates";
-+ const NATIVE_MENU_ZOOM_EVENT = "omnirush:native-menu:zoom";
-+ const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "omnirush:automation-runner:credential-rejected";
-+ const FINISH_GUARD_EVENT = "omnirush:finish-guard:finish";
-++const DESKTOP_FONT_ZOOM_STORAGE_KEY = "omnirush.desktop-font-zoom.v1";
-++const MIN_DESKTOP_FONT_ZOOM = 0.8;
-++const MAX_DESKTOP_FONT_ZOOM = 1.6;
-++const DESKTOP_FONT_ZOOM_STEP = 0.1;
-++
-++/**
-++ * @param {number} value
-++ */
-++function normalizeDesktopZoomFactor(value) {
-++  if (!Number.isFinite(value)) return 1;
-++  const clamped = Math.min(MAX_DESKTOP_FONT_ZOOM, Math.max(MIN_DESKTOP_FONT_ZOOM, value));
-++  const snapped = Math.round(clamped / DESKTOP_FONT_ZOOM_STEP) * DESKTOP_FONT_ZOOM_STEP;
-++  return Number(snapped.toFixed(2));
-++}
-++
-++/**
-++ * @param {number} value
-++ */
-++function applyRendererZoomFactor(value) {
-++  const factor = Number(value);
-++  if (!Number.isFinite(factor) || factor <= 0) return false;
-++  try {
-++    webFrame.setZoomFactor(factor);
-++    return true;
-++  } catch {
-++    return false;
-++  }
-++}
-++
-++function readInitialStoredZoomFactor() {
-++  if (typeof window === "undefined" || !window.localStorage) return null;
-++  if (window.location?.href === "about:blank") return null;
-++  const raw = window.localStorage.getItem(DESKTOP_FONT_ZOOM_STORAGE_KEY);
-++  if (raw == null || raw === "") return null;
-++  const parsed = Number.parseFloat(raw);
-++  if (!Number.isFinite(parsed)) return null;
-++  return normalizeDesktopZoomFactor(parsed);
-++}
-++
-++function applyInitialStoredZoomFactor() {
-++  try {
-++    const factor = readInitialStoredZoomFactor();
-++    if (factor === null) return false;
-++    return applyRendererZoomFactor(factor);
-++  } catch {
-++    return false;
-++  }
-++}
-+ 
-+ function normalizePlatform(value) {
-+   if (value === "darwin" || value === "linux") return value;
-+@@ -119,6 +167,21 @@ contextBridge.exposeInMainWorld("__OMNIRUSH_ELECTRON__", {
-+       return webUtils.getPathForFile(file);
-+     },
-+   },
-++  zoom: {
-++    getFactor() {
-++      try {
-++        return webFrame.getZoomFactor();
-++      } catch {
-++        return 1;
-++      }
-++    },
-++    /**
-++     * @param {number} factor
-++     */
-++    setFactor(factor) {
-++      return applyRendererZoomFactor(factor);
-++    },
-++  },
-+   shell: {
-+     openExternal(url) {
-+       return ipcRenderer.invoke("omnirush:shell:openExternal", url);
-+@@ -417,6 +480,11 @@ if (!applyShellDocumentMarkers() && typeof document !== "undefined") {
-+   document.addEventListener("DOMContentLoaded", applyShellDocumentMarkers, { once: true });
-+ }
-+ 
-++applyInitialStoredZoomFactor();
-++if (typeof document !== "undefined" && document.readyState === "loading") {
-++  document.addEventListener("DOMContentLoaded", applyInitialStoredZoomFactor, { once: true });
-++}
-++
-+ if (!installMenuOverlayDismissListeners() && typeof document !== "undefined") {
-+   document.addEventListener("DOMContentLoaded", installMenuOverlayDismissListeners, { once: true });
-+ }
-+diff --git a/apps/desktop/electron/window-zoom.mjs b/apps/desktop/electron/window-zoom.mjs
+diff --git a/fork/patches/0013-session-markdown-export.patch b/fork/patches/0013-session-markdown-export.patch
+new file mode 100644
+index 00000000..ad550264
+--- /dev/null
++++ b/fork/patches/0013-session-markdown-export.patch
+@@ -0,0 +1,1842 @@
++diff --git a/apps/app/src/app/lib/session-markdown-export.ts b/apps/app/src/app/lib/session-markdown-export.ts
 +new file mode 100644
-+index 00000000..606a062d
++index 00000000..3c90a187
 +--- /dev/null
-++++ b/apps/desktop/electron/window-zoom.mjs
-+@@ -0,0 +1,124 @@
-++/**
-++ * Keeps each BrowserWindow's desired UI zoom factor synchronized without
-++ * calling webContents.setZoomFactor while the window is still hidden before
-++ * ready-to-show (electron#51972) or losing zoom across file:// #hash route
-++ * transitions on Electron <43.3 (electron#54381).
-++ *
-++ * @typedef {{
-++ *   isDestroyed?: () => boolean;
-++ *   getZoomFactor?: () => number;
-++ *   setZoomFactor?: (factor: number) => void;
-++ *   on?: (event: string, listener: () => void) => unknown;
-++ * }} ZoomableWebContents
-++ *
-++ * @typedef {{
-++ *   isDestroyed?: () => boolean;
-++ *   isVisible?: () => boolean;
-++ *   on?: (event: string, listener: () => void) => unknown;
-++ *   webContents?: ZoomableWebContents | null;
-++ * }} ZoomableWindow
-++ */
+++++ b/apps/app/src/app/lib/session-markdown-export.ts
++@@ -0,0 +1,754 @@
+++import type {
+++  AssistantMessage,
+++  FilePart,
+++  Message,
+++  Part,
+++  Session,
+++  Todo,
+++  ToolPart,
+++} from "@opencode-ai/sdk/v2/client";
 ++
-++/**
-++ * @param {ZoomableWindow | null | undefined} win
-++ * @returns {win is ZoomableWindow}
-++ */
-++function isUsableWindow(win) {
-++  return Boolean(win && (typeof win.isDestroyed !== "function" || !win.isDestroyed()));
+++export type ExportableSessionMessage = {
+++  info: Message;
+++  parts: Part[];
+++};
+++
+++export type ExportableSessionTree = {
+++  session: Session;
+++  messages: ExportableSessionMessage[];
+++  todos?: Todo[];
+++  /** Child sub-agent sessions keyed by their OpenCode session ID (`task` tool `state.metadata.sessionId`). */
+++  subagentSessions?: ReadonlyMap<string, ExportableSessionTree>;
+++};
+++
+++export type ParsedExportSlashCommand = {
+++  /** Optional relative path inside the workspace (`/export notes/chat.md`), or `null` for interactive save/download. */
+++  filename: string | null;
+++};
+++
+++export type RelativeExportPathValidation =
+++  | { ok: true; relativePath: string }
+++  | { ok: false; reason: string };
+++
+++const BUILTIN_TOOL_TITLES: Record<string, string> = {
+++  bash: "Bash",
+++  read: "Read",
+++  write: "Write",
+++  edit: "Edit",
+++  multiedit: "MultiEdit",
+++  apply_patch: "Apply Patch",
+++  patch: "Patch",
+++  glob: "Glob",
+++  grep: "Grep",
+++  list: "List",
+++  ls: "List",
+++  task: "Task",
+++  todowrite: "Todo Write",
+++  todoread: "Todo Read",
+++  webfetch: "Web Fetch",
+++  websearch: "Web Search",
+++  codesearch: "Code Search",
+++  question: "Question",
+++  skill: "Skill",
+++  lsp: "LSP",
+++  batch: "Batch",
+++  plan_enter: "Enter Plan Mode",
+++  plan_exit: "Exit Plan Mode",
+++  structuredoutput: "Structured Output",
+++};
+++
+++const MAX_SLUG_UTF8_BYTES = 64;
+++
+++function isRecord(value: unknown): value is Record<string, unknown> {
+++  return typeof value === "object" && value !== null && !Array.isArray(value);
+++}
+++
+++function normalizeNewlines(value: string): string {
+++  return value.replace(/\r\n?/g, "\n");
 ++}
 ++
 ++/**
-++ * @param {ZoomableWindow | null | undefined} win
+++ * Compute a backtick code fence guaranteed to be strictly longer than any
+++ * contiguous run of backticks inside `content`, preventing Markdown injection
+++ * or broken code blocks even when exporting conversations containing Markdown.
 ++ */
-++function isWindowVisible(win) {
-++  if (!isUsableWindow(win)) return false;
-++  return typeof win.isVisible === "function" ? Boolean(win.isVisible()) : true;
+++export function fenceMarkdownCode(content: string, language = ""): string {
+++  const normalized = normalizeNewlines(content);
+++  let longestRun = 0;
+++  let currentRun = 0;
+++  for (let i = 0; i < normalized.length; i += 1) {
+++    if (normalized.charCodeAt(i) === 96 /* ` */) {
+++      currentRun += 1;
+++      if (currentRun > longestRun) longestRun = currentRun;
+++    } else {
+++      currentRun = 0;
+++    }
+++  }
+++  const fence = "`".repeat(Math.max(3, longestRun + 1));
+++  const safeLang = language.replace(/`/g, "").trim();
+++  const body = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
+++  return `${fence}${safeLang}\n${body}\n${fence}`;
 ++}
 ++
-++export function createWindowZoomController() {
-++  /** @type {WeakMap<ZoomableWindow, number>} */
-++  const desiredFactors = new WeakMap();
-++  /** @type {WeakSet<ZoomableWindow>} */
-++  const attachedWindows = new WeakSet();
-++  /** @type {WeakSet<ZoomableWindow>} */
-++  const pendingWindows = new WeakSet();
+++function renderBlockquote(headerLine: string | null, text: string): string {
+++  const lines = normalizeNewlines(text).split("\n");
+++  const quoted = lines.map((line) => (line.length > 0 ? `> ${line}` : ">"));
+++  if (headerLine) {
+++    return [`> ${headerLine}`, ...quoted].join("\n");
+++  }
+++  return quoted.join("\n");
+++}
 ++
-++  /**
-++   * @param {ZoomableWindow | null | undefined} win
-++   */
-++  function syncVisibleWindowZoom(win) {
-++    if (!isUsableWindow(win) || !isWindowVisible(win)) return false;
-++    const factor = desiredFactors.get(win);
-++    if (typeof factor !== "number" || !Number.isFinite(factor) || factor <= 0) {
-++      return false;
-++    }
-++    const contents = win.webContents;
-++    if (!contents || (typeof contents.isDestroyed === "function" && contents.isDestroyed())) {
-++      return false;
-++    }
-++    const pending = pendingWindows.delete(win);
-++    if (!pending && typeof contents.getZoomFactor === "function") {
-++      const current = contents.getZoomFactor();
-++      if (Number.isFinite(current) && Math.abs(current - factor) <= 1e-3) {
-++        return true;
+++function safeJsonStringify(value: unknown): string {
+++  const seen = new WeakSet<object>();
+++  try {
+++    const serialized = JSON.stringify(
+++      value,
+++      (_key, current: unknown) => {
+++        if (typeof current === "bigint") return current.toString();
+++        if (typeof current === "object" && current !== null) {
+++          if (seen.has(current)) return "[Circular]";
+++          seen.add(current);
+++        }
+++        return current;
+++      },
+++      2,
+++    );
+++    return typeof serialized === "string" ? serialized : String(value);
+++  } catch {
+++    return String(value);
+++  }
+++}
+++
+++function formatToolOutputBlock(rawOutput: string): string {
+++  const normalized = normalizeNewlines(rawOutput).trimEnd();
+++  if (!normalized) return fenceMarkdownCode("(empty output)");
+++  const trimmed = normalized.trim();
+++  if (
+++    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+++    (trimmed.startsWith("[") && trimmed.endsWith("]"))
+++  ) {
+++    try {
+++      const parsed: unknown = JSON.parse(trimmed);
+++      if (typeof parsed === "object" && parsed !== null) {
+++        return fenceMarkdownCode(safeJsonStringify(parsed), "json");
 ++      }
+++    } catch {
+++      // Not valid JSON; render raw text below.
 ++    }
-++    contents.setZoomFactor?.(factor);
-++    return true;
+++  }
+++  return fenceMarkdownCode(normalized);
+++}
+++
+++function hasMeaningfulInput(input: Record<string, unknown>): boolean {
+++  return Object.keys(input).length > 0;
+++}
+++
+++function humanizeToolName(rawTool: string): string {
+++  const trimmed = rawTool.trim();
+++  if (!trimmed) return "Tool";
+++  const lower = trimmed.toLowerCase();
+++  const builtin = BUILTIN_TOOL_TITLES[lower];
+++  if (builtin) return builtin;
+++  return trimmed
+++    .replace(/[_-]+/g, " ")
+++    .replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+++}
+++
+++function extractChildSessionId(metadata: Record<string, unknown> | undefined): string | null {
+++  if (!metadata) return null;
+++  const candidate = metadata.sessionId ?? metadata.sessionID;
+++  if (typeof candidate === "string" && candidate.trim()) {
+++    return candidate.trim();
+++  }
+++  return null;
+++}
+++
+++function extractLiveMetadataOutput(metadata: Record<string, unknown> | undefined): string | null {
+++  if (!metadata) return null;
+++  const output = metadata.output;
+++  if (typeof output === "string" && output.trim()) {
+++    return output;
+++  }
+++  return null;
+++}
+++
+++function extractSyntheticAttachmentNames(metadata: Record<string, unknown> | undefined): string[] {
+++  if (!metadata) return [];
+++  const raw = metadata.omnirushAttachments;
+++  if (!Array.isArray(raw)) return [];
+++  const names: string[] = [];
+++  for (const entry of raw) {
+++    if (!isRecord(entry)) continue;
+++    const name = typeof entry.name === "string" ? entry.name.trim() : "";
+++    if (name) names.push(name);
+++  }
+++  return names;
+++}
+++
+++function formatFileAttachmentLabel(part: FilePart): string {
+++  const sourcePath =
+++    part.source && (part.source.type === "file" || part.source.type === "symbol")
+++      ? part.source.path.trim()
+++      : part.source && part.source.type === "resource"
+++        ? part.source.uri.trim()
+++        : "";
+++  const primary = part.filename?.trim() || sourcePath || (part.url.startsWith("data:") ? "inline-attachment" : part.url);
+++  const mime = part.mime?.trim();
+++  return mime ? `${primary} (${mime})` : primary;
+++}
+++
+++function formatAssistantError(error: AssistantMessage["error"]): string | null {
+++  if (!error) return null;
+++  const dataRecord: Record<string, unknown> | null = isRecord(error.data) ? error.data : null;
+++  const detail =
+++    dataRecord && typeof dataRecord.message === "string" && dataRecord.message.trim()
+++      ? dataRecord.message.trim()
+++      : error.name;
+++  if (detail === error.name) {
+++    return `> **Error:** ${error.name}`;
+++  }
+++  return `> **Error (${error.name}):** ${normalizeNewlines(detail).replace(/\n+/g, " ")}`;
+++}
+++
+++function headingHashes(depth: number): string {
+++  const clamped = Math.min(6, Math.max(1, depth));
+++  return "#".repeat(clamped);
+++}
+++
+++function formatIsoTimestamp(epochMs: number | undefined): string | null {
+++  if (typeof epochMs !== "number" || !Number.isFinite(epochMs) || epochMs <= 0) return null;
+++  try {
+++    return new Date(epochMs).toISOString().replace(".000Z", "Z");
+++  } catch {
+++    return null;
+++  }
+++}
+++
+++function renderSubagentBlock(
+++  part: ToolPart,
+++  childTree: ExportableSessionTree,
+++  headingDepth: number,
+++  visited: ReadonlySet<string>,
+++): string | null {
+++  if (visited.has(childTree.session.id)) return null;
+++  const nextVisited = new Set(visited);
+++  nextVisited.add(childTree.session.id);
+++
+++  const input = part.state.input;
+++  const subagentType = typeof input.subagent_type === "string" ? input.subagent_type.trim() : "";
+++  const description =
+++    typeof input.description === "string" && input.description.trim()
+++      ? input.description.trim()
+++      : part.state.status === "completed" || part.state.status === "running"
+++        ? (part.state.title?.trim() ?? "")
+++        : "";
+++  const titleFallback = childTree.session.title?.trim() || childTree.session.id;
+++  const baseLabel = description || titleFallback;
+++  const label = subagentType ? `${baseLabel} (${subagentType})` : baseLabel;
+++
+++  const subHeading = headingHashes(headingDepth);
+++  const innerBody = renderMessagesSection(
+++    childTree,
+++    Math.min(6, headingDepth + 1),
+++    nextVisited,
+++  );
+++  if (!innerBody) {
+++    return `${subHeading} ⤷ Subagent: ${label}\n\n_(no recorded subagent turns)_\n\n${subHeading} ⤶ End subagent`;
+++  }
+++  return `${subHeading} ⤷ Subagent: ${label}\n\n${innerBody}\n\n${subHeading} ⤶ End subagent`;
+++}
+++
+++function renderToolPart(
+++  part: ToolPart,
+++  tree: ExportableSessionTree,
+++  headingDepth: number,
+++  visited: ReadonlySet<string>,
+++): string {
+++  const displayName = humanizeToolName(part.tool);
+++  const state = part.state;
+++  const codeModeFailed =
+++    Boolean(part.metadata && part.metadata.omnirushV2CodeMode === true) &&
+++    state.status === "completed" &&
+++    Boolean(state.metadata && state.metadata.error === true);
+++
+++  const statusSuffix =
+++    state.status === "error" || codeModeFailed
+++      ? " _(error)_"
+++      : state.status === "running"
+++        ? " _(running)_"
+++        : state.status === "pending"
+++          ? " _(pending)_"
+++          : "";
+++
+++  const stateTitle =
+++    (state.status === "completed" || state.status === "running") && state.title?.trim()
+++      ? ` — ${state.title.trim()}`
+++      : "";
+++
+++  const header = `**🛠 ${displayName}**${stateTitle}${statusSuffix}`;
+++  const blocks: string[] = [];
+++
+++  if (hasMeaningfulInput(state.input)) {
+++    blocks.push(fenceMarkdownCode(safeJsonStringify(state.input), "json"));
+++  } else if (state.status === "pending" && state.raw.trim()) {
+++    blocks.push(fenceMarkdownCode(state.raw));
 ++  }
 ++
-++  /**
-++   * @param {ZoomableWindow | null | undefined} win
-++   */
-++  function attach(win) {
-++    if (!isUsableWindow(win) || attachedWindows.has(win)) return;
-++    attachedWindows.add(win);
-++    const resync = () => {
-++      syncVisibleWindowZoom(win);
+++  if (state.status === "completed") {
+++    if (state.output.trim()) {
+++      blocks.push(formatToolOutputBlock(state.output));
+++    }
+++    if (state.attachments && state.attachments.length > 0) {
+++      const labels = state.attachments.map(formatFileAttachmentLabel);
+++      blocks.push(`> Tool attachments: ${labels.join(", ")}`);
+++    }
+++  } else if (state.status === "error") {
+++    const liveOutput = extractLiveMetadataOutput(state.metadata);
+++    if (liveOutput) {
+++      blocks.push(formatToolOutputBlock(liveOutput));
+++    }
+++    const errText = state.error.trim() || "Tool execution failed";
+++    blocks.push(`_Error:_\n${fenceMarkdownCode(errText)}`);
+++  } else if (state.status === "running") {
+++    const liveOutput = extractLiveMetadataOutput(state.metadata);
+++    if (liveOutput) {
+++      blocks.push(formatToolOutputBlock(liveOutput));
+++    }
+++  }
+++
+++  const toolSection =
+++    blocks.length === 0
+++      ? `${header} _(no input or output)_`
+++      : `${header}\n\n${blocks.join("\n\n")}`;
+++
+++  const metadata =
+++    state.status === "completed" || state.status === "running" || state.status === "error"
+++      ? state.metadata
+++      : undefined;
+++  const childSessionId = extractChildSessionId(metadata);
+++  const childTree =
+++    childSessionId && tree.subagentSessions ? tree.subagentSessions.get(childSessionId) : undefined;
+++  if (!childTree) {
+++    return toolSection;
+++  }
+++
+++  const subagentBlock = renderSubagentBlock(
+++    part,
+++    childTree,
+++    Math.min(6, headingDepth + 1),
+++    visited,
+++  );
+++  return subagentBlock ? `${toolSection}\n\n${subagentBlock}` : toolSection;
+++}
+++
+++function renderMessageParts(
+++  message: ExportableSessionMessage,
+++  tree: ExportableSessionTree,
+++  headingDepth: number,
+++  visited: ReadonlySet<string>,
+++): string[] {
+++  const blocks: string[] = [];
+++  const attachedFiles: string[] = [];
+++
+++  const flushAttachments = () => {
+++    if (attachedFiles.length === 0) return;
+++    blocks.push(`> Attached files: ${attachedFiles.join(", ")}`);
+++    attachedFiles.length = 0;
+++  };
+++
+++  for (const part of message.parts) {
+++    switch (part.type) {
+++      case "reasoning": {
+++        const trimmed = normalizeNewlines(part.text).trim();
+++        if (!trimmed) break;
+++        flushAttachments();
+++        blocks.push(renderBlockquote("_Reasoning_", trimmed));
+++        break;
+++      }
+++      case "text": {
+++        if (part.ignored) break;
+++        if (part.synthetic) {
+++          const syntheticAttachments = extractSyntheticAttachmentNames(part.metadata);
+++          if (syntheticAttachments.length > 0) {
+++            attachedFiles.push(...syntheticAttachments);
+++          }
+++          break;
+++        }
+++        const normalized = normalizeNewlines(part.text).trim();
+++        if (!normalized) break;
+++        flushAttachments();
+++        blocks.push(normalized);
+++        break;
+++      }
+++      case "file": {
+++        attachedFiles.push(formatFileAttachmentLabel(part));
+++        break;
+++      }
+++      case "tool": {
+++        flushAttachments();
+++        blocks.push(renderToolPart(part, tree, headingDepth, visited));
+++        break;
+++      }
+++      case "subtask": {
+++        flushAttachments();
+++        const desc = part.description.trim() || part.prompt.trim();
+++        const subtaskHeader = `**Subtask (\`${part.agent}\`):** ${desc}`;
+++        if (part.prompt.trim() && part.prompt.trim() !== desc) {
+++          blocks.push(`${subtaskHeader}\n\n${renderBlockquote(null, part.prompt.trim())}`);
+++        } else {
+++          blocks.push(subtaskHeader);
+++        }
+++        break;
+++      }
+++      case "patch": {
+++        if (part.files.length > 0) {
+++          flushAttachments();
+++          blocks.push(`> Patched files: ${part.files.map((file) => `\`${file}\``).join(", ")}`);
+++        }
+++        break;
+++      }
+++      case "agent": {
+++        if (part.name.trim()) {
+++          flushAttachments();
+++          blocks.push(`> Agent: \`@${part.name.trim()}\``);
+++        }
+++        break;
+++      }
+++      case "retry": {
+++        flushAttachments();
+++        const retryMsg = formatAssistantError(part.error) ?? `> _Retry attempt ${part.attempt}_`;
+++        blocks.push(`> _Retry attempt ${part.attempt}_\n${retryMsg}`);
+++        break;
+++      }
+++      case "compaction": {
+++        flushAttachments();
+++        blocks.push(part.auto ? "> _Context compacted automatically_" : "> _Context compacted_");
+++        break;
+++      }
+++      case "step-start":
+++      case "step-finish":
+++      case "snapshot":
+++        break;
+++    }
+++  }
+++
+++  flushAttachments();
+++
+++  if (message.info.role === "assistant" && message.info.error) {
+++    const formattedError = formatAssistantError(message.info.error);
+++    if (formattedError) blocks.push(formattedError);
+++  }
+++
+++  return blocks;
+++}
+++
+++/**
+++ * Filter messages to the active branch state, excluding turns rewound by Undo
+++ * (`session.revert.messageID`).
+++ */
+++export function filterVisibleBranchMessages(
+++  session: Pick<Session, "revert">,
+++  messages: ReadonlyArray<ExportableSessionMessage>,
+++): ExportableSessionMessage[] {
+++  const revertId = session.revert?.messageID?.trim() ?? "";
+++  if (!revertId) return [...messages];
+++  return messages.filter((message) => message.info.id < revertId);
+++}
+++
+++function renderMessagesSection(
+++  tree: ExportableSessionTree,
+++  headingDepth: number,
+++  visited: ReadonlySet<string>,
+++): string {
+++  const visible = filterVisibleBranchMessages(tree.session, tree.messages);
+++  const turnHeading = headingHashes(headingDepth);
+++  const renderedTurns: string[] = [];
+++
+++  for (const message of visible) {
+++    const blocks = renderMessageParts(message, tree, headingDepth, visited);
+++    if (blocks.length === 0) continue;
+++
+++    const roleTitle = message.info.role === "user" ? "User" : "Assistant";
+++    const metaParts: string[] = [];
+++    if (message.info.role === "assistant") {
+++      const modelLabel =
+++        message.info.providerID && message.info.modelID
+++          ? `${message.info.providerID}/${message.info.modelID}`
+++          : message.info.modelID || "";
+++      if (message.info.agent?.trim()) {
+++        metaParts.push(`Agent: \`${message.info.agent.trim()}\``);
+++      }
+++      if (modelLabel) {
+++        metaParts.push(`Model: \`${modelLabel}\``);
+++      }
+++    } else if (message.info.model?.modelID) {
+++      const userModel = message.info.model.providerID
+++        ? `${message.info.model.providerID}/${message.info.model.modelID}`
+++        : message.info.model.modelID;
+++      if (message.info.agent?.trim()) {
+++        metaParts.push(`Agent: \`${message.info.agent.trim()}\``);
+++      }
+++      if (userModel) {
+++        metaParts.push(`Model: \`${userModel}\``);
+++      }
+++    }
+++
+++    const metaLine = metaParts.length > 0 ? `\n_${metaParts.join(" · ")}_\n` : "\n";
+++    renderedTurns.push(`${turnHeading} ${roleTitle}${metaLine}\n${blocks.join("\n\n")}`);
+++  }
+++
+++  return renderedTurns.join("\n\n---\n\n");
+++}
+++
+++function renderTodosSection(todos: ReadonlyArray<Todo> | undefined): string | null {
+++  if (!todos || todos.length === 0) return null;
+++  const lines: string[] = [];
+++  for (const todo of todos) {
+++    const content = todo.content.trim();
+++    if (!content) continue;
+++    const checked = todo.status === "completed" ? "x" : " ";
+++    const statusNote =
+++      todo.status === "in_progress"
+++        ? " _(in progress)_"
+++        : todo.status === "cancelled"
+++          ? " _(cancelled)_"
+++          : "";
+++    lines.push(`- [${checked}] ${content}${statusNote}`);
+++  }
+++  if (lines.length === 0) return null;
+++  return `## Tasks\n\n${lines.join("\n")}`;
+++}
+++
+++/**
+++ * Format a full OmniRush chat session/branch (including model reasoning,
+++ * tool calls with JSON inputs & outputs, errors, attachments, todos, and
+++ * nested sub-agent sessions) as a standalone Markdown document.
+++ */
+++export function formatSessionAsMarkdown(tree: ExportableSessionTree): string {
+++  const visible = filterVisibleBranchMessages(tree.session, tree.messages);
+++  const visited = new Set<string>([tree.session.id]);
+++  const body = renderMessagesSection(tree, 2, visited);
+++
+++  const rawTitle = tree.session.title?.trim() ?? "";
+++  const title = rawTitle ? normalizeNewlines(rawTitle).replace(/\n+/g, " ") : "OmniRush conversation";
+++
+++  const models = new Set<string>();
+++  let totalInputTokens = 0;
+++  let totalOutputTokens = 0;
+++  let totalReasoningTokens = 0;
+++  let totalCost = 0;
+++  let renderedTurnCount = 0;
+++
+++  for (const message of visible) {
+++    const hasContent =
+++      message.parts.some((part) => {
+++        if (part.type === "text") return !part.ignored && (!part.synthetic || extractSyntheticAttachmentNames(part.metadata).length > 0) && Boolean(part.text.trim() || part.synthetic);
+++        if (part.type === "reasoning") return Boolean(part.text.trim());
+++        return (
+++          part.type === "tool" ||
+++          part.type === "file" ||
+++          part.type === "subtask" ||
+++          part.type === "patch" ||
+++          part.type === "agent" ||
+++          part.type === "retry" ||
+++          part.type === "compaction"
+++        );
+++      }) || Boolean(message.info.role === "assistant" && message.info.error);
+++    if (hasContent) renderedTurnCount += 1;
+++
+++    if (message.info.role === "assistant") {
+++      const modelId =
+++        message.info.providerID && message.info.modelID
+++          ? `${message.info.providerID}/${message.info.modelID}`
+++          : message.info.modelID;
+++      if (modelId) models.add(modelId);
+++      totalInputTokens += message.info.tokens?.input || 0;
+++      totalOutputTokens += message.info.tokens?.output || 0;
+++      totalReasoningTokens += message.info.tokens?.reasoning || 0;
+++      totalCost += message.info.cost || 0;
+++    }
+++  }
+++
+++  const countLabel = `${renderedTurnCount} ${renderedTurnCount === 1 ? "message" : "messages"}`;
+++  const metadataBullets: string[] = [];
+++  if (tree.session.directory?.trim()) {
+++    metadataBullets.push(`- **Workspace:** \`${tree.session.directory.trim()}\``);
+++  }
+++  if (tree.session.parentID?.trim()) {
+++    metadataBullets.push(`- **Parent session:** \`${tree.session.parentID.trim()}\``);
+++  }
+++  const createdIso = formatIsoTimestamp(tree.session.time?.created);
+++  const updatedIso = formatIsoTimestamp(tree.session.time?.updated);
+++  if (createdIso && updatedIso && createdIso !== updatedIso) {
+++    metadataBullets.push(`- **Created:** ${createdIso} · **Updated:** ${updatedIso}`);
+++  } else if (createdIso) {
+++    metadataBullets.push(`- **Created:** ${createdIso}`);
+++  }
+++  if (models.size > 0) {
+++    metadataBullets.push(`- **Models:** ${[...models].map((m) => `\`${m}\``).join(", ")}`);
+++  }
+++  if (totalInputTokens > 0 || totalOutputTokens > 0 || totalReasoningTokens > 0) {
+++    const tokenParts = [`${totalInputTokens.toLocaleString("en-US")} input`, `${totalOutputTokens.toLocaleString("en-US")} output`];
+++    if (totalReasoningTokens > 0) {
+++      tokenParts.push(`${totalReasoningTokens.toLocaleString("en-US")} reasoning`);
+++    }
+++    const costSuffix = totalCost > 0 ? ` ($${totalCost.toFixed(4)})` : "";
+++    metadataBullets.push(`- **Tokens:** ${tokenParts.join(", ")}${costSuffix}`);
+++  }
+++
+++  const headerLines = [
+++    `# ${title}`,
+++    `_${countLabel} · Session \`${tree.session.id}\`_`,
+++  ];
+++  if (metadataBullets.length > 0) {
+++    headerLines.push("", ...metadataBullets);
+++  }
+++
+++  const sections = [headerLines.join("\n")];
+++  if (body) {
+++    sections.push(body);
+++  } else {
+++    sections.push("_(no messages in this branch)_");
+++  }
+++
+++  const todosSection = renderTodosSection(tree.todos);
+++  if (todosSection) {
+++    sections.push(todosSection);
+++  }
+++
+++  return `${sections.join("\n\n---\n\n")}\n`;
+++}
+++
+++function truncateUtf8ByCodePoint(input: string, maxBytes: number): string {
+++  const encoder = new TextEncoder();
+++  if (encoder.encode(input).byteLength <= maxBytes) return input;
+++  let result = "";
+++  let usedBytes = 0;
+++  for (const ch of input) {
+++    const chunkBytes = encoder.encode(ch).byteLength;
+++    if (usedBytes + chunkBytes > maxBytes) break;
+++    result += ch;
+++    usedBytes += chunkBytes;
+++  }
+++  return result.replace(/[-_.]+$/g, "");
+++}
+++
+++function sanitizeFilenameSlug(raw: string): string {
+++  const cleaned = raw
+++    .normalize("NFKC")
+++    .replace(/[\u0000-\u001F\u007F<>:"/\\|?*]+/g, " ")
+++    .trim()
+++    .replace(/\s+/g, "-")
+++    .replace(/-+/g, "-")
+++    .replace(/^[-_.]+|[-_.]+$/g, "");
+++  return truncateUtf8ByCodePoint(cleaned, MAX_SLUG_UTF8_BYTES);
+++}
+++
+++/**
+++ * Build a safe default `.md` filename for saving a session transcript across
+++ * macOS, Windows, and Linux without hitting 255-byte path component limits.
+++ */
+++export function buildSessionExportFilename(
+++  session: Pick<Session, "id" | "title">,
+++): string {
+++  const safeId = session.id.replace(/[^a-zA-Z0-9_-]+/g, "").slice(0, 24) || "session";
+++  const rawTitle = session.title?.trim() ?? "";
+++  const titleSlug = rawTitle ? sanitizeFilenameSlug(rawTitle) : "";
+++  if (!titleSlug) {
+++    return `omnirush-chat-${safeId}.md`;
+++  }
+++  const shortId = safeId.slice(-10);
+++  return `${titleSlug}-${shortId}.md`;
+++}
+++
+++function ensureMarkdownExtension(filePath: string): string {
+++  const lower = filePath.toLowerCase();
+++  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+++    return filePath;
+++  }
+++  return `${filePath}.md`;
+++}
+++
+++/**
+++ * Parse a client-side `/export` or `/export <filename>` composer command.
+++ * Returns `null` when the text is not an `/export` command.
+++ */
+++export function parseExportSlashCommand(text: string): ParsedExportSlashCommand | null {
+++  const trimmed = text.trim();
+++  if (!trimmed) return null;
+++  const match = /^\/export(?:\s+([\s\S]+))?$/i.exec(trimmed);
+++  if (!match) return null;
+++  const rawArg = (match[1] ?? "").trim();
+++  if (!rawArg) return { filename: null };
+++  if (rawArg.includes("\n") || rawArg.includes("\r")) return null;
+++
+++  const unquoted =
+++    (rawArg.startsWith('"') && rawArg.endsWith('"') && rawArg.length >= 2) ||
+++    (rawArg.startsWith("'") && rawArg.endsWith("'") && rawArg.length >= 2)
+++      ? rawArg.slice(1, -1).trim()
+++      : rawArg;
+++  if (!unquoted) return { filename: null };
+++  return { filename: ensureMarkdownExtension(unquoted) };
+++}
+++
+++/**
+++ * Validate a relative filename passed to `/export <filename>` before writing
+++ * inside a local or remote workspace.
+++ */
+++export function validateRelativeExportPath(rawPath: string): RelativeExportPathValidation {
+++  const trimmed = rawPath.trim();
+++  if (!trimmed || trimmed.includes("\0")) {
+++    return { ok: false, reason: "Invalid export filename" };
+++  }
+++  if (
+++    trimmed.startsWith("/") ||
+++    trimmed.startsWith("\\") ||
+++    /^[a-zA-Z]:[\\/]/.test(trimmed)
+++  ) {
+++    return { ok: false, reason: "Refusing to write outside the project folder" };
+++  }
+++  if (trimmed.endsWith("/") || trimmed.endsWith("\\")) {
+++    return { ok: false, reason: "Export path must name a file, not a directory" };
+++  }
+++  const segments = trimmed.split(/[\\/]+/);
+++  for (const segment of segments) {
+++    if (!segment || segment === "." || segment === "..") {
+++      return { ok: false, reason: "Refusing to write outside the project folder" };
+++    }
+++    if (/[<>:"|?*\u0000-\u001F]/.test(segment)) {
+++      return { ok: false, reason: "Export filename contains unsupported characters" };
+++    }
+++  }
+++  const normalizedRel = ensureMarkdownExtension(segments.join("/"));
+++  return { ok: true, relativePath: normalizedRel };
+++}
+++
+++/**
+++ * Collect referenced sub-agent session IDs from `task` tool calls in the
+++ * visible branch of a session.
+++ */
+++export function collectReferencedSubagentSessionIds(
+++  session: Pick<Session, "revert">,
+++  messages: ReadonlyArray<ExportableSessionMessage>,
+++): string[] {
+++  const visible = filterVisibleBranchMessages(session, messages);
+++  const found: string[] = [];
+++  const seen = new Set<string>();
+++  for (const message of visible) {
+++    for (const part of message.parts) {
+++      if (part.type !== "tool") continue;
+++      const state = part.state;
+++      const metadata =
+++        state.status === "completed" || state.status === "running" || state.status === "error"
+++          ? state.metadata
+++          : undefined;
+++      const childId = extractChildSessionId(metadata);
+++      if (childId && !seen.has(childId)) {
+++        seen.add(childId);
+++        found.push(childId);
+++      }
+++    }
+++  }
+++  return found;
+++}
++diff --git a/apps/app/src/i18n/locales/en.ts b/apps/app/src/i18n/locales/en.ts
++index 588f94b6..7963f8df 100644
++--- a/apps/app/src/i18n/locales/en.ts
+++++ b/apps/app/src/i18n/locales/en.ts
++@@ -1241,6 +1241,12 @@ export default {
++   "session.cmd_diagnostics_copy_detail": "Copy a sanitized diagnostics bundle to share when something goes wrong",
++   "session.cmd_diagnostics_export_title": "Export diagnostics",
++   "session.cmd_diagnostics_export_detail": "Save the sanitized diagnostics bundle as a JSON file",
+++  "session.export_markdown": "Export as Markdown",
+++  "session.cmd_export_markdown_title": "Export chat as Markdown",
+++  "session.cmd_export_markdown_detail": "Save full thread with reasoning and tool calls to a .md file",
+++  "session.export_markdown_saved": "Exported chat to {path}",
+++  "session.export_markdown_failed": "Could not export chat as Markdown",
+++  "session.export_markdown_reveal": "Show file",
++   "session.cmd_reload_config_title": "Reload omnirush.ai config",
++   "session.cmd_reload_config_detail": "Re-read provider, MCP server, and model configuration without restarting",
++   "session.cmd_sessions_detail": "{count} available across workspaces",
++diff --git a/apps/app/src/i18n/locales/ru.ts b/apps/app/src/i18n/locales/ru.ts
++index 2269df41..e7080fd2 100644
++--- a/apps/app/src/i18n/locales/ru.ts
+++++ b/apps/app/src/i18n/locales/ru.ts
++@@ -1287,4 +1287,10 @@ export default {
++   "extensions.subtitle": "Навыки, подключения и инструменты, которые может использовать ваш агент.",
++   "extensions.open_in_den": "Открыть в Den",
++   "extensions.title": "Библиотека",
+++  "session.export_markdown": "Экспортировать в Markdown",
+++  "session.cmd_export_markdown_title": "Экспортировать ветку в Markdown",
+++  "session.cmd_export_markdown_detail": "Сохранить полное содержимое ветки с рассуждениями и вызовами инструментов в .md файл",
+++  "session.export_markdown_saved": "Ветка экспортирована в {path}",
+++  "session.export_markdown_failed": "Не удалось экспортировать ветку в Markdown",
+++  "session.export_markdown_reveal": "Показать файл",
++ } as const;
++diff --git a/apps/app/src/i18n/locales/zh.ts b/apps/app/src/i18n/locales/zh.ts
++index e3010078..d2a102f7 100644
++--- a/apps/app/src/i18n/locales/zh.ts
+++++ b/apps/app/src/i18n/locales/zh.ts
++@@ -1247,6 +1247,12 @@ export default {
++   "session.cmd_diagnostics_copy_detail": "复制脱敏后的诊断包，出问题时可以分享",
++   "session.cmd_diagnostics_export_title": "导出诊断信息",
++   "session.cmd_diagnostics_export_detail": "将脱敏后的诊断包保存为 JSON 文件",
+++  "session.export_markdown": "导出为 Markdown",
+++  "session.cmd_export_markdown_title": "将对话导出为 Markdown",
+++  "session.cmd_export_markdown_detail": "将包含推理过程和工具调用的完整对话保存为 .md 文件",
+++  "session.export_markdown_saved": "已将对话导出到 {path}",
+++  "session.export_markdown_failed": "无法将对话导出为 Markdown",
+++  "session.export_markdown_reveal": "显示文件",
++   "session.cmd_reload_config_title": "重新加载 omnirush.ai 配置",
++   "session.cmd_reload_config_detail": "无需重启，重新读取提供商、MCP 服务器和模型配置",
++   "session.cmd_sessions_detail": "跨工作区共 {count} 个",
++diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
++new file mode 100644
++index 00000000..cca366a7
++--- /dev/null
+++++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
++@@ -0,0 +1,263 @@
+++import { useCallback, useRef, useState } from "react";
+++
+++import { toast } from "@/components/ui/sonner";
+++import { revealDesktopItemInDir, saveFile } from "@/app/lib/desktop";
+++import { downloadTextAsFile } from "@/app/lib/download";
+++import { unwrap } from "@/app/lib/opencode";
+++import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
+++import type { OmniRushServerClient, OmniRushSessionSnapshot } from "@/app/lib/omnirush-server";
+++import { isDesktopRuntime } from "@/app/lib/runtime-env";
+++import {
+++  buildSessionExportFilename,
+++  collectReferencedSubagentSessionIds,
+++  formatSessionAsMarkdown,
+++  validateRelativeExportPath,
+++  type ExportableSessionTree,
+++} from "@/app/lib/session-markdown-export";
+++import { t } from "@/i18n";
+++import { getReactQueryClient } from "@/react-app/infra/query-client";
+++import { snapshotKey } from "@/react-app/domains/session/sync/session-sync";
+++
+++export type ExportSessionMarkdownTarget = {
+++  workspaceId: string;
+++  serverWorkspaceId?: string;
+++  sessionId: string;
+++  opencodeBaseUrl: string;
+++  token: string;
+++  workspaceRoot?: string;
+++  serverClient?: OmniRushServerClient | null;
+++  /** Optional relative workspace path passed via `/export <filename>`. */
+++  relativeFilename?: string | null;
+++};
+++
+++export type ExportSessionMarkdownOutcome =
+++  | { outcome: "saved"; path: string }
+++  | { outcome: "canceled" }
+++  | { outcome: "failed"; error: string };
+++
+++const MAX_SUBAGENT_DEPTH = 4;
+++
+++function shortenSavedPathForToast(savedPath: string, workspaceRoot?: string): string {
+++  const root = workspaceRoot?.trim().replace(/[\\/]+$/, "") ?? "";
+++  if (root && savedPath.startsWith(`${root}/`)) {
+++    return savedPath.slice(root.length + 1);
+++  }
+++  if (root && savedPath.startsWith(`${root}\\`)) {
+++    return savedPath.slice(root.length + 1);
+++  }
+++  const parts = savedPath.split(/[\\/]+/).filter(Boolean);
+++  return parts.length > 2 ? parts.slice(-2).join("/") : savedPath;
+++}
+++
+++async function loadSessionTreeRecursive(params: {
+++  client: ReturnType<typeof createClientV2>;
+++  workspaceId: string;
+++  sessionId: string;
+++  depth: number;
+++  visited: Set<string>;
+++}): Promise<ExportableSessionTree> {
+++  const { client, workspaceId, sessionId, depth, visited } = params;
+++  visited.add(sessionId);
+++
+++  let tree: ExportableSessionTree;
+++  try {
+++    const [sessionResult, messagesResult, todoResult] = await Promise.all([
+++      client.session.get({ sessionID: sessionId }),
+++      client.session.messages({ sessionID: sessionId }),
+++      client.session.todo({ sessionID: sessionId }).catch(() => null),
+++    ]);
+++    const session = unwrap(sessionResult);
+++    const messages = unwrap(messagesResult);
+++    const todos = todoResult && todoResult.data ? todoResult.data : [];
+++    tree = { session, messages, todos };
+++  } catch (liveError) {
+++    const cached = getReactQueryClient().getQueryData<OmniRushSessionSnapshot>(
+++      snapshotKey(workspaceId, sessionId),
+++    );
+++    if (!cached) {
+++      throw liveError;
+++    }
+++    tree = {
+++      session: cached.session,
+++      messages: cached.messages,
+++      todos: cached.todos,
 ++    };
-++    if (typeof win.on === "function") {
-++      win.on("show", resync);
-++      win.on("restore", resync);
-++    }
-++    const contents = win.webContents;
-++    if (contents && typeof contents.on === "function") {
-++      contents.on("did-finish-load", resync);
-++      contents.on("did-navigate-in-page", resync);
+++  }
+++
+++  if (depth >= MAX_SUBAGENT_DEPTH) {
+++    return tree;
+++  }
+++
+++  const childIds = collectReferencedSubagentSessionIds(tree.session, tree.messages).filter(
+++    (childId) => !visited.has(childId),
+++  );
+++  if (childIds.length === 0) {
+++    return tree;
+++  }
+++
+++  const subagentSessions = new Map<string, ExportableSessionTree>();
+++  for (const childId of childIds) {
+++    if (visited.has(childId)) continue;
+++    try {
+++      const childTree = await loadSessionTreeRecursive({
+++        client,
+++        workspaceId,
+++        sessionId: childId,
+++        depth: depth + 1,
+++        visited,
+++      });
+++      subagentSessions.set(childId, childTree);
+++    } catch {
+++      // Sub-agent child session may have been cleaned up; keep parent export intact.
 ++    }
 ++  }
 ++
-++  /**
-++   * @param {ZoomableWindow | null | undefined} win
-++   * @param {number} rawFactor
-++   */
-++  function setFactor(win, rawFactor) {
-++    const factor = Number(rawFactor);
-++    if (!isUsableWindow(win) || !Number.isFinite(factor) || factor <= 0) {
-++      return false;
-++    }
-++    attach(win);
-++    desiredFactors.set(win, factor);
-++    if (!isWindowVisible(win)) {
-++      pendingWindows.add(win);
-++      return true;
-++    }
-++    pendingWindows.delete(win);
-++    win.webContents?.setZoomFactor?.(factor);
-++    return true;
-++  }
-++
-++  /**
-++   * @param {ZoomableWindow | null | undefined} win
-++   */
-++  function getDesiredFactor(win) {
-++    if (!isUsableWindow(win)) return null;
-++    return desiredFactors.get(win) ?? null;
-++  }
-++
-++  return {
-++    attach,
-++    setFactor,
-++    getDesiredFactor,
-++    syncVisibleWindowZoom,
-++  };
+++  return subagentSessions.size > 0 ? { ...tree, subagentSessions } : tree;
 ++}
-+diff --git a/apps/desktop/electron/window-zoom.test.mjs b/apps/desktop/electron/window-zoom.test.mjs
-+new file mode 100644
-+index 00000000..0168e6a4
-+--- /dev/null
-++++ b/apps/desktop/electron/window-zoom.test.mjs
-+@@ -0,0 +1,143 @@
-++import assert from "node:assert/strict";
-++import { describe, it } from "node:test";
-++import { createWindowZoomController } from "./window-zoom.mjs";
 ++
 ++/**
-++ * @param {{ visible?: boolean; initialZoom?: number }} [options]
+++ * Fetch the full unwindowed session transcript (including reasoning, tool
+++ * calls, and any nested sub-agent sessions), serialize it to Markdown, and
+++ * write/download the `.md` file with toast feedback.
 ++ */
-++function createFakeWindow(options = {}) {
-++  let visible = options.visible ?? false;
-++  let zoomFactor = options.initialZoom ?? 1;
-++  let destroyed = false;
-++  /** @type {Map<string, Array<() => void>>} */
-++  const windowListeners = new Map();
-++  /** @type {Map<string, Array<() => void>>} */
-++  const contentsListeners = new Map();
-++  /** @type {number[]} */
-++  const setCalls = [];
+++export async function exportSessionMarkdown(
+++  target: ExportSessionMarkdownTarget,
+++): Promise<ExportSessionMarkdownOutcome> {
+++  const sessionId = target.sessionId.trim();
+++  const baseUrl = target.opencodeBaseUrl.trim();
+++  if (!sessionId || !baseUrl) {
+++    const message = t("session.export_markdown_failed");
+++    toast.error(message);
+++    return { outcome: "failed", error: message };
+++  }
 ++
-++  /**
-++   * @param {Map<string, Array<() => void>>} registry
-++   * @param {string} event
-++   * @param {() => void} listener
-++   */
-++  const addListener = (registry, event, listener) => {
-++    const list = registry.get(event) ?? [];
-++    list.push(listener);
-++    registry.set(event, list);
-++  };
-++
-++  /**
-++   * @param {Map<string, Array<() => void>>} registry
-++   * @param {string} event
-++   */
-++  const emit = (registry, event) => {
-++    for (const listener of registry.get(event) ?? []) {
-++      listener();
+++  try {
+++    const relativeArg = target.relativeFilename?.trim() ?? "";
+++    const validatedRelative = relativeArg ? validateRelativeExportPath(relativeArg) : null;
+++    if (validatedRelative && !validatedRelative.ok) {
+++      throw new Error(validatedRelative.reason);
 ++    }
-++  };
 ++
-++  const win = {
-++    isDestroyed: () => destroyed,
-++    isVisible: () => visible,
-++    /**
-++     * @param {string} event
-++     * @param {() => void} listener
-++     */
-++    on(event, listener) {
-++      addListener(windowListeners, event, listener);
-++      return win;
-++    },
-++    webContents: {
-++      isDestroyed: () => destroyed,
-++      getZoomFactor: () => zoomFactor,
-++      /**
-++       * @param {number} factor
-++       */
-++      setZoomFactor(factor) {
-++        zoomFactor = factor;
-++        setCalls.push(factor);
-++      },
-++      /**
-++       * @param {string} event
-++       * @param {() => void} listener
-++       */
-++      on(event, listener) {
-++        addListener(contentsListeners, event, listener);
-++        return win.webContents;
-++      },
-++    },
-++    show() {
-++      visible = true;
-++      emit(windowListeners, "show");
-++    },
-++    emitInPageNavigation(resetZoomTo = zoomFactor) {
-++      zoomFactor = resetZoomTo;
-++      emit(contentsListeners, "did-navigate-in-page");
-++    },
-++    destroy() {
-++      destroyed = true;
-++    },
-++    get setCalls() {
-++      return setCalls;
-++    },
-++  };
+++    const client = createClientV2(baseUrl, target.workspaceRoot?.trim() || undefined, {
+++      token: target.token,
+++    });
+++    const tree = await loadSessionTreeRecursive({
+++      client,
+++      workspaceId: target.workspaceId,
+++      sessionId,
+++      depth: 0,
+++      visited: new Set<string>(),
+++    });
 ++
-++  return win;
+++    const markdown = formatSessionAsMarkdown(tree);
+++    const defaultFilename = buildSessionExportFilename(tree.session);
+++    const desktop = isDesktopRuntime();
+++    const localWorkspaceRoot = target.workspaceRoot?.trim() ?? "";
+++
+++    if (validatedRelative && validatedRelative.ok) {
+++      const relPath = validatedRelative.relativePath;
+++      if (desktop && localWorkspaceRoot) {
+++        const savedPath = await saveFile({
+++          workspaceRoot: localWorkspaceRoot,
+++          relativePath: relPath,
+++          content: markdown,
+++        });
+++        if (!savedPath) {
+++          return { outcome: "canceled" };
+++        }
+++        toast.success(t("session.export_markdown_saved", { path: relPath }), {
+++          action: {
+++            label: t("session.export_markdown_reveal"),
+++            onClick: () => {
+++              void revealDesktopItemInDir(savedPath);
+++            },
+++          },
+++        });
+++        return { outcome: "saved", path: savedPath };
+++      }
+++
+++      const remoteWorkspaceId = (target.serverWorkspaceId ?? target.workspaceId).trim();
+++      if (target.serverClient && remoteWorkspaceId) {
+++        const stat = await target.serverClient.statWorkspaceFile(remoteWorkspaceId, relPath);
+++        if (stat.exists) {
+++          throw new Error(`${relPath} already exists — pass a new filename`);
+++        }
+++        await target.serverClient.writeWorkspaceFile(remoteWorkspaceId, {
+++          path: relPath,
+++          content: markdown,
+++        });
+++        toast.success(t("session.export_markdown_saved", { path: relPath }));
+++        return { outcome: "saved", path: relPath };
+++      }
+++
+++      const fallbackLeaf = relPath.split("/").pop() || defaultFilename;
+++      downloadTextAsFile(fallbackLeaf, markdown, "text/markdown;charset=utf-8");
+++      toast.success(t("session.export_markdown_saved", { path: fallbackLeaf }));
+++      return { outcome: "saved", path: fallbackLeaf };
+++    }
+++
+++    if (desktop) {
+++      const savedPath = await saveFile({
+++        title: t("session.cmd_export_markdown_title"),
+++        defaultPath: defaultFilename,
+++        workspaceRoot: localWorkspaceRoot || undefined,
+++        filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
+++        content: markdown,
+++      });
+++      if (!savedPath) {
+++        return { outcome: "canceled" };
+++      }
+++      const displayPath = shortenSavedPathForToast(savedPath, localWorkspaceRoot);
+++      toast.success(t("session.export_markdown_saved", { path: displayPath }), {
+++        action: {
+++          label: t("session.export_markdown_reveal"),
+++          onClick: () => {
+++            void revealDesktopItemInDir(savedPath);
+++          },
+++        },
+++      });
+++      return { outcome: "saved", path: savedPath };
+++    }
+++
+++    downloadTextAsFile(defaultFilename, markdown, "text/markdown;charset=utf-8");
+++    toast.success(t("session.export_markdown_saved", { path: defaultFilename }));
+++    return { outcome: "saved", path: defaultFilename };
+++  } catch (error) {
+++    const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "";
+++    const message = detail ? `${t("session.export_markdown_failed")}: ${detail}` : t("session.export_markdown_failed");
+++    toast.error(message);
+++    return { outcome: "failed", error: message };
+++  }
 ++}
 ++
-++describe("window zoom controller", () => {
-++  it("defers webContents.setZoomFactor while the window is hidden until show", () => {
-++    const controller = createWindowZoomController();
-++    const win = createFakeWindow({ visible: false, initialZoom: 1 });
+++export function useExportSessionMarkdown(target: Omit<ExportSessionMarkdownTarget, "relativeFilename">) {
+++  const [exporting, setExporting] = useState(false);
+++  const inFlightRef = useRef(false);
 ++
-++    assert.equal(controller.setFactor(win, 1.3), true);
-++    assert.equal(controller.getDesiredFactor(win), 1.3);
-++    assert.deepEqual(win.setCalls, []);
+++  const runExport = useCallback(
+++    async (relativeFilename?: string | null) => {
+++      if (inFlightRef.current) return;
+++      inFlightRef.current = true;
+++      setExporting(true);
+++      try {
+++        await exportSessionMarkdown({
+++          ...target,
+++          relativeFilename,
+++        });
+++      } finally {
+++        inFlightRef.current = false;
+++        setExporting(false);
+++      }
+++    },
+++    [
+++      target.opencodeBaseUrl,
+++      target.serverClient,
+++      target.sessionId,
+++      target.token,
+++      target.workspaceId,
+++      target.workspaceRoot,
+++    ],
+++  );
 ++
-++    win.show();
-++    assert.deepEqual(win.setCalls, [1.3]);
-++    assert.equal(win.webContents.getZoomFactor(), 1.3);
+++  return { exporting, exportMarkdown: runExport };
+++}
++diff --git a/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx b/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx
++index cfeec865..a1daaa46 100644
++--- a/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx
+++++ b/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx
++@@ -1,6 +1,6 @@
++ /** @jsxImportSource react */
++ import { useEffect, useState } from "react";
++-import { FileDiff, Gauge, Redo2, Undo2 } from "lucide-react";
+++import { Download, FileDiff, Gauge, Redo2, Undo2 } from "lucide-react";
++ 
++ import { Button } from "@/components/ui/button";
++ import { toast } from "@/components/ui/sonner";
++@@ -20,6 +20,7 @@ import { useSessionModelSelection } from "@/react-app/domains/session/surface/se
++ import type { ProviderCatalog } from "@/react-app/domains/session/surface/use-model-behavior";
++ import { ChangesPanel } from "./changes-panel";
++ import { contextUse, sandboxLabel, uploadsLine } from "./context-usage";
+++import { useExportSessionMarkdown } from "./export-session-markdown";
++ import { useSessionCommandsStore } from "./session-commands-store";
++ import { chatUndoKey } from "./undo-key";
++ import { useCachedQueryData, useUndoRedo, visibleMessages, type SessionCommandTarget } from "./use-session-commands";
++@@ -52,16 +53,24 @@ function isMac() {
++  */
++ export function SessionCommandControls(props: SessionCommandControlsProps) {
++   const commands = useUndoRedo(props);
+++  const { exporting: exportingMarkdown, exportMarkdown } = useExportSessionMarkdown(props);
++   const openChanges = useSessionCommandsStore((state) => state.openChanges);
++   const { undo, redo, canUndo, canRedo } = commands;
++ 
++   const running = commands.running;
++-  // The same undo / redo for the header menu (narrow windows hide these buttons).
+++  // The same undo / redo / export for the header menu (narrow windows hide these buttons).
++   const setHeaderActions = useSessionCommandsStore((state) => state.setHeaderActions);
++   useEffect(() => {
++-    setHeaderActions(props.sessionId, { canUndo, canRedo, undo, redo });
+++    setHeaderActions(props.sessionId, {
+++      canUndo,
+++      canRedo,
+++      undo,
+++      redo,
+++      exportMarkdown: () => exportMarkdown(),
+++      exportingMarkdown,
+++    });
++     return () => setHeaderActions(props.sessionId, null);
++-  }, [canRedo, canUndo, props.sessionId, redo, setHeaderActions, undo]);
+++  }, [canRedo, canUndo, exportMarkdown, exportingMarkdown, props.sessionId, redo, setHeaderActions, undo]);
++   useEffect(() => {
++     const onKey = (event: KeyboardEvent) => {
++       const action = chatUndoKey(event, isMac(), props.sessionId);
++@@ -143,6 +152,24 @@ export function SessionCommandControls(props: SessionCommandControlsProps) {
++         />
++         <TooltipContent>{t("session.changes")}</TooltipContent>
++       </Tooltip>
+++      <Tooltip>
+++        <TooltipTrigger
+++          render={
+++            <Button
+++              variant="ghost"
+++              size="icon-sm"
+++              className={iconButton}
+++              aria-label={t("session.export_markdown")}
+++              data-testid="session-export-markdown"
+++              disabled={exportingMarkdown}
+++              onClick={() => void exportMarkdown()}
+++            >
+++              <Download size={16} className={cn(exportingMarkdown && "animate-pulse")} />
+++            </Button>
+++          }
+++        />
+++        <TooltipContent>{t("session.export_markdown")}</TooltipContent>
+++      </Tooltip>
++       <StatusPopover {...props} />
++       <StatusDialog {...props} />
++       <ChangesPanel
++diff --git a/apps/app/src/react-app/domains/session/commands/session-commands-store.ts b/apps/app/src/react-app/domains/session/commands/session-commands-store.ts
++index f14c4de9..f1d020b8 100644
++--- a/apps/app/src/react-app/domains/session/commands/session-commands-store.ts
+++++ b/apps/app/src/react-app/domains/session/commands/session-commands-store.ts
++@@ -11,12 +11,14 @@ export type SessionCommandBridge = {
++   busy: boolean;
++ };
++ 
++-/** The header's undo / redo for the header menu of narrow windows (session-command-controls.tsx). */
+++/** The header's undo / redo / export for the header menu of narrow windows (session-command-controls.tsx). */
++ export type SessionHeaderActions = {
++   canUndo: boolean;
++   canRedo: boolean;
++   undo: () => void | Promise<void>;
++   redo: () => void | Promise<void>;
+++  exportMarkdown?: () => void | Promise<void>;
+++  exportingMarkdown?: boolean;
++ };
++ 
++ type SessionCommandsStore = {
++diff --git a/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx b/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx
++index ae0b7594..71489401 100644
++--- a/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx
+++++ b/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx
++@@ -23,6 +23,7 @@ export type SidebarContextValue = {
++   onOpenRenameSession?: (sessionId: string) => void;
++   onOpenDeleteSession?: (sessionId: string) => void;
++   onArchiveSession?: (sessionId: string, archived: boolean) => void;
+++  onExportSession?: (workspaceId: string, sessionId: string) => void;
++   archiveDisabledReason?: string;
++   onOpenCreateGroupModal?: (workspaceId: string) => void;
++   onOpenRenameWorkspace: (workspaceId: string) => void;
++diff --git a/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx b/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
++index 21785ad1..f93fb355 100644
++--- a/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
+++++ b/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
++@@ -10,6 +10,7 @@ import {
++   ChevronRight,
++   Columns2,
++   Copy,
+++  Download,
++   FolderPlus,
++   Gift,
++   Layers,
++@@ -401,6 +402,12 @@ function SessionMenuContent({
++             {t("workspace_list.rename_session")}
++           </DropdownMenuItem>
++         ) : null}
+++        {ctx.onExportSession ? (
+++          <DropdownMenuItem data-session-menu-export-md onClick={() => ctx.onExportSession?.(workspaceId, sessionId)}>
+++            <Download className="size-4" />
+++            {t("session.export_markdown")}
+++          </DropdownMenuItem>
+++        ) : null}
++         <DropdownMenuSub>
++           <DropdownMenuSubTrigger>
++             <Tag className="size-4" />
++@@ -499,6 +506,12 @@ function SessionMenuContent({
++         <Copy className="size-4" />
++         {t("session_management.copy_session_id")}
++       </ContextMenuItem>
+++      {ctx.onExportSession ? (
+++        <ContextMenuItem data-session-menu-export-md onClick={() => ctx.onExportSession?.(workspaceId, sessionId)}>
+++          <Download className="size-4" />
+++          {t("session.export_markdown")}
+++        </ContextMenuItem>
+++      ) : null}
++       <ContextMenuSub>
++         <ContextMenuSubTrigger>
++           <Tag className="mr-2 size-4" />
++@@ -945,6 +958,7 @@ export type AppSidebarProps = {
++   onOpenRenameSession?: (sessionId: string) => void;
++   onOpenDeleteSession?: (sessionId: string) => void;
++   onArchiveSession?: (sessionId: string, archived: boolean) => void;
+++  onExportSession?: (workspaceId: string, sessionId: string) => void;
++   archiveDisabledReason?: string;
++   onOpenCreateGroupModal?: (workspaceId: string) => void;
++   onOpenRenameWorkspace: (workspaceId: string) => void;
++@@ -1360,6 +1374,7 @@ export function AppSidebar(props: AppSidebarProps) {
++     onOpenRenameSession: props.onOpenRenameSession,
++     onOpenDeleteSession: props.onOpenDeleteSession,
++     onArchiveSession: props.onArchiveSession,
+++    onExportSession: props.onExportSession,
++     archiveDisabledReason: props.archiveDisabledReason,
++     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
++     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
++diff --git a/apps/app/src/react-app/shell/session-route.tsx b/apps/app/src/react-app/shell/session-route.tsx
++index 0a8f1b5c..7a962c0d 100644
++--- a/apps/app/src/react-app/shell/session-route.tsx
+++++ b/apps/app/src/react-app/shell/session-route.tsx
++@@ -27,6 +27,7 @@ import { isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
++ import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
++ import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
++ import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+++import { exportSessionMarkdown } from "@/react-app/domains/session/commands/export-session-markdown";
++ import { copySessionId } from "@/react-app/domains/session/sidebar/copy-session-id";
++ import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
++ import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
++@@ -3172,6 +3173,47 @@ export function SessionRoute() {
++     selectedWorkspaceId,
++   ]);
++ 
+++  const handleExportSession = useCallback(async (workspaceId: string, sessionId: string) => {
+++    const ownerId =
+++      workspaceId.trim() ||
+++      workspaceSessionGroups.find((group) =>
+++        group.sessions.some((session) => session?.id === sessionId),
+++      )?.workspace.id;
+++    const ownerWorkspace = workspaces.find((workspace) => workspace.id === ownerId) ?? selectedWorkspace;
+++    const endpoint = endpointForWorkspace(ownerWorkspace);
+++    if (!ownerWorkspace || !endpoint) {
+++      toast.error(t("session.export_markdown_failed"));
+++      return;
+++    }
+++    await exportSessionMarkdown({
+++      workspaceId: ownerWorkspace.id,
+++      serverWorkspaceId: endpoint.workspaceId,
+++      sessionId,
+++      opencodeBaseUrl: endpoint.opencodeBaseUrl,
+++      token: endpoint.token,
+++      workspaceRoot: endpoint.isRemote ? "" : (ownerWorkspace.path ?? ""),
+++      serverClient: endpoint.client,
+++    });
+++  }, [endpointForWorkspace, selectedWorkspace, workspaceSessionGroups, workspaces]);
+++
+++  const exportSessionMarkdownPaletteItem = useMemo<PaletteItem | null>(() => {
+++    const targetSessionId = focusedSession?.sessionId?.trim();
+++    const targetWorkspaceId = focusedSession?.workspaceId?.trim();
+++    if (!targetSessionId || !targetWorkspaceId) return null;
+++    return {
+++      id: "session.export-markdown",
+++      title: t("session.cmd_export_markdown_title"),
+++      detail: t("session.cmd_export_markdown_detail"),
+++      meta: "Session",
+++      group: "actions",
+++      searchText: "export markdown md chat conversation thread transcript reasoning tool calls freebuff",
+++      action: () => {
+++        setCommandPaletteOpen(false);
+++        void handleExportSession(targetWorkspaceId, targetSessionId);
+++      },
+++    };
+++  }, [focusedSession?.sessionId, focusedSession?.workspaceId, handleExportSession]);
+++
++   const copySessionIdPaletteItem = useMemo(() => buildCopySessionIdPaletteItem(focusedSession?.sessionId, (sessionId) => {
++     setCommandPaletteOpen(false);
++     void copySessionId(sessionId);
++@@ -4072,6 +4114,7 @@ export function SessionRoute() {
++           : undefined
++       }
++       onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
+++      onExportSession={handleExportSession}
++       archiveDisabledReason={archiveDisabledReason}
++       statusBar={{
++         // No per-session loading state here: the account row renders only
++@@ -4210,7 +4253,7 @@ export function SessionRoute() {
++       currentSessionForGroupMove={currentSessionForGroupMove}
++       currentSessionGroupId={currentSessionGroupId}
++       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
++-      extraItems={[...currentSessionActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...tasksPaletteItems, ...layoutPaletteItems, ...terminalPaletteItems, ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]), ...(copySessionIdPaletteItem ? [copySessionIdPaletteItem] : []), diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
+++      extraItems={[...currentSessionActionPaletteItems, ...(exportSessionMarkdownPaletteItem ? [exportSessionMarkdownPaletteItem] : []), ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...tasksPaletteItems, ...layoutPaletteItems, ...terminalPaletteItems, ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]), ...(copySessionIdPaletteItem ? [copySessionIdPaletteItem] : []), diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
++       listAgents={listAgents}
++       selectedAgent={selectedAgent}
++       onSelectAgent={setSelectedAgent}
++diff --git a/apps/app/tests/session-markdown-export.test.ts b/apps/app/tests/session-markdown-export.test.ts
++new file mode 100644
++index 00000000..5a769c02
++--- /dev/null
+++++ b/apps/app/tests/session-markdown-export.test.ts
++@@ -0,0 +1,466 @@
+++import { describe, expect, test } from "bun:test";
+++import type { AssistantMessage, Part, Session, UserMessage } from "@opencode-ai/sdk/v2/client";
+++
+++import {
+++  buildSessionExportFilename,
+++  collectReferencedSubagentSessionIds,
+++  fenceMarkdownCode,
+++  filterVisibleBranchMessages,
+++  formatSessionAsMarkdown,
+++  parseExportSlashCommand,
+++  validateRelativeExportPath,
+++  type ExportableSessionMessage,
+++  type ExportableSessionTree,
+++} from "../src/app/lib/session-markdown-export";
+++import { exportSessionMarkdown } from "../src/react-app/domains/session/commands/export-session-markdown";
+++
+++function makeSession(overrides: Partial<Session> = {}): Session {
+++  return {
+++    id: "ses_root123456",
+++    slug: "fix-export",
+++    projectID: "proj_1",
+++    directory: "/workspace/omnirush-gui",
+++    title: "Implement Markdown branch export",
+++    version: "2.0.0",
+++    time: {
+++      created: Date.UTC(2026, 9, 29, 10, 0, 0),
+++      updated: Date.UTC(2026, 9, 29, 10, 15, 0),
+++    },
+++    ...overrides,
+++  };
+++}
+++
+++function makeUserMessage(id: string, sessionID: string, parts: Part[]): ExportableSessionMessage {
+++  const info: UserMessage = {
+++    id,
+++    sessionID,
+++    role: "user",
+++    time: { created: Date.UTC(2026, 9, 29, 10, 0, 0) },
+++    agent: "build",
+++    model: { providerID: "anthropic", modelID: "claude-sonnet-4-5" },
+++  };
+++  return { info, parts };
+++}
+++
+++function makeAssistantMessage(
+++  id: string,
+++  sessionID: string,
+++  parentID: string,
+++  parts: Part[],
+++  overrides: Partial<AssistantMessage> = {},
+++): ExportableSessionMessage {
+++  const info: AssistantMessage = {
+++    id,
+++    sessionID,
+++    role: "assistant",
+++    parentID,
+++    time: {
+++      created: Date.UTC(2026, 9, 29, 10, 1, 0),
+++      completed: Date.UTC(2026, 9, 29, 10, 2, 0),
+++    },
+++    modelID: "claude-sonnet-4-5",
+++    providerID: "anthropic",
+++    mode: "build",
+++    agent: "build",
+++    path: { cwd: "/workspace/omnirush-gui", root: "/workspace/omnirush-gui" },
+++    cost: 0.0425,
+++    tokens: {
+++      input: 1200,
+++      output: 450,
+++      reasoning: 300,
+++      cache: { read: 0, write: 0 },
+++    },
+++    ...overrides,
+++  };
+++  return { info, parts };
+++}
+++
+++describe("session-markdown-export", () => {
+++  test("formats full session with reasoning, tool calls, nested subagent, attachments, errors, and todos", () => {
+++    const childSessionId = "ses_subagent_01";
+++    const childTree: ExportableSessionTree = {
+++      session: makeSession({
+++        id: childSessionId,
+++        parentID: "ses_root123456",
+++        title: "Audit FreeBuff export",
+++      }),
+++      messages: [
+++        makeUserMessage("msg_sub_01", childSessionId, [
+++          {
+++            id: "prt_sub_1",
+++            sessionID: childSessionId,
+++            messageID: "msg_sub_01",
+++            type: "text",
+++            text: "Inspect FreeBuff /export implementation.",
+++          },
+++        ]),
+++        makeAssistantMessage("msg_sub_02", childSessionId, "msg_sub_01", [
+++          {
+++            id: "prt_sub_2",
+++            sessionID: childSessionId,
+++            messageID: "msg_sub_02",
+++            type: "reasoning",
+++            text: "Checking copy-conversation.ts and export-conversation.ts.",
+++            time: { start: 1, end: 2 },
+++          },
+++          {
+++            id: "prt_sub_3",
+++            sessionID: childSessionId,
+++            messageID: "msg_sub_02",
+++            type: "tool",
+++            callID: "call_sub_read",
+++            tool: "read",
+++            state: {
+++              status: "completed",
+++              input: { filePath: "cli/src/commands/export-conversation.ts" },
+++              output: "{\"ok\":true,\"lines\":95}",
+++              title: "cli/src/commands/export-conversation.ts",
+++              metadata: {},
+++              time: { start: 2, end: 3 },
+++            },
+++          },
+++          {
+++            id: "prt_sub_4",
+++            sessionID: childSessionId,
+++            messageID: "msg_sub_02",
+++            type: "text",
+++            text: "FreeBuff writes a full Markdown transcript with reasoning blockquotes and tool blocks.",
+++          },
+++        ]),
+++      ],
+++    };
+++
+++    const rootTree: ExportableSessionTree = {
+++      session: makeSession({ parentID: "ses_branch_origin" }),
+++      subagentSessions: new Map([[childSessionId, childTree]]),
+++      todos: [
+++        { content: "Serialize reasoning and tool calls", status: "completed", priority: "high" },
+++        { content: "Wire /export slash command", status: "in_progress", priority: "medium" },
+++      ],
+++      messages: [
+++        makeUserMessage("msg_01", "ses_root123456", [
+++          {
+++            id: "prt_1",
+++            sessionID: "ses_root123456",
+++            messageID: "msg_01",
+++            type: "file",
+++            mime: "text/markdown",
+++            filename: "SPEC.md",
+++            url: "file:///workspace/omnirush-gui/SPEC.md",
+++          },
+++          {
+++            id: "prt_1_hidden",
+++            sessionID: "ses_root123456",
+++            messageID: "msg_01",
+++            type: "text",
+++            synthetic: true,
+++            text: "<system-reminder>internal context</system-reminder>",
+++          },
+++          {
+++            id: "prt_2",
+++            sessionID: "ses_root123456",
+++            messageID: "msg_01",
+++            type: "text",
+++            text: "Экспортируй полное содержимое ветки в md файл.",
+++          },
+++        ]),
+++        makeAssistantMessage("msg_02", "ses_root123456", "msg_01", [
+++          {
+++            id: "prt_3",
+++            sessionID: "ses_root123456",
+++            messageID: "msg_02",
+++            type: "reasoning",
+++            text: "First line of thinking.\n\nSecond paragraph after blank line.",
+++            time: { start: 10, end: 20 },
+++          },
+++          {
+++            id: "prt_4",
+++            sessionID: "ses_root123456",
+++            messageID: "msg_02",
+++            type: "tool",
+++            callID: "call_task_1",
+++            tool: "task",
+++            state: {
+++              status: "completed",
+++              input: {
+++                description: "Audit FreeBuff export",
+++                subagent_type: "explore",
+++                prompt: "Check how FreeBuff formats reasoning and tool calls",
+++              },
+++              output: "Audit complete.",
+++              title: "Audit FreeBuff export",
+++              metadata: { sessionId: childSessionId },
+++              time: { start: 20, end: 30 },
+++            },
+++          },
+++          {
+++            id: "prt_5",
+++            sessionID: "ses_root123456",
+++            messageID: "msg_02",
+++            type: "tool",
+++            callID: "call_bash_err",
+++            tool: "bash",
+++            state: {
+++              status: "error",
+++              input: { command: "pnpm check" },
+++              error: "Process exited with code 1",
+++              metadata: { output: "src/foo.ts(1,1): error TS1005" },
+++              time: { start: 31, end: 35 },
+++            },
+++          },
+++          {
+++            id: "prt_6",
+++            sessionID: "ses_root123456",
+++            messageID: "msg_02",
+++            type: "text",
+++            text: "Готово — ветка экспортирована со всеми рассуждениями и инструментами.",
+++          },
+++        ]),
+++      ],
+++    };
+++
+++    const md = formatSessionAsMarkdown(rootTree);
+++
+++    expect(md).toContain("# Implement Markdown branch export");
+++    expect(md).toContain("_2 messages · Session `ses_root123456`_");
+++    expect(md).toContain("- **Workspace:** `/workspace/omnirush-gui`");
+++    expect(md).toContain("- **Parent session:** `ses_branch_origin`");
+++    expect(md).toContain("- **Models:** `anthropic/claude-sonnet-4-5`");
+++    expect(md).toContain("- **Tokens:** 1,200 input, 450 output, 300 reasoning ($0.0425)");
+++    expect(md).toContain("> Attached files: SPEC.md (text/markdown)");
+++    expect(md).not.toContain("internal context");
+++    expect(md).toContain("Экспортируй полное содержимое ветки в md файл.");
+++    expect(md).toContain("> _Reasoning_\n> First line of thinking.\n>\n> Second paragraph after blank line.");
+++    expect(md).toContain("**🛠 Task** — Audit FreeBuff export");
+++    expect(md).toContain("### ⤷ Subagent: Audit FreeBuff export (explore)");
+++    expect(md).toContain("> _Reasoning_\n> Checking copy-conversation.ts and export-conversation.ts.");
+++    expect(md).toContain("**🛠 Read** — cli/src/commands/export-conversation.ts");
+++    expect(md).toContain("```json\n{\n  \"ok\": true,\n  \"lines\": 95\n}\n```");
+++    expect(md).toContain("### ⤶ End subagent");
+++    expect(md).toContain("**🛠 Bash** _(error)_");
+++    expect(md).toContain("src/foo.ts(1,1): error TS1005");
+++    expect(md).toContain("_Error:_\n```\nProcess exited with code 1\n```");
+++    expect(md).toContain("## Tasks\n\n- [x] Serialize reasoning and tool calls\n- [ ] Wire /export slash command _(in progress)_");
 ++  });
 ++
-++  it("forces pending zoom sync on show even if HostZoomMap reported the same cached factor", () => {
-++    const controller = createWindowZoomController();
-++    const win = createFakeWindow({ visible: false, initialZoom: 1.3 });
-++
-++    assert.equal(controller.setFactor(win, 1.3), true);
-++    assert.deepEqual(win.setCalls, []);
-++
-++    win.show();
-++    assert.deepEqual(win.setCalls, [1.3]);
+++  test("upgrades dynamic backtick fences when tool output itself contains triple or quadruple backticks", () => {
+++    const nestedMd = "# Example\n```ts\nconst x = 1;\n```\n````md\nnested\n````";
+++    const fenced = fenceMarkdownCode(nestedMd, "markdown");
+++    expect(fenced.startsWith("`````markdown\n")).toBe(true);
+++    expect(fenced.endsWith("\n`````")).toBe(true);
 ++  });
 ++
-++  it("restores zoom when a file:// in-page hash navigation resets WebContents zoom to 1", () => {
-++    const controller = createWindowZoomController();
-++    const win = createFakeWindow({ visible: true, initialZoom: 1 });
+++  test("respects branch revert boundary (Undo) and prevents subagent cycles", () => {
+++    const session = makeSession({
+++      id: "ses_cycle",
+++      revert: { messageID: "msg_03" },
+++    });
+++    const messages: ExportableSessionMessage[] = [
+++      makeUserMessage("msg_01", "ses_cycle", [
+++        { id: "p1", sessionID: "ses_cycle", messageID: "msg_01", type: "text", text: "Kept prompt" },
+++      ]),
+++      makeAssistantMessage("msg_02", "ses_cycle", "msg_01", [
+++        {
+++          id: "p2",
+++          sessionID: "ses_cycle",
+++          messageID: "msg_02",
+++          type: "tool",
+++          callID: "c1",
+++          tool: "task",
+++          state: {
+++            status: "completed",
+++            input: { description: "Self reference" },
+++            output: "done",
+++            title: "Self reference",
+++            metadata: { sessionId: "ses_cycle" },
+++            time: { start: 1, end: 2 },
+++          },
+++        },
+++      ]),
+++      makeUserMessage("msg_03", "ses_cycle", [
+++        { id: "p3", sessionID: "ses_cycle", messageID: "msg_03", type: "text", text: "Undone prompt" },
+++      ]),
+++    ];
 ++
-++    assert.equal(controller.setFactor(win, 1.4), true);
-++    assert.deepEqual(win.setCalls, [1.4]);
+++    expect(filterVisibleBranchMessages(session, messages).map((m) => m.info.id)).toEqual(["msg_01", "msg_02"]);
+++    expect(collectReferencedSubagentSessionIds(session, messages)).toEqual(["ses_cycle"]);
 ++
-++    // Unchanged zoom on hash navigation avoids redundant setZoomFactor calls.
-++    win.emitInPageNavigation(1.4);
-++    assert.deepEqual(win.setCalls, [1.4]);
-++
-++    // A fragment-keyed HostZoomMap reset to 1.0 is immediately corrected.
-++    win.emitInPageNavigation(1.0);
-++    assert.deepEqual(win.setCalls, [1.4, 1.4]);
-++    assert.equal(win.webContents.getZoomFactor(), 1.4);
+++    const tree: ExportableSessionTree = { session, messages };
+++    tree.subagentSessions = new Map([["ses_cycle", tree]]);
+++    const md = formatSessionAsMarkdown(tree);
+++    expect(md).toContain("Kept prompt");
+++    expect(md).not.toContain("Undone prompt");
+++    expect(md).not.toContain("⤷ Subagent");
 ++  });
 ++
-++  it("rejects invalid zoom values and destroyed windows", () => {
-++    const controller = createWindowZoomController();
-++    const win = createFakeWindow({ visible: true });
+++  test("sanitizes and bounds export filenames across Unicode and long titles", () => {
+++    expect(buildSessionExportFilename({ id: "ses_abcdef123456", title: "" })).toBe(
+++      "omnirush-chat-ses_abcdef123456.md",
+++    );
 ++
-++    assert.equal(controller.setFactor(win, 0), false);
-++    assert.equal(controller.setFactor(win, -1), false);
-++    assert.equal(controller.setFactor(win, Number.NaN), false);
-++    assert.equal(controller.setFactor(null, 1.2), false);
+++    const cyrillicName = buildSessionExportFilename({
+++      id: "ses_9876543210",
+++      title: "Экспорт ветки: рассуждения / вызовы инструментов?",
+++    });
+++    expect(cyrillicName.endsWith("-9876543210.md")).toBe(true);
+++    expect(cyrillicName).toContain("Экспорт-ветки");
+++    expect(cyrillicName).not.toMatch(/[/:?]/);
 ++
-++    win.destroy();
-++    assert.equal(controller.setFactor(win, 1.2), false);
+++    const hugeTitle = "Очень длинное название сессии ".repeat(20);
+++    const bounded = buildSessionExportFilename({ id: "ses_1122334455", title: hugeTitle });
+++    expect(new TextEncoder().encode(bounded).byteLength).toBeLessThan(100);
+++    expect(bounded.endsWith("-1122334455.md")).toBe(true);
+++  });
+++
+++  test("parses /export slash commands and validates workspace relative paths", () => {
+++    expect(parseExportSlashCommand("/export")).toEqual({ filename: null });
+++    expect(parseExportSlashCommand("  /EXPORT   ")).toEqual({ filename: null });
+++    expect(parseExportSlashCommand("/export branch-notes")).toEqual({ filename: "branch-notes.md" });
+++    expect(parseExportSlashCommand('/export "docs/my transcript.md"')).toEqual({
+++      filename: "docs/my transcript.md",
+++    });
+++    expect(parseExportSlashCommand("/exporting something")).toBeNull();
+++    expect(parseExportSlashCommand("please /export this")).toBeNull();
+++
+++    expect(validateRelativeExportPath("notes/session.md")).toEqual({
+++      ok: true,
+++      relativePath: "notes/session.md",
+++    });
+++    expect(validateRelativeExportPath("../outside.md").ok).toBe(false);
+++    expect(validateRelativeExportPath("a/../../outside.md").ok).toBe(false);
+++    expect(validateRelativeExportPath("/etc/passwd.md").ok).toBe(false);
+++    expect(validateRelativeExportPath("C:\\temp\\out.md").ok).toBe(false);
+++    expect(validateRelativeExportPath("notes/").ok).toBe(false);
+++  });
+++
+++  test("fetches ALL cursor-paginated V2 messages (>200 turns) and child subagent transcripts without truncation", async () => {
+++    const totalTurns = 245;
+++    const allNewestFirst = Array.from({ length: totalTurns }, (_, idx) => {
+++      const turnNumber = totalTurns - idx;
+++      const padded = String(turnNumber).padStart(4, "0");
+++      const msgId = `msg_${padded}`;
+++      if (turnNumber % 2 === 1) {
+++        return {
+++          id: msgId,
+++          sessionID: "ses_paged",
+++          role: "user",
+++          time: { created: turnNumber * 1000 },
+++          content: [{ type: "text", text: `User message #${turnNumber}` }],
+++        };
+++      }
+++      const content: Array<Record<string, unknown>> = [
+++        {
+++          type: "reasoning",
+++          text: `Reasoning for turn #${turnNumber}`,
+++          time: { created: turnNumber * 1000, completed: turnNumber * 1000 + 500 },
+++        },
+++        {
+++          type: "text",
+++          text: `Assistant reply #${turnNumber}`,
+++        },
+++      ];
+++      if (turnNumber === 2) {
+++        content.splice(1, 0, {
+++          type: "tool",
+++          id: "call_sub_1",
+++          name: "task",
+++          state: {
+++            status: "completed",
+++            input: { description: "Deep check", subagent_type: "general" },
+++            result: "Subagent finished",
+++            title: "Deep check",
+++            metadata: { sessionId: "ses_child_paged" },
+++          },
+++        });
+++      }
+++      return {
+++        id: msgId,
+++        sessionID: "ses_paged",
+++        role: "assistant",
+++        time: { created: turnNumber * 1000, completed: turnNumber * 1000 + 900 },
+++        content,
+++      };
+++    });
+++
+++    let writtenFile: { path: string; content: string } | null = null;
+++    const server = Bun.serve({
+++      port: 0,
+++      fetch(req) {
+++        const url = new URL(req.url);
+++        if (url.pathname.endsWith("/api/session/ses_paged")) {
+++          return Response.json({
+++            id: "ses_paged",
+++            directory: "/workspace/omnirush-gui",
+++            title: "Long Paginated Thread",
+++            time: { created: 1000, updated: 250000 },
+++          });
+++        }
+++        if (url.pathname.endsWith("/api/session/ses_child_paged")) {
+++          return Response.json({
+++            id: "ses_child_paged",
+++            parentID: "ses_paged",
+++            directory: "/workspace/omnirush-gui",
+++            title: "Child",
+++            time: { created: 2000, updated: 3000 },
+++          });
+++        }
+++        if (url.pathname.endsWith("/api/session/ses_child_paged/message")) {
+++          return Response.json({
+++            data: [
+++              {
+++                id: "msg_c1",
+++                sessionID: "ses_child_paged",
+++                role: "user",
+++                time: { created: 2100 },
+++                content: [{ type: "text", text: "Subagent prompt" }],
+++              },
+++            ],
+++          });
+++        }
+++        if (url.pathname.endsWith("/api/session/ses_paged/message")) {
+++          const limit = Number(url.searchParams.get("limit") ?? "50");
+++          const cursor = url.searchParams.get("cursor");
+++          const startIdx = cursor ? Number(cursor) : 0;
+++          const slice = allNewestFirst.slice(startIdx, startIdx + limit);
+++          const nextIdx = startIdx + slice.length;
+++          return Response.json({
+++            data: slice,
+++            ...(nextIdx < allNewestFirst.length ? { cursor: { next: String(nextIdx) } } : {}),
+++          });
+++        }
+++        return new Response("Not found", { status: 404 });
+++      },
+++    });
+++
+++    try {
+++      const mockServerClient = {
+++        statWorkspaceFile: async () => ({ ok: true, path: "exports/full.md", exists: false }),
+++        writeWorkspaceFile: async (_wsId: string, payload: { path: string; content: string }) => {
+++          writtenFile = payload;
+++          return { ok: true, path: payload.path, size: payload.content.length, updatedAt: Date.now() };
+++        },
+++      };
+++
+++      const outcome = await exportSessionMarkdown({
+++        workspaceId: "ws_1",
+++        sessionId: "ses_paged",
+++        opencodeBaseUrl: `http://127.0.0.1:${server.port}/opencode2`,
+++        token: "test-token",
+++        // @ts-expect-error minimal server client stub for unit test
+++        serverClient: mockServerClient,
+++        relativeFilename: "exports/full",
+++      });
+++
+++      expect(outcome).toEqual({ outcome: "saved", path: "exports/full.md" });
+++      expect(writtenFile).not.toBeNull();
+++      expect(writtenFile!.content).toContain("_245 messages · Session `ses_paged`_");
+++      expect(writtenFile!.content).toContain("User message #1");
+++      expect(writtenFile!.content).toContain("Reasoning for turn #2");
+++      expect(writtenFile!.content).toContain("### ⤷ Subagent: Deep check (general)");
+++      expect(writtenFile!.content).toContain("Subagent prompt");
+++      expect(writtenFile!.content).toContain("User message #245");
+++    } finally {
+++      server.stop(true);
+++    }
 ++  });
 ++});
++diff --git a/docs/session-markdown-export.md b/docs/session-markdown-export.md
++new file mode 100644
++index 00000000..d8b1e674
++--- /dev/null
+++++ b/docs/session-markdown-export.md
++@@ -0,0 +1,28 @@
+++# Session Markdown export
+++
+++Export the full contents of any chat session/branch — including model reasoning traces, tool call inputs and outputs, errors, file attachments, task checklists, and nested sub-agent sessions — to a standalone `.md` file.
+++
+++## How to export
+++
+++- **Session header:** click the **Export as Markdown** (`Download`) button in the top-right session controls, or choose **Export as Markdown** from the `…` (**More actions**) menu on narrow windows and in IDE layout.
+++- **Sidebar:** right-click any session row (or click its `…` menu) and choose **Export as Markdown**.
+++- **Command Palette (`Cmd+K` / `Ctrl+K`):** run **Export chat as Markdown** while a session pane is focused (including split-view side chats).
+++- **Composer slash command:**
+++  - `/export` — opens the native Save dialog on desktop (or downloads `<title>-<id>.md` on web).
+++  - `/export <filename>` (for example `/export notes/auth-debug.md` or `/export session-trace`) — writes directly inside the current project folder without sending a prompt to the model. Relative path escapes (`..`, symlinks outside the workspace, absolute paths) and overwriting existing files are refused.
+++
+++On desktop, the completion toast includes a **Show file** action that reveals the exported `.md` file in Finder / Explorer / your file manager.
+++
+++## What is included
+++
+++1. **Metadata header:** session title, message count, session ID, workspace path, parent session ID (when branched or spawned), created/updated UTC timestamps, models used, and token/cost totals when reported by the engine.
+++2. **Complete unwindowed branch history:** fetches all cursor-paginated pages from the OpenCode engine (`limit = Infinity`) in chronological order while respecting active Undo (`session.revert`) branch boundaries.
+++3. **Model reasoning:** rendered as `> _Reasoning_` Markdown blockquotes in exact step order.
+++4. **Tool calls (`🛠 <Tool>`):** pretty-printed JSON inputs, JSON or raw text outputs, partial live output and error blocks for failed commands, and tool attachments. Code fences automatically widen to 4+ backticks whenever tool input/output itself contains triple-backtick blocks so nested Markdown never breaks the document structure.
+++5. **Sub-agent transcripts:** `task` tool calls that spawned child sessions (`state.metadata.sessionId`) recursively inline the child session's turns, reasoning, and tool calls inside `### ⤷ Subagent: …` / `### ⤶ End subagent` sections (with cycle protection).
+++6. **Tasks checklist:** active session todos (`[x]` / `[ ]`) when present.
+++
+++## Upstream tracking
+++
+++- OmniRush GUI feature request: [omnirush-ai/omnirush-gui#349](https://github.com/omnirush-ai/omnirush-gui/issues/349)
+++- Related OpenCode Desktop & CLI issues: [anomalyco/opencode#55542](https://github.com/anomalyco/opencode/issues/55542), [anomalyco/opencode#59904](https://github.com/anomalyco/opencode/issues/59904)
++diff --git a/packages/types/src/desktop-ipc.ts b/packages/types/src/desktop-ipc.ts
++index 63e0bed6..9d1cb34f 100644
++--- a/packages/types/src/desktop-ipc.ts
+++++ b/packages/types/src/desktop-ipc.ts
++@@ -1127,7 +1127,16 @@ export type DesktopCommandMap = {
++     result: string | string[] | null;
++   };
++   saveFile: {
++-    args: [options?: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }];
+++    args: [
+++      options?: {
+++        title?: string;
+++        defaultPath?: string;
+++        filters?: { name: string; extensions: string[] }[];
+++        content?: string;
+++        workspaceRoot?: string;
+++        relativePath?: string;
+++      },
+++    ];
++     result: string | null;
++   };
++ 
 diff --git a/fork/scripts/lib/git.mjs b/fork/scripts/lib/git.mjs
 new file mode 100644
 index 00000000..df604348
@@ -3767,10 +6123,10 @@ index 00000000..df604348
 +}
 diff --git a/fork/scripts/lib/patch-groups.mjs b/fork/scripts/lib/patch-groups.mjs
 new file mode 100644
-index 00000000..a01a6dc2
+index 00000000..e09e17a2
 --- /dev/null
 +++ b/fork/scripts/lib/patch-groups.mjs
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,160 @@
 +// The port, split into patch files. Each group is a set of paths whose diff
 +// against upstream is stored under fork/patches; keeping them apart makes a
 +// conflict easy to locate ("0003 no longer applies" is one file, not five).
@@ -3902,6 +6258,28 @@ index 00000000..a01a6dc2
 +      "apps/app/src/app/lib/desktop.ts",
 +      "apps/app/src/react-app/shell/font-zoom.ts",
 +      "apps/app/tests/font-zoom.test.ts",
++    ],
++    addsOnly: false,
++  },
++  {
++    file: "0013-session-markdown-export.patch",
++    title: "export full session/branch (reasoning, tool calls, sub-agents) to Markdown",
++    paths: [
++      "packages/types/src/desktop-ipc.ts",
++      "apps/desktop/electron/save-file.mjs",
++      "apps/desktop/electron/save-file.test.mjs",
++      "apps/app/src/app/lib/session-markdown-export.ts",
++      "apps/app/src/react-app/domains/session/commands/export-session-markdown.ts",
++      "apps/app/src/react-app/domains/session/commands/session-command-controls.tsx",
++      "apps/app/src/react-app/domains/session/commands/session-commands-store.ts",
++      "apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx",
++      "apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx",
++      "apps/app/src/react-app/shell/session-route.tsx",
++      "apps/app/src/i18n/locales/en.ts",
++      "apps/app/src/i18n/locales/zh.ts",
++      "apps/app/src/i18n/locales/ru.ts",
++      "apps/app/tests/session-markdown-export.test.ts",
++      "docs/session-markdown-export.md",
 +    ],
 +    addsOnly: false,
 +  },

@@ -747,10 +747,20 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     return undefined;
   }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
 
-  const slashItems = useMemo<ComposerSlashCommandOption[]>(
-    () => [...commands, ...connectSkillSlashCommandOptions(skills)],
-    [commands, skills],
-  );
+  const slashItems = useMemo<ComposerSlashCommandOption[]>(() => {
+    const builtinItems: ComposerSlashCommandOption[] =
+      props.sessionId && !commands.some((cmd) => cmd.name.toLowerCase() === "export")
+        ? [
+            {
+              id: "builtin:export",
+              name: "export",
+              description: t("session.cmd_export_markdown_detail"),
+              source: "command",
+            },
+          ]
+        : [];
+    return [...commands, ...builtinItems, ...connectSkillSlashCommandOptions(skills)];
+  }, [commands, props.sessionId, skills]);
   const slashFiltered = useMemo(() => {
     if (!slashOpen) return [];
     if (!slashQuery) return slashItems.slice(0, 8);

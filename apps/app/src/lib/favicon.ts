@@ -98,7 +98,6 @@ export function watchFaviconTheme(): void {
     try {
       window
         .matchMedia?.("(prefers-color-scheme: dark)")
-        // @ts-expect-error old API
         ?.addListener?.(() => syncFaviconTheme());
     } catch {
       // ignore
