@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Columns2,
   Copy,
+  Download,
   FolderPlus,
   Gift,
   Layers,
@@ -401,6 +402,12 @@ function SessionMenuContent({
             {t("workspace_list.rename_session")}
           </DropdownMenuItem>
         ) : null}
+        {ctx.onExportSession ? (
+          <DropdownMenuItem data-session-menu-export-md onClick={() => ctx.onExportSession?.(workspaceId, sessionId)}>
+            <Download className="size-4" />
+            {t("session.export_markdown")}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
             <Tag className="size-4" />
@@ -499,6 +506,12 @@ function SessionMenuContent({
         <Copy className="size-4" />
         {t("session_management.copy_session_id")}
       </ContextMenuItem>
+      {ctx.onExportSession ? (
+        <ContextMenuItem data-session-menu-export-md onClick={() => ctx.onExportSession?.(workspaceId, sessionId)}>
+          <Download className="size-4" />
+          {t("session.export_markdown")}
+        </ContextMenuItem>
+      ) : null}
       <ContextMenuSub>
         <ContextMenuSubTrigger>
           <Tag className="mr-2 size-4" />
@@ -945,6 +958,7 @@ export type AppSidebarProps = {
   onOpenRenameSession?: (sessionId: string) => void;
   onOpenDeleteSession?: (sessionId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  onExportSession?: (workspaceId: string, sessionId: string) => void;
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
@@ -1360,6 +1374,7 @@ export function AppSidebar(props: AppSidebarProps) {
     onOpenRenameSession: props.onOpenRenameSession,
     onOpenDeleteSession: props.onOpenDeleteSession,
     onArchiveSession: props.onArchiveSession,
+    onExportSession: props.onExportSession,
     archiveDisabledReason: props.archiveDisabledReason,
     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
     onOpenRenameWorkspace: props.onOpenRenameWorkspace,

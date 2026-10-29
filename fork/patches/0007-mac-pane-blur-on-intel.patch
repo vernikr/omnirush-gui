@@ -1,0 +1,118 @@
+diff --git a/apps/app/src/app/index.css b/apps/app/src/app/index.css
+index f304d6ee..cdaf6bb2 100644
+--- a/apps/app/src/app/index.css
++++ b/apps/app/src/app/index.css
+@@ -236,6 +236,11 @@ body {
+   -moz-osx-font-smoothing: grayscale;
+ }
+ 
++.markdown-content [data-omnirush-code-block] {
++  background-color: var(--omnirush-code-bg, var(--gray-2, var(--dls-surface)));
++  color: var(--omnirush-code-fg, var(--dls-text-primary));
++}
++
+ .markdown-content [data-omnirush-code-block] pre {
+   margin: 0;
+   background: transparent !important;
+@@ -263,8 +268,8 @@ body {
+ }
+ 
+ /* Theme presets and custom themes (html[data-omnirush-palette], set by app/theme.ts):
+-   chat code blocks use the theme's code background and syntax colours. Shiki
+-   writes GitHub colours inline; each one maps to its syntax role. */
++   chat and document-preview code blocks use the theme's code background and
++   syntax colours. Shiki writes GitHub colours inline; each one maps to its syntax role. */
+ html[data-omnirush-palette] .markdown-content [data-omnirush-code-block] {
+   background-color: var(--omnirush-code-bg);
+   color: var(--omnirush-code-fg);
+@@ -607,6 +612,34 @@ select:disabled {
+   }
+ }
+ 
++/* Marker on the two session panes (`chat/session-page.tsx`); the blur itself
++   comes from their `mac:backdrop-blur-2xl mac:backdrop-saturate-150` classes.
++
++   That pane is the app's only window-sized backdrop filter, and the macOS
++   window is transparent (`backgroundColor: #00000001`) with a vibrancy
++   material behind it. So the backdrop is not another layer of ours: Chromium
++   has to sample the native material and run the filter every time the pane is
++   recomposited, and the pane is recomposited for as long as anything inside it
++   animates — the working shimmer, the paused dots, streaming text. On Apple
++   Silicon that is invisible; on Intel the pass is the most expensive frame
++   work the app does and lands in the GPU process as CPU time for the whole
++   duration of a run. Intel builds of this fork skip the filter (the 15% of
++   vibrancy the pane lets through is a smooth material already — nothing
++   readable changes), and every build honours the system "Reduce transparency"
++   setting, which is the one-switch way to take it out everywhere. */
++@media (prefers-reduced-transparency: reduce) {
++  .ow-pane-blur {
++    background-color: var(--dls-surface);
++    -webkit-backdrop-filter: none;
++    backdrop-filter: none;
++  }
++}
++
++html.omnirush-electron.omnirush-platform-mac-intel .ow-pane-blur {
++  -webkit-backdrop-filter: none;
++  backdrop-filter: none;
++}
++
+ /* Quiet, small dot ticker (`:: :: ::`). Each dot pulses briefly in sequence,
+    illuminating left-to-right like a subtle running light. Used for boot,
+    "awaiting first token", and any idle-but-alive hint. */
+diff --git a/apps/app/src/react-app/domains/session/chat/session-page.tsx b/apps/app/src/react-app/domains/session/chat/session-page.tsx
+index 66b1eb5c..588aa847 100644
+--- a/apps/app/src/react-app/domains/session/chat/session-page.tsx
++++ b/apps/app/src/react-app/domains/session/chat/session-page.tsx
+@@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
+ import { usePanelRef } from "react-resizable-panels";
+ import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
+ import { BuildathonChip, useBuildathonMenuItem } from "../../buildathon/buildathon";
+-import { ArrowLeft, Cloud, Code2, FileDiff, Layers, MessageSquare, LayoutGrid, Library, MessageSquareOff, PanelLeft, FileText, Gauge, Redo2, Undo2, Globe, ListChecks, Maximize2, MoreHorizontal, PanelRight, TextSearch, Trophy, X, Zap } from "lucide-react";
++import { ArrowLeft, Cloud, Code2, Download, FileDiff, Layers, MessageSquare, LayoutGrid, Library, MessageSquareOff, PanelLeft, FileText, Gauge, Redo2, Undo2, Globe, ListChecks, Maximize2, MoreHorizontal, PanelRight, TextSearch, Trophy, X, Zap } from "lucide-react";
+ import { SessionCommandControls } from "../commands/session-command-controls";
+ import { useSessionCommandBridge, useSessionCommandsStore } from "../commands/session-commands-store";
+ 
+@@ -293,6 +293,7 @@ export type SessionPageProps = {
+   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
+   onDeleteSession?: (sessionId: string) => Promise<void> | void;
+   onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
++  onExportSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
+   archiveDisabledReason?: string;
+   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
+   /** Settings content rendered inside the right pane when the settings rail icon is active. */
+@@ -1734,6 +1735,15 @@ export function SessionPage(props: SessionPageProps) {
+                       {t("session.changes")}
+                     </DropdownMenuItem>
+                   ) : null}
++                  {commandSessionId && headerActions?.exportMarkdown ? (
++                    <DropdownMenuItem
++                      disabled={Boolean(headerActions.exportingMarkdown)}
++                      onClick={() => void headerActions.exportMarkdown?.()}
++                    >
++                      <Download className="size-4" />
++                      {t("session.export_markdown")}
++                    </DropdownMenuItem>
++                  ) : null}
+                   {commandSessionId ? (
+                     <DropdownMenuItem
+                       disabled={!commandBridge || commandBridge.busy}
+@@ -2129,7 +2139,7 @@ export function SessionPage(props: SessionPageProps) {
+           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
+           developerMode={props.sidebar.developerMode}
+           selectedSessionId={props.sidebar.selectedSessionId}
+-          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
++          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession || props.onExportSession)}
+           sessionStatusById={props.sidebar.sessionStatusById}
+           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
+           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
+@@ -2150,6 +2160,9 @@ export function SessionPage(props: SessionPageProps) {
+           onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
+             void props.onArchiveSession?.(sessionId, archived);
+           } : undefined}
++          onExportSession={props.onExportSession ? (workspaceId, sessionId) => {
++            void props.onExportSession?.(workspaceId, sessionId);
++          } : undefined}
+           archiveDisabledReason={props.archiveDisabledReason}
+           onOpenCreateGroupModal={(workspaceId) => {
+             setCreateGroupWorkspaceId(workspaceId);

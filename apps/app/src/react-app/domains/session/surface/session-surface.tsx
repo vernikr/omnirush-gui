@@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { FullPermissionsToggle } from "./composer/full-permissions-toggle";
 import { SandboxStatusChip } from "./composer/sandbox-status-chip";
 import { SandboxSetupPanel } from "./sandbox-setup-panel";
+import { exportSessionMarkdown } from "@/react-app/domains/session/commands/export-session-markdown";
 import { useSessionCommandsStore } from "@/react-app/domains/session/commands/session-commands-store";
+import { parseExportSlashCommand } from "@/app/lib/session-markdown-export";
 import { SubagentModelMenu } from "./composer/subagent-model-menu";
 import { useSessionModelSelection } from "./session-model-store";
 import type { ProviderCatalog } from "./use-model-behavior";
@@ -879,7 +881,7 @@ function SessionRunStatus(props: SessionRunStatusProps) {
       data-testid="session-run-status"
       role={props.acceptanceUnknown ? "alert" : "status"}
       aria-live="polite"
-      className={`mx-3 mb-2 flex items-start gap-3 rounded-xl border px-3 py-2.5 text-xs ${tone}`}
+      className={`mx-auto mb-2 flex w-full max-w-[800px] items-start gap-3 rounded-xl border px-3 py-2.5 text-xs ${tone}`}
     >
       <Icon aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${iconClass}`} />
       <div className="min-w-0 flex-1">
@@ -2312,10 +2314,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return true;
   }, [clearComposer, props.client, props.sessionId, props.workspaceId]);
 
+  // "/export [filename]": exports the full branch (messages, reasoning, tool calls, subagents)
+  // locally to a Markdown file without sending a prompt to the model.
+  const exportFromDraft = useCallback((text: string, hasAttachments = false): boolean => {
+    if (hasAttachments) return false;
+    const parsed = parseExportSlashCommand(text);
+    if (!parsed) return false;
+    setSteering(false);
+    clearComposer();
+    void exportSessionMarkdown({
+      workspaceId: props.workspaceId,
+      sessionId: props.sessionId,
+      opencodeBaseUrl: props.opencodeBaseUrl,
+      token: props.omnirushToken,
+      workspaceRoot: props.workspaceRoot,
+      serverClient: props.client,
+      relativeFilename: parsed.filename,
+    });
+    return true;
+  }, [clearComposer, props.client, props.omnirushToken, props.opencodeBaseUrl, props.sessionId, props.workspaceId, props.workspaceRoot]);
+
   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
   // share the same immediate path.
   const handleSend = useCallback(async (sourceComposer?: ComposerSessionState) => {
     if (!sourceComposer && askSideFromDraft(draft)) return;
+    if (!sourceComposer && exportFromDraft(draft, attachments.length > 0)) return;
+    if (sourceComposer && exportFromDraft(sourceComposer.draft, sourceComposer.attachments.length > 0)) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const originalDraft = sourceComposer?.draft ?? draft;
     const sourceAttachments = sourceComposer?.attachments ?? attachments;
@@ -2434,7 +2458,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     } finally {
       setAttachmentsUploading(false);
     }
-  }, [askSideFromDraft, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, liveStatus.type, persistedDraftKey, props.onDraftChange, props.sessionId, revertMessageId, revertedMessageCount, sendDraft, sessionOwner]);
+  }, [askSideFromDraft, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, exportFromDraft, liveStatus.type, persistedDraftKey, props.onDraftChange, props.sessionId, revertMessageId, revertedMessageCount, sendDraft, sessionOwner]);
 
   // A chat command from a button ("/review", "/fix 1, 3"): sent like a typed one, the composer's draft left alone.
   const runChatCommand = useCallback(async (text: string) => {
@@ -2486,6 +2510,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   // sends it once the session reports idle.
   const handleQueue = useCallback(() => {
     if (askSideFromDraft(draft)) return;
+    if (exportFromDraft(draft, attachments.length > 0)) return;
     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
     const text = draft.trim();
     if (!text && attachments.length === 0) return;
@@ -2495,7 +2520,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     if (draftHasLostPaste(queuedDraft)) { toast.error(LOST_PASTE_MESSAGE); return; }
     appendQueuedDraft(props.sessionId, queuedDraft);
     clearComposer();
-  }, [appendQueuedDraft, askSideFromDraft, attachments, buildDraft, clearComposer, draft, props.sessionId, sessionOwner]);
+  }, [appendQueuedDraft, askSideFromDraft, attachments, buildDraft, clearComposer, draft, exportFromDraft, props.sessionId, sessionOwner]);
 
   const removeQueuedDraft = useCallback((id: string) => {
     const target = queuedItems.find((item) => item.id === id);
@@ -3061,6 +3086,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
     const mod = isMac ? event.metaKey : event.ctrlKey;
     if (!mod || event.shiftKey || event.altKey || event.key?.toLowerCase() !== "f") return;
+    if (event.composedPath().some((target) => target instanceof Element && target.closest("[data-artifact-panel]"))) return;
 
     event.preventDefault();
     if (resolveFindOwnerSessionId() === props.sessionId) {

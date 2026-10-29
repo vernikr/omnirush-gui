@@ -1287,4 +1287,10 @@ export default {
   "extensions.subtitle": "Навыки, подключения и инструменты, которые может использовать ваш агент.",
   "extensions.open_in_den": "Открыть в Den",
   "extensions.title": "Библиотека",
+  "session.export_markdown": "Экспортировать в Markdown",
+  "session.cmd_export_markdown_title": "Экспортировать ветку в Markdown",
+  "session.cmd_export_markdown_detail": "Сохранить полное содержимое ветки с рассуждениями и вызовами инструментов в .md файл",
+  "session.export_markdown_saved": "Ветка экспортирована в {path}",
+  "session.export_markdown_failed": "Не удалось экспортировать ветку в Markdown",
+  "session.export_markdown_reveal": "Показать файл",
 } as const;
