@@ -983,16 +983,20 @@ export function renderTranscriptFromIR(
   let rendered = renderMarkdownInternal(ir, options);
   let utf8Bytes = utf8ByteLength(rendered.markdown);
 
-  // Strict document-level monotonicity guard: compression of the full transcript
-  // must never produce a file larger than the raw baseline.
-  if (
-    options.includeToolCalls &&
-    options.includeReasoning &&
-    options.compression !== "off" &&
-    utf8Bytes > ir.baselineBytes
-  ) {
-    rendered = renderMarkdownInternal(ir, RAW_EXPORT_MARKDOWN_OPTIONS);
-    utf8Bytes = ir.baselineBytes;
+  // Strict document-level monotonicity guard: enabling compression must never
+  // produce a file larger than the uncompressed transcript under the same filters.
+  if (options.includeToolCalls && options.compression !== "off") {
+    const uncompressedSameFilters = options.includeReasoning
+      ? null
+      : renderMarkdownInternal(ir, { ...options, compression: "off" });
+    const filterBaselineBytes = uncompressedSameFilters
+      ? utf8ByteLength(uncompressedSameFilters.markdown)
+      : ir.baselineBytes;
+    if (utf8Bytes > filterBaselineBytes) {
+      rendered =
+        uncompressedSameFilters ?? renderMarkdownInternal(ir, RAW_EXPORT_MARKDOWN_OPTIONS);
+      utf8Bytes = filterBaselineBytes;
+    }
   }
 
   const savedBytes = Math.max(0, ir.baselineBytes - utf8Bytes);

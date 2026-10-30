@@ -380,7 +380,7 @@ describe("ExportSessionMarkdownModal (Stage 3)", () => {
 
       expect(savedPayloads.length).toBe(1);
       expect(savedPayloads[0]!.filename).toBe("Modal-Export-Test-modal_test.md");
-      expect(savedPayloads[0]!.content).not.toContain("> **Reasoning**");
+      expect(savedPayloads[0]!.content).not.toContain("> _Reasoning_");
       expect(savedPayloads[0]!.content).toContain("- **Omitted:** reasoning");
       expect(savedPayloads[0]!.content).toContain("- **Compression:** `stubs`");
 
