@@ -31,6 +31,7 @@ import {
   type Spread,
   TextNode,
   type EditorConfig,
+  type LexicalEditor,
   type NodeKey,
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
@@ -68,6 +69,7 @@ type EditorProps = {
 };
 
 export type LexicalPromptEditorHandle = {
+  focus: () => void;
   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
   /** Voice dictation: marks the cursor with a live (dim) transcript placeholder. */
   voiceBegin: () => void;
@@ -469,6 +471,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   const dom = document.createElement("span");
   dom.className = "relative mx-0.5 inline-flex h-10 max-w-[140px] shrink-0 items-center align-middle";
   dom.contentEditable = "false";
+  dom.style.setProperty("user-select", "none");
+  dom.style.setProperty("-webkit-user-select", "none");
   dom.setAttribute("spellcheck", "false");
   dom.title = attachment.name;
   dom.dataset.attachmentId = attachment.id;
@@ -1301,6 +1305,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
   const [editor] = useLexicalComposerContext();
 
   useImperativeHandle(props.editorRef, () => ({
+    focus() {
+      editor.focus();
+    },
     insertSkillAtSelection(skillName: string, skillToken?: string) {
       editor.update(() => insertSkillAtSelection(skillName, skillToken));
       editor.focus();
@@ -1328,6 +1335,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       }, { discrete: true, tag: "history-merge" });
     },
   }), [editor]);
+
+  return null;
+}
+
+function selectAllPrompt(editor: LexicalEditor) {
+  const root = editor.getRootElement();
+  if (!root) return;
+  root.focus({ preventScroll: true });
+  editor.update(() => {
+    const textNodes = $getRoot().getAllTextNodes().filter((node) => !(node instanceof ComposerAttachmentNode));
+    const first = textNodes[0];
+    const last = textNodes.at(-1);
+    if (!first || !last) {
+      $setSelection(null);
+      return;
+    }
+    const lexicalSelection = $createRangeSelection();
+    lexicalSelection.anchor.set(first.getKey(), 0, "text");
+    lexicalSelection.focus.set(last.getKey(), last.getTextContentSize(), "text");
+    $setSelection(lexicalSelection);
+  }, { discrete: true });
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.textContent && !node.parentElement?.closest("[data-attachment-id]")
+        ? NodeFilter.FILTER_ACCEPT
+        : NodeFilter.FILTER_REJECT;
+    },
+  });
+  const first = walker.nextNode() as Text | null;
+  let last = first;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) last = node as Text;
+  const selection = window.getSelection();
+  if (!selection) return;
+  selection.removeAllRanges();
+  if (!first || !last) return;
+  const range = document.createRange();
+  range.setStart(first, 0);
+  range.setEnd(last, last.length);
+  selection.addRange(range);
+}
+
+function PromptSelectAllPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    const root = editor.getRootElement();
+    if (!root) return;
+    const composerRoot = root.closest<HTMLElement>("[data-composer-root]") ?? root;
+    const shouldSelectPrompt = (target: EventTarget | null) => {
+      const candidates = [
+        target instanceof Element ? target : null,
+        document.activeElement instanceof Element ? document.activeElement : null,
+      ].filter((candidate): candidate is Element => candidate !== null);
+      const insidePrompt = candidates.some((candidate) => root.contains(candidate));
+      const insideComposer = candidates.some((candidate) => composerRoot.contains(candidate));
+      const focusedOtherEditor = candidates.some((candidate) => {
+        const editorTarget = candidate.closest("input:not([type='file']), textarea, [contenteditable='true']");
+        return editorTarget !== null && !root.contains(editorTarget);
+      });
+      return insidePrompt || (insideComposer && !focusedOtherEditor);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+      const modifier = isMac ? event.metaKey : event.ctrlKey;
+      if (!modifier || event.shiftKey || event.altKey || event.key.toLowerCase() !== "a") return;
+      if (!shouldSelectPrompt(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      selectAllPrompt(editor);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [editor]);
 
   return null;
 }
@@ -1454,6 +1536,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
+        <PromptSelectAllPlugin />
         <MentionChipNavigationPlugin />
         <ImperativeHandlePlugin editorRef={ref} />
       </div>

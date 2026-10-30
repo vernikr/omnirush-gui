@@ -1140,7 +1140,17 @@ export type DesktopCommandMap = {
     result: string | string[] | null;
   };
   saveFile: {
-    args: [options?: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }];
+    args: [
+      options?: {
+        title?: string;
+        defaultPath?: string;
+        filters?: { name: string; extensions: string[] }[];
+        content?: string;
+        workspaceRoot?: string;
+        relativePath?: string;
+        saveToDownloads?: boolean;
+      },
+    ];
     result: string | null;
   };
 
