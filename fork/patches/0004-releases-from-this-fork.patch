@@ -222,13 +222,14 @@ index 3b7906a8..ed094f1a 100644
      const artifact = {
 diff --git a/apps/desktop/electron/save-file.mjs b/apps/desktop/electron/save-file.mjs
 new file mode 100644
-index 00000000..a94902d4
+index 00000000..75714387
 --- /dev/null
 +++ b/apps/desktop/electron/save-file.mjs
-@@ -0,0 +1,195 @@
+@@ -0,0 +1,241 @@
 +import { randomBytes } from "node:crypto";
 +import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 +import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
++import os from "node:os";
 +import path from "node:path";
 +
 +/**
@@ -259,6 +260,36 @@ index 00000000..a94902d4
 +function isStrictlyInsideDirectory(rootPath, childPath) {
 +  const rel = path.relative(rootPath, childPath);
 +  return Boolean(rel) && rel !== "." && !rel.startsWith("..") && !path.isAbsolute(rel);
++}
++
++/**
++ * Resolve a collision-free file path inside `directory` by appending ` (1)`,
++ * ` (2)`, etc. before the file extension when a file with the same name
++ * already exists (matching standard browser / macOS Downloads behavior).
++ *
++ * @param {string} directory
++ * @param {string} fileName
++ * @returns {string}
++ */
++export function resolveUniqueDownloadPath(directory, fileName) {
++  const cleanLeaf = path.basename(String(fileName || "").trim()) || "omnirush-chat.md";
++  const ext = path.extname(cleanLeaf);
++  const stem = ext ? cleanLeaf.slice(0, -ext.length) : cleanLeaf;
++  const resolvedDir = path.resolve(directory);
++
++  for (let suffix = 0; suffix < 10_000; suffix += 1) {
++    const candidateLeaf = suffix === 0 ? cleanLeaf : `${stem} (${suffix})${ext}`;
++    const candidatePath = path.join(resolvedDir, candidateLeaf);
++    try {
++      lstatSync(candidatePath);
++    } catch (error) {
++      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
++        return candidatePath;
++      }
++      throw error;
++    }
++  }
++  return path.join(resolvedDir, `${stem}-${Date.now()}${ext}`);
 +}
 +
 +/**
@@ -352,6 +383,9 @@ index 00000000..a94902d4
 +  if (!trimmed) return undefined;
 +  if (path.isAbsolute(trimmed)) return trimmed;
 +
++  if (typeof downloadsDir === "string" && downloadsDir.trim()) {
++    return path.join(downloadsDir.trim(), trimmed);
++  }
 +  const rootTrimmed = typeof workspaceRoot === "string" ? workspaceRoot.trim() : "";
 +  if (rootTrimmed) {
 +    try {
@@ -359,17 +393,15 @@ index 00000000..a94902d4
 +        return path.join(rootTrimmed, trimmed);
 +      }
 +    } catch {
-+      // Fall through to downloads directory when workspaceRoot is remote or missing.
++      // Ignore missing workspaceRoot.
 +    }
-+  }
-+  if (typeof downloadsDir === "string" && downloadsDir.trim()) {
-+    return path.join(downloadsDir.trim(), trimmed);
 +  }
 +  return trimmed;
 +}
 +
 +/**
 + * Handle the renderer `saveFile` IPC request:
++ * - Direct save into `Downloads` when `saveToDownloads: true` is passed
 + * - Direct relative workspace write when `relativePath` is provided
 + * - Interactive native Save dialog otherwise (writing `content` atomically when supplied)
 + *
@@ -384,11 +416,25 @@ index 00000000..a94902d4
 + *     content?: string;
 + *     workspaceRoot?: string;
 + *     relativePath?: string;
++ *     saveToDownloads?: boolean;
 + *   };
 + * }} params
 + * @returns {Promise<string | null>}
 + */
 +export async function handleSaveFileDialog({ dialog, parentWindow, downloadsDir, options = {} }) {
++  if (options.saveToDownloads === true) {
++    if (typeof options.content !== "string") {
++      throw new Error("content is required when saveToDownloads is true");
++    }
++    const targetDir =
++      (typeof downloadsDir === "string" && downloadsDir.trim()) ||
++      path.join(os.homedir(), "Downloads");
++    await mkdir(targetDir, { recursive: true });
++    const targetPath = resolveUniqueDownloadPath(targetDir, options.defaultPath ?? "omnirush-chat.md");
++    await writeTextFileAtomically(targetPath, options.content);
++    return targetPath;
++  }
++
 +  if (typeof options.relativePath === "string" && options.relativePath.trim()) {
 +    if (typeof options.content !== "string") {
 +      throw new Error("content is required when saving to relativePath");
@@ -423,10 +469,10 @@ index 00000000..a94902d4
 +}
 diff --git a/apps/desktop/electron/save-file.test.mjs b/apps/desktop/electron/save-file.test.mjs
 new file mode 100644
-index 00000000..ba5f424d
+index 00000000..6ccebd88
 --- /dev/null
 +++ b/apps/desktop/electron/save-file.test.mjs
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,160 @@
 +import assert from "node:assert/strict";
 +import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
 +import os from "node:os";
@@ -437,21 +483,63 @@ index 00000000..ba5f424d
 +  handleSaveFileDialog,
 +  resolveDialogDefaultPath,
 +  resolveDirectExportPath,
++  resolveUniqueDownloadPath,
 +} from "./save-file.mjs";
++
++test("saveToDownloads writes directly into Downloads and deduplicates collisions without opening dialog", async () => {
++  const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-downloads-"));
++  try {
++    const first = await handleSaveFileDialog({
++      dialog: {
++        showSaveDialog: async () => {
++          throw new Error("dialog must not open when saveToDownloads is true");
++        },
++      },
++      downloadsDir: downloads,
++      options: {
++        saveToDownloads: true,
++        defaultPath: "omnirush-chat.md",
++        content: "# First export\n",
++      },
++    });
++    assert.equal(first, path.join(downloads, "omnirush-chat.md"));
++    assert.equal(readFileSync(first, "utf8"), "# First export\n");
++
++    const second = await handleSaveFileDialog({
++      dialog: {
++        showSaveDialog: async () => {
++          throw new Error("dialog must not open when saveToDownloads is true");
++        },
++      },
++      downloadsDir: downloads,
++      options: {
++        saveToDownloads: true,
++        defaultPath: "omnirush-chat.md",
++        content: "# Second export\n",
++      },
++    });
++    assert.equal(second, path.join(downloads, "omnirush-chat (1).md"));
++    assert.equal(readFileSync(second, "utf8"), "# Second export\n");
++    assert.equal(resolveUniqueDownloadPath(downloads, "omnirush-chat.md"), path.join(downloads, "omnirush-chat (2).md"));
++  } finally {
++    rmSync(downloads, { recursive: true, force: true });
++  }
++});
 +
 +test("handleSaveFileDialog writes UTF-8 content atomically when user picks a save path", async () => {
 +  const dir = mkdtempSync(path.join(os.tmpdir(), "omnirush-save-file-"));
++  const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-save-dl-"));
 +  try {
 +    const picked = path.join(dir, "exports", "thread.md");
 +    const saved = await handleSaveFileDialog({
 +      dialog: {
 +        showSaveDialog: async (_win, opts) => {
-+          assert.equal(opts.defaultPath, path.join(dir, "omnirush-chat.md"));
++          assert.equal(opts.defaultPath, path.join(downloads, "omnirush-chat.md"));
 +          return { canceled: false, filePath: picked };
 +        },
 +      },
 +      parentWindow: null,
-+      downloadsDir: os.tmpdir(),
++      downloadsDir: downloads,
 +      options: {
 +        title: "Export chat as Markdown",
 +        defaultPath: "omnirush-chat.md",
@@ -464,6 +552,7 @@ index 00000000..ba5f424d
 +    assert.equal(readFileSync(picked, "utf8"), "# Session\n\n> _Reasoning_\n> привет мир\n");
 +  } finally {
 +    rmSync(dir, { recursive: true, force: true });
++    rmSync(downloads, { recursive: true, force: true });
 +  }
 +});
 +
@@ -527,20 +616,17 @@ index 00000000..ba5f424d
 +  }
 +});
 +
-+test("resolveDialogDefaultPath falls back to downloadsDir when workspaceRoot is missing", () => {
++test("resolveDialogDefaultPath prefers downloadsDir and falls back to workspaceRoot when downloadsDir is absent", () => {
 +  const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-dl-"));
 +  try {
-+    const resolved = resolveDialogDefaultPath({
-+      defaultPath: "chat.md",
-+      workspaceRoot: path.join(downloads, "does-not-exist"),
-+      downloadsDir: downloads,
-+    });
-+    assert.equal(resolved, path.join(downloads, "chat.md"));
-+
 +    const sub = path.join(downloads, "project");
 +    mkdirSync(sub);
 +    assert.equal(
 +      resolveDialogDefaultPath({ defaultPath: "chat.md", workspaceRoot: sub, downloadsDir: downloads }),
++      path.join(downloads, "chat.md"),
++    );
++    assert.equal(
++      resolveDialogDefaultPath({ defaultPath: "chat.md", workspaceRoot: sub, downloadsDir: null }),
 +      path.join(sub, "chat.md"),
 +    );
 +  } finally {

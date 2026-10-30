@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 /**
@@ -31,6 +32,36 @@ function deepestExistingAncestor(targetPath) {
 function isStrictlyInsideDirectory(rootPath, childPath) {
   const rel = path.relative(rootPath, childPath);
   return Boolean(rel) && rel !== "." && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/**
+ * Resolve a collision-free file path inside `directory` by appending ` (1)`,
+ * ` (2)`, etc. before the file extension when a file with the same name
+ * already exists (matching standard browser / macOS Downloads behavior).
+ *
+ * @param {string} directory
+ * @param {string} fileName
+ * @returns {string}
+ */
+export function resolveUniqueDownloadPath(directory, fileName) {
+  const cleanLeaf = path.basename(String(fileName || "").trim()) || "omnirush-chat.md";
+  const ext = path.extname(cleanLeaf);
+  const stem = ext ? cleanLeaf.slice(0, -ext.length) : cleanLeaf;
+  const resolvedDir = path.resolve(directory);
+
+  for (let suffix = 0; suffix < 10_000; suffix += 1) {
+    const candidateLeaf = suffix === 0 ? cleanLeaf : `${stem} (${suffix})${ext}`;
+    const candidatePath = path.join(resolvedDir, candidateLeaf);
+    try {
+      lstatSync(candidatePath);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return candidatePath;
+      }
+      throw error;
+    }
+  }
+  return path.join(resolvedDir, `${stem}-${Date.now()}${ext}`);
 }
 
 /**
@@ -124,6 +155,9 @@ export function resolveDialogDefaultPath({ defaultPath, workspaceRoot, downloads
   if (!trimmed) return undefined;
   if (path.isAbsolute(trimmed)) return trimmed;
 
+  if (typeof downloadsDir === "string" && downloadsDir.trim()) {
+    return path.join(downloadsDir.trim(), trimmed);
+  }
   const rootTrimmed = typeof workspaceRoot === "string" ? workspaceRoot.trim() : "";
   if (rootTrimmed) {
     try {
@@ -131,17 +165,15 @@ export function resolveDialogDefaultPath({ defaultPath, workspaceRoot, downloads
         return path.join(rootTrimmed, trimmed);
       }
     } catch {
-      // Fall through to downloads directory when workspaceRoot is remote or missing.
+      // Ignore missing workspaceRoot.
     }
-  }
-  if (typeof downloadsDir === "string" && downloadsDir.trim()) {
-    return path.join(downloadsDir.trim(), trimmed);
   }
   return trimmed;
 }
 
 /**
  * Handle the renderer `saveFile` IPC request:
+ * - Direct save into `Downloads` when `saveToDownloads: true` is passed
  * - Direct relative workspace write when `relativePath` is provided
  * - Interactive native Save dialog otherwise (writing `content` atomically when supplied)
  *
@@ -156,11 +188,25 @@ export function resolveDialogDefaultPath({ defaultPath, workspaceRoot, downloads
  *     content?: string;
  *     workspaceRoot?: string;
  *     relativePath?: string;
+ *     saveToDownloads?: boolean;
  *   };
  * }} params
  * @returns {Promise<string | null>}
  */
 export async function handleSaveFileDialog({ dialog, parentWindow, downloadsDir, options = {} }) {
+  if (options.saveToDownloads === true) {
+    if (typeof options.content !== "string") {
+      throw new Error("content is required when saveToDownloads is true");
+    }
+    const targetDir =
+      (typeof downloadsDir === "string" && downloadsDir.trim()) ||
+      path.join(os.homedir(), "Downloads");
+    await mkdir(targetDir, { recursive: true });
+    const targetPath = resolveUniqueDownloadPath(targetDir, options.defaultPath ?? "omnirush-chat.md");
+    await writeTextFileAtomically(targetPath, options.content);
+    return targetPath;
+  }
+
   if (typeof options.relativePath === "string" && options.relativePath.trim()) {
     if (typeof options.content !== "string") {
       throw new Error("content is required when saving to relativePath");

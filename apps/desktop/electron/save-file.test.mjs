@@ -8,21 +8,63 @@ import {
   handleSaveFileDialog,
   resolveDialogDefaultPath,
   resolveDirectExportPath,
+  resolveUniqueDownloadPath,
 } from "./save-file.mjs";
+
+test("saveToDownloads writes directly into Downloads and deduplicates collisions without opening dialog", async () => {
+  const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-downloads-"));
+  try {
+    const first = await handleSaveFileDialog({
+      dialog: {
+        showSaveDialog: async () => {
+          throw new Error("dialog must not open when saveToDownloads is true");
+        },
+      },
+      downloadsDir: downloads,
+      options: {
+        saveToDownloads: true,
+        defaultPath: "omnirush-chat.md",
+        content: "# First export\n",
+      },
+    });
+    assert.equal(first, path.join(downloads, "omnirush-chat.md"));
+    assert.equal(readFileSync(first, "utf8"), "# First export\n");
+
+    const second = await handleSaveFileDialog({
+      dialog: {
+        showSaveDialog: async () => {
+          throw new Error("dialog must not open when saveToDownloads is true");
+        },
+      },
+      downloadsDir: downloads,
+      options: {
+        saveToDownloads: true,
+        defaultPath: "omnirush-chat.md",
+        content: "# Second export\n",
+      },
+    });
+    assert.equal(second, path.join(downloads, "omnirush-chat (1).md"));
+    assert.equal(readFileSync(second, "utf8"), "# Second export\n");
+    assert.equal(resolveUniqueDownloadPath(downloads, "omnirush-chat.md"), path.join(downloads, "omnirush-chat (2).md"));
+  } finally {
+    rmSync(downloads, { recursive: true, force: true });
+  }
+});
 
 test("handleSaveFileDialog writes UTF-8 content atomically when user picks a save path", async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), "omnirush-save-file-"));
+  const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-save-dl-"));
   try {
     const picked = path.join(dir, "exports", "thread.md");
     const saved = await handleSaveFileDialog({
       dialog: {
         showSaveDialog: async (_win, opts) => {
-          assert.equal(opts.defaultPath, path.join(dir, "omnirush-chat.md"));
+          assert.equal(opts.defaultPath, path.join(downloads, "omnirush-chat.md"));
           return { canceled: false, filePath: picked };
         },
       },
       parentWindow: null,
-      downloadsDir: os.tmpdir(),
+      downloadsDir: downloads,
       options: {
         title: "Export chat as Markdown",
         defaultPath: "omnirush-chat.md",
@@ -35,6 +77,7 @@ test("handleSaveFileDialog writes UTF-8 content atomically when user picks a sav
     assert.equal(readFileSync(picked, "utf8"), "# Session\n\n> _Reasoning_\n> привет мир\n");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(downloads, { recursive: true, force: true });
   }
 });
 
@@ -98,20 +141,17 @@ test("resolveDirectExportPath refuses traversal, symlink escapes, and overwritin
   }
 });
 
-test("resolveDialogDefaultPath falls back to downloadsDir when workspaceRoot is missing", () => {
+test("resolveDialogDefaultPath prefers downloadsDir and falls back to workspaceRoot when downloadsDir is absent", () => {
   const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-dl-"));
   try {
-    const resolved = resolveDialogDefaultPath({
-      defaultPath: "chat.md",
-      workspaceRoot: path.join(downloads, "does-not-exist"),
-      downloadsDir: downloads,
-    });
-    assert.equal(resolved, path.join(downloads, "chat.md"));
-
     const sub = path.join(downloads, "project");
     mkdirSync(sub);
     assert.equal(
       resolveDialogDefaultPath({ defaultPath: "chat.md", workspaceRoot: sub, downloadsDir: downloads }),
+      path.join(downloads, "chat.md"),
+    );
+    assert.equal(
+      resolveDialogDefaultPath({ defaultPath: "chat.md", workspaceRoot: sub, downloadsDir: null }),
       path.join(sub, "chat.md"),
     );
   } finally {

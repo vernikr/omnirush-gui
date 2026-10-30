@@ -8,10 +8,10 @@ Export the full contents of any chat session/branch — including model reasonin
 - **Sidebar:** right-click any session row (or click its `…` menu) and choose **Export as Markdown**.
 - **Command Palette (`Cmd+K` / `Ctrl+K`):** run **Export chat as Markdown** while a session pane is focused (including split-view side chats).
 - **Composer slash command:**
-  - `/export` — opens the native Save dialog on desktop (or downloads `<title>-<id>.md` on web).
-  - `/export <filename>` (for example `/export notes/auth-debug.md` or `/export session-trace`) — writes directly inside the current project folder without sending a prompt to the model. Relative path escapes (`..`, symlinks outside the workspace, absolute paths) and overwriting existing files are refused.
+  - `/export` — saves `<title>-<id>.md` directly into your `Downloads` folder (with automatic `(1)`, `(2)` collision numbering so existing files are never overwritten).
+  - `/export <filename>` (for example `/export session-trace` or `/export auth-debug.md`) — saves `<filename>.md` into `Downloads` (or writes to an explicit relative project subfolder like `/export notes/auth-debug.md` while refusing path traversal and overwrites).
 
-On desktop, the completion toast includes a **Show file** action that reveals the exported `.md` file in Finder / Explorer / your file manager.
+On desktop, all UI export actions save directly to `Downloads` and the completion toast includes a **Show file** action that highlights the exported `.md` file in Finder / Explorer / your file manager.
 
 ## What is included
 

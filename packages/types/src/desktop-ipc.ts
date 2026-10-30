@@ -1135,6 +1135,7 @@ export type DesktopCommandMap = {
         content?: string;
         workspaceRoot?: string;
         relativePath?: string;
+        saveToDownloads?: boolean;
       },
     ];
     result: string | null;

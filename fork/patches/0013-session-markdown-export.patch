@@ -809,10 +809,10 @@ index e3010078..d2a102f7 100644
    "session.cmd_sessions_detail": "跨工作区共 {count} 个",
 diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
 new file mode 100644
-index 00000000..cca366a7
+index 00000000..be970732
 --- /dev/null
 +++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,283 @@
 +import { useCallback, useRef, useState } from "react";
 +
 +import { toast } from "@/components/ui/sonner";
@@ -971,7 +971,29 @@ index 00000000..cca366a7
 +
 +    if (validatedRelative && validatedRelative.ok) {
 +      const relPath = validatedRelative.relativePath;
-+      if (desktop && localWorkspaceRoot) {
++      const isNestedSubpath = relPath.includes("/");
++      if (desktop && !isNestedSubpath) {
++        const savedPath = await saveFile({
++          saveToDownloads: true,
++          defaultPath: relPath,
++          content: markdown,
++        });
++        if (!savedPath) {
++          return { outcome: "canceled" };
++        }
++        const displayPath = shortenSavedPathForToast(savedPath, localWorkspaceRoot);
++        toast.success(t("session.export_markdown_saved", { path: displayPath }), {
++          action: {
++            label: t("session.export_markdown_reveal"),
++            onClick: () => {
++              void revealDesktopItemInDir(savedPath);
++            },
++          },
++        });
++        return { outcome: "saved", path: savedPath };
++      }
++
++      if (desktop && localWorkspaceRoot && isNestedSubpath) {
 +        const savedPath = await saveFile({
 +          workspaceRoot: localWorkspaceRoot,
 +          relativePath: relPath,
@@ -992,7 +1014,7 @@ index 00000000..cca366a7
 +      }
 +
 +      const remoteWorkspaceId = (target.serverWorkspaceId ?? target.workspaceId).trim();
-+      if (target.serverClient && remoteWorkspaceId) {
++      if (isNestedSubpath && target.serverClient && remoteWorkspaceId) {
 +        const stat = await target.serverClient.statWorkspaceFile(remoteWorkspaceId, relPath);
 +        if (stat.exists) {
 +          throw new Error(`${relPath} already exists — pass a new filename`);
@@ -1007,16 +1029,14 @@ index 00000000..cca366a7
 +
 +      const fallbackLeaf = relPath.split("/").pop() || defaultFilename;
 +      downloadTextAsFile(fallbackLeaf, markdown, "text/markdown;charset=utf-8");
-+      toast.success(t("session.export_markdown_saved", { path: fallbackLeaf }));
++      toast.success(t("session.export_markdown_saved", { path: `Downloads/${fallbackLeaf}` }));
 +      return { outcome: "saved", path: fallbackLeaf };
 +    }
 +
 +    if (desktop) {
 +      const savedPath = await saveFile({
-+        title: t("session.cmd_export_markdown_title"),
++        saveToDownloads: true,
 +        defaultPath: defaultFilename,
-+        workspaceRoot: localWorkspaceRoot || undefined,
-+        filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
 +        content: markdown,
 +      });
 +      if (!savedPath) {
@@ -1035,7 +1055,7 @@ index 00000000..cca366a7
 +    }
 +
 +    downloadTextAsFile(defaultFilename, markdown, "text/markdown;charset=utf-8");
-+    toast.success(t("session.export_markdown_saved", { path: defaultFilename }));
++    toast.success(t("session.export_markdown_saved", { path: `Downloads/${defaultFilename}` }));
 +    return { outcome: "saved", path: defaultFilename };
 +  } catch (error) {
 +    const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "";
@@ -1314,10 +1334,10 @@ index 0a8f1b5c..7a962c0d 100644
        onSelectAgent={setSelectedAgent}
 diff --git a/apps/app/tests/session-markdown-export.test.ts b/apps/app/tests/session-markdown-export.test.ts
 new file mode 100644
-index 00000000..5a769c02
+index 00000000..2fb18868
 --- /dev/null
 +++ b/apps/app/tests/session-markdown-export.test.ts
-@@ -0,0 +1,466 @@
+@@ -0,0 +1,542 @@
 +import { describe, expect, test } from "bun:test";
 +import type { AssistantMessage, Part, Session, UserMessage } from "@opencode-ai/sdk/v2/client";
 +
@@ -1783,10 +1803,86 @@ index 00000000..5a769c02
 +      server.stop(true);
 +    }
 +  });
++
++  test("desktop export saves directly to Downloads via saveToDownloads without workspace Save dialog", async () => {
++    const server = Bun.serve({
++      port: 0,
++      fetch(req) {
++        const url = new URL(req.url);
++        if (url.pathname.endsWith("/api/session/ses_dl")) {
++          return Response.json({
++            id: "ses_dl",
++            directory: "/workspace/omnirush-gui",
++            title: "Downloads Export Check",
++            time: { created: 1000, updated: 2000 },
++          });
++        }
++        if (url.pathname.endsWith("/api/session/ses_dl/message")) {
++          return Response.json({
++            data: [
++              {
++                id: "msg_1",
++                sessionID: "ses_dl",
++                role: "user",
++                time: { created: 1000 },
++                content: [{ type: "text", text: "Save to Downloads" }],
++              },
++            ],
++          });
++        }
++        return new Response("Not found", { status: 404 });
++      },
++    });
++
++    const recordedCalls: Array<{ command: string; args: unknown[] }> = [];
++    const hadWindow = "window" in globalThis;
++    const prevWindow = (globalThis as Record<string, unknown>).window;
++    (globalThis as Record<string, unknown>).window = {
++      ...(typeof prevWindow === "object" && prevWindow ? (prevWindow as Record<string, unknown>) : {}),
++      __OMNIRUSH_ELECTRON__: {
++        invokeDesktop: async (command: string, ...args: unknown[]) => {
++          recordedCalls.push({ command, args });
++          if (command === "saveFile") {
++            const opts = (args[0] ?? {}) as { defaultPath?: string };
++            return `/Users/tester/Downloads/${opts.defaultPath ?? "chat.md"}`;
++          }
++          return null;
++        },
++      },
++    };
++
++    try {
++      const outcome = await exportSessionMarkdown({
++        workspaceId: "ws_dl",
++        sessionId: "ses_dl",
++        opencodeBaseUrl: `http://127.0.0.1:${server.port}/opencode2`,
++        token: "test-token",
++        workspaceRoot: "/workspace/omnirush-gui",
++      });
++
++      expect(outcome).toEqual({
++        outcome: "saved",
++        path: "/Users/tester/Downloads/Downloads-Export-Check-ses_dl.md",
++      });
++      expect(recordedCalls).toHaveLength(1);
++      expect(recordedCalls[0]?.command).toBe("saveFile");
++      expect(recordedCalls[0]?.args[0]).toMatchObject({
++        saveToDownloads: true,
++        defaultPath: "Downloads-Export-Check-ses_dl.md",
++      });
++    } finally {
++      if (hadWindow) {
++        (globalThis as Record<string, unknown>).window = prevWindow;
++      } else {
++        delete (globalThis as Record<string, unknown>).window;
++      }
++      server.stop(true);
++    }
++  });
 +});
 diff --git a/docs/session-markdown-export.md b/docs/session-markdown-export.md
 new file mode 100644
-index 00000000..d8b1e674
+index 00000000..b8d90682
 --- /dev/null
 +++ b/docs/session-markdown-export.md
 @@ -0,0 +1,28 @@
@@ -1800,10 +1896,10 @@ index 00000000..d8b1e674
 +- **Sidebar:** right-click any session row (or click its `…` menu) and choose **Export as Markdown**.
 +- **Command Palette (`Cmd+K` / `Ctrl+K`):** run **Export chat as Markdown** while a session pane is focused (including split-view side chats).
 +- **Composer slash command:**
-+  - `/export` — opens the native Save dialog on desktop (or downloads `<title>-<id>.md` on web).
-+  - `/export <filename>` (for example `/export notes/auth-debug.md` or `/export session-trace`) — writes directly inside the current project folder without sending a prompt to the model. Relative path escapes (`..`, symlinks outside the workspace, absolute paths) and overwriting existing files are refused.
++  - `/export` — saves `<title>-<id>.md` directly into your `Downloads` folder (with automatic `(1)`, `(2)` collision numbering so existing files are never overwritten).
++  - `/export <filename>` (for example `/export session-trace` or `/export auth-debug.md`) — saves `<filename>.md` into `Downloads` (or writes to an explicit relative project subfolder like `/export notes/auth-debug.md` while refusing path traversal and overwrites).
 +
-+On desktop, the completion toast includes a **Show file** action that reveals the exported `.md` file in Finder / Explorer / your file manager.
++On desktop, all UI export actions save directly to `Downloads` and the completion toast includes a **Show file** action that highlights the exported `.md` file in Finder / Explorer / your file manager.
 +
 +## What is included
 +
@@ -1819,10 +1915,10 @@ index 00000000..d8b1e674
 +- OmniRush GUI feature request: [omnirush-ai/omnirush-gui#349](https://github.com/omnirush-ai/omnirush-gui/issues/349)
 +- Related OpenCode Desktop & CLI issues: [anomalyco/opencode#55542](https://github.com/anomalyco/opencode/issues/55542), [anomalyco/opencode#59904](https://github.com/anomalyco/opencode/issues/59904)
 diff --git a/packages/types/src/desktop-ipc.ts b/packages/types/src/desktop-ipc.ts
-index 63e0bed6..9d1cb34f 100644
+index 63e0bed6..71c922c8 100644
 --- a/packages/types/src/desktop-ipc.ts
 +++ b/packages/types/src/desktop-ipc.ts
-@@ -1127,7 +1127,16 @@ export type DesktopCommandMap = {
+@@ -1127,7 +1127,17 @@ export type DesktopCommandMap = {
      result: string | string[] | null;
    };
    saveFile: {
@@ -1835,6 +1931,7 @@ index 63e0bed6..9d1cb34f 100644
 +        content?: string;
 +        workspaceRoot?: string;
 +        relativePath?: string;
++        saveToDownloads?: boolean;
 +      },
 +    ];
      result: string | null;

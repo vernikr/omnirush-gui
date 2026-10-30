@@ -156,7 +156,29 @@ export async function exportSessionMarkdown(
 
     if (validatedRelative && validatedRelative.ok) {
       const relPath = validatedRelative.relativePath;
-      if (desktop && localWorkspaceRoot) {
+      const isNestedSubpath = relPath.includes("/");
+      if (desktop && !isNestedSubpath) {
+        const savedPath = await saveFile({
+          saveToDownloads: true,
+          defaultPath: relPath,
+          content: markdown,
+        });
+        if (!savedPath) {
+          return { outcome: "canceled" };
+        }
+        const displayPath = shortenSavedPathForToast(savedPath, localWorkspaceRoot);
+        toast.success(t("session.export_markdown_saved", { path: displayPath }), {
+          action: {
+            label: t("session.export_markdown_reveal"),
+            onClick: () => {
+              void revealDesktopItemInDir(savedPath);
+            },
+          },
+        });
+        return { outcome: "saved", path: savedPath };
+      }
+
+      if (desktop && localWorkspaceRoot && isNestedSubpath) {
         const savedPath = await saveFile({
           workspaceRoot: localWorkspaceRoot,
           relativePath: relPath,
@@ -177,7 +199,7 @@ export async function exportSessionMarkdown(
       }
 
       const remoteWorkspaceId = (target.serverWorkspaceId ?? target.workspaceId).trim();
-      if (target.serverClient && remoteWorkspaceId) {
+      if (isNestedSubpath && target.serverClient && remoteWorkspaceId) {
         const stat = await target.serverClient.statWorkspaceFile(remoteWorkspaceId, relPath);
         if (stat.exists) {
           throw new Error(`${relPath} already exists — pass a new filename`);
@@ -192,16 +214,14 @@ export async function exportSessionMarkdown(
 
       const fallbackLeaf = relPath.split("/").pop() || defaultFilename;
       downloadTextAsFile(fallbackLeaf, markdown, "text/markdown;charset=utf-8");
-      toast.success(t("session.export_markdown_saved", { path: fallbackLeaf }));
+      toast.success(t("session.export_markdown_saved", { path: `Downloads/${fallbackLeaf}` }));
       return { outcome: "saved", path: fallbackLeaf };
     }
 
     if (desktop) {
       const savedPath = await saveFile({
-        title: t("session.cmd_export_markdown_title"),
+        saveToDownloads: true,
         defaultPath: defaultFilename,
-        workspaceRoot: localWorkspaceRoot || undefined,
-        filters: [{ name: "Markdown", extensions: ["md", "markdown"] }],
         content: markdown,
       });
       if (!savedPath) {
@@ -220,7 +240,7 @@ export async function exportSessionMarkdown(
     }
 
     downloadTextAsFile(defaultFilename, markdown, "text/markdown;charset=utf-8");
-    toast.success(t("session.export_markdown_saved", { path: defaultFilename }));
+    toast.success(t("session.export_markdown_saved", { path: `Downloads/${defaultFilename}` }));
     return { outcome: "saved", path: defaultFilename };
   } catch (error) {
     const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "";

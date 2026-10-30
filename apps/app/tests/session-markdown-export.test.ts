@@ -463,4 +463,80 @@ describe("session-markdown-export", () => {
       server.stop(true);
     }
   });
+
+  test("desktop export saves directly to Downloads via saveToDownloads without workspace Save dialog", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith("/api/session/ses_dl")) {
+          return Response.json({
+            id: "ses_dl",
+            directory: "/workspace/omnirush-gui",
+            title: "Downloads Export Check",
+            time: { created: 1000, updated: 2000 },
+          });
+        }
+        if (url.pathname.endsWith("/api/session/ses_dl/message")) {
+          return Response.json({
+            data: [
+              {
+                id: "msg_1",
+                sessionID: "ses_dl",
+                role: "user",
+                time: { created: 1000 },
+                content: [{ type: "text", text: "Save to Downloads" }],
+              },
+            ],
+          });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    const recordedCalls: Array<{ command: string; args: unknown[] }> = [];
+    const hadWindow = "window" in globalThis;
+    const prevWindow = (globalThis as Record<string, unknown>).window;
+    (globalThis as Record<string, unknown>).window = {
+      ...(typeof prevWindow === "object" && prevWindow ? (prevWindow as Record<string, unknown>) : {}),
+      __OMNIRUSH_ELECTRON__: {
+        invokeDesktop: async (command: string, ...args: unknown[]) => {
+          recordedCalls.push({ command, args });
+          if (command === "saveFile") {
+            const opts = (args[0] ?? {}) as { defaultPath?: string };
+            return `/Users/tester/Downloads/${opts.defaultPath ?? "chat.md"}`;
+          }
+          return null;
+        },
+      },
+    };
+
+    try {
+      const outcome = await exportSessionMarkdown({
+        workspaceId: "ws_dl",
+        sessionId: "ses_dl",
+        opencodeBaseUrl: `http://127.0.0.1:${server.port}/opencode2`,
+        token: "test-token",
+        workspaceRoot: "/workspace/omnirush-gui",
+      });
+
+      expect(outcome).toEqual({
+        outcome: "saved",
+        path: "/Users/tester/Downloads/Downloads-Export-Check-ses_dl.md",
+      });
+      expect(recordedCalls).toHaveLength(1);
+      expect(recordedCalls[0]?.command).toBe("saveFile");
+      expect(recordedCalls[0]?.args[0]).toMatchObject({
+        saveToDownloads: true,
+        defaultPath: "Downloads-Export-Check-ses_dl.md",
+      });
+    } finally {
+      if (hadWindow) {
+        (globalThis as Record<string, unknown>).window = prevWindow;
+      } else {
+        delete (globalThis as Record<string, unknown>).window;
+      }
+      server.stop(true);
+    }
+  });
 });
