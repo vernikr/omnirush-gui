@@ -4306,47 +4306,42 @@ index 00000000..7a51461d
 ++});
 diff --git a/fork/patches/0013-session-markdown-export.patch b/fork/patches/0013-session-markdown-export.patch
 new file mode 100644
-index 00000000..ffac05c1
+index 00000000..e5827ead
 --- /dev/null
 +++ b/fork/patches/0013-session-markdown-export.patch
-@@ -0,0 +1,1939 @@
-+diff --git a/apps/app/src/app/lib/session-markdown-export.ts b/apps/app/src/app/lib/session-markdown-export.ts
+@@ -0,0 +1,4945 @@
++diff --git a/apps/app/src/app/lib/markdown-export/canonicalize.ts b/apps/app/src/app/lib/markdown-export/canonicalize.ts
 +new file mode 100644
-+index 00000000..3c90a187
++index 00000000..2b5a0732
 +--- /dev/null
-++++ b/apps/app/src/app/lib/session-markdown-export.ts
-+@@ -0,0 +1,754 @@
+++++ b/apps/app/src/app/lib/markdown-export/canonicalize.ts
++@@ -0,0 +1,764 @@
 ++import type {
 ++  AssistantMessage,
 ++  FilePart,
-++  Message,
 ++  Part,
 ++  Session,
-++  Todo,
 ++  ToolPart,
 ++} from "@opencode-ai/sdk/v2/client";
 ++
-++export type ExportableSessionMessage = {
-++  info: Message;
-++  parts: Part[];
-++};
-++
-++export type ExportableSessionTree = {
-++  session: Session;
-++  messages: ExportableSessionMessage[];
-++  todos?: Todo[];
-++  /** Child sub-agent sessions keyed by their OpenCode session ID (`task` tool `state.metadata.sessionId`). */
-++  subagentSessions?: ReadonlyMap<string, ExportableSessionTree>;
-++};
-++
-++export type ParsedExportSlashCommand = {
-++  /** Optional relative path inside the workspace (`/export notes/chat.md`), or `null` for interactive save/download. */
-++  filename: string | null;
-++};
-++
-++export type RelativeExportPathValidation =
-++  | { ok: true; relativePath: string }
-++  | { ok: false; reason: string };
+++import { sha256Hex, utf8ByteLength } from "./hash-and-bytes";
+++import {
+++  isPlainObject,
+++  normalizeNewlines,
+++  safeJsonStringify,
+++  tryFormatCompactJsonInput,
+++} from "./structured-compact";
+++import type {
+++  CanonicalMessageIR,
+++  CanonicalMessagePartIR,
+++  CanonicalReadFile,
+++  CanonicalSessionNodeIR,
+++  CanonicalSubagentIR,
+++  CanonicalTranscriptIR,
+++  ExportableSessionMessage,
+++  ExportableSessionTree,
+++  ReadFooterKind,
+++} from "./types";
 ++
 ++const BUILTIN_TOOL_TITLES: Record<string, string> = {
 ++  bash: "Bash",
@@ -4375,94 +4370,65 @@ index 00000000..ffac05c1
 ++  structuredoutput: "Structured Output",
 ++};
 ++
-++const MAX_SLUG_UTF8_BYTES = 64;
+++const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
+++  ts: "ts",
+++  tsx: "tsx",
+++  mts: "ts",
+++  cts: "ts",
+++  js: "js",
+++  jsx: "jsx",
+++  mjs: "js",
+++  cjs: "js",
+++  json: "json",
+++  jsonc: "jsonc",
+++  md: "markdown",
+++  markdown: "markdown",
+++  mdx: "mdx",
+++  py: "python",
+++  rs: "rust",
+++  go: "go",
+++  rb: "ruby",
+++  java: "java",
+++  kt: "kotlin",
+++  swift: "swift",
+++  c: "c",
+++  h: "c",
+++  cc: "cpp",
+++  cpp: "cpp",
+++  hpp: "cpp",
+++  cs: "csharp",
+++  php: "php",
+++  sh: "bash",
+++  bash: "bash",
+++  zsh: "bash",
+++  yml: "yaml",
+++  yaml: "yaml",
+++  toml: "toml",
+++  ini: "ini",
+++  css: "css",
+++  scss: "scss",
+++  html: "html",
+++  htm: "html",
+++  xml: "xml",
+++  svg: "xml",
+++  sql: "sql",
+++  graphql: "graphql",
+++  gql: "graphql",
+++  dockerfile: "dockerfile",
+++};
 ++
-++function isRecord(value: unknown): value is Record<string, unknown> {
-++  return typeof value === "object" && value !== null && !Array.isArray(value);
-++}
+++const END_OF_FILE_PATTERN = /^\(End of file - total (\d+) lines\)$/;
+++const OUTPUT_CAPPED_PATTERN =
+++  /^\(Output capped at 50 KB\. Showing lines (\d+)-(\d+)\. Use offset=(\d+) to continue\.\)$/;
+++const PARTIAL_FILE_PATTERN =
+++  /^\(Showing lines (\d+)-(\d+) of (\d+)\. Use offset=(\d+) to continue\.\)$/;
+++const MORE_LINES_V1_PATTERN =
+++  /^\(File has more lines\. Use 'offset' parameter to read beyond line (\d+)\)$/;
 ++
-++function normalizeNewlines(value: string): string {
-++  return value.replace(/\r\n?/g, "\n");
-++}
+++const V2_LINE_PATTERN = /^(\d+): ?(.*)$/;
+++const V1_LINE_PATTERN = /^0*(\d+)\| ?(.*)$/;
 ++
-++/**
-++ * Compute a backtick code fence guaranteed to be strictly longer than any
-++ * contiguous run of backticks inside `content`, preventing Markdown injection
-++ * or broken code blocks even when exporting conversations containing Markdown.
-++ */
-++export function fenceMarkdownCode(content: string, language = ""): string {
-++  const normalized = normalizeNewlines(content);
-++  let longestRun = 0;
-++  let currentRun = 0;
-++  for (let i = 0; i < normalized.length; i += 1) {
-++    if (normalized.charCodeAt(i) === 96 /* ` */) {
-++      currentRun += 1;
-++      if (currentRun > longestRun) longestRun = currentRun;
-++    } else {
-++      currentRun = 0;
-++    }
-++  }
-++  const fence = "`".repeat(Math.max(3, longestRun + 1));
-++  const safeLang = language.replace(/`/g, "").trim();
-++  const body = normalized.endsWith("\n") ? normalized.slice(0, -1) : normalized;
-++  return `${fence}${safeLang}\n${body}\n${fence}`;
-++}
-++
-++function renderBlockquote(headerLine: string | null, text: string): string {
-++  const lines = normalizeNewlines(text).split("\n");
-++  const quoted = lines.map((line) => (line.length > 0 ? `> ${line}` : ">"));
-++  if (headerLine) {
-++    return [`> ${headerLine}`, ...quoted].join("\n");
-++  }
-++  return quoted.join("\n");
-++}
-++
-++function safeJsonStringify(value: unknown): string {
-++  const seen = new WeakSet<object>();
-++  try {
-++    const serialized = JSON.stringify(
-++      value,
-++      (_key, current: unknown) => {
-++        if (typeof current === "bigint") return current.toString();
-++        if (typeof current === "object" && current !== null) {
-++          if (seen.has(current)) return "[Circular]";
-++          seen.add(current);
-++        }
-++        return current;
-++      },
-++      2,
-++    );
-++    return typeof serialized === "string" ? serialized : String(value);
-++  } catch {
-++    return String(value);
-++  }
-++}
-++
-++function formatToolOutputBlock(rawOutput: string): string {
-++  const normalized = normalizeNewlines(rawOutput).trimEnd();
-++  if (!normalized) return fenceMarkdownCode("(empty output)");
-++  const trimmed = normalized.trim();
-++  if (
-++    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
-++    (trimmed.startsWith("[") && trimmed.endsWith("]"))
-++  ) {
-++    try {
-++      const parsed: unknown = JSON.parse(trimmed);
-++      if (typeof parsed === "object" && parsed !== null) {
-++        return fenceMarkdownCode(safeJsonStringify(parsed), "json");
-++      }
-++    } catch {
-++      // Not valid JSON; render raw text below.
-++    }
-++  }
-++  return fenceMarkdownCode(normalized);
-++}
-++
-++function hasMeaningfulInput(input: Record<string, unknown>): boolean {
-++  return Object.keys(input).length > 0;
-++}
-++
-++function humanizeToolName(rawTool: string): string {
+++export function humanizeToolName(rawTool: string): string {
 ++  const trimmed = rawTool.trim();
 ++  if (!trimmed) return "Tool";
 ++  const lower = trimmed.toLowerCase();
@@ -4473,7 +4439,217 @@ index 00000000..ffac05c1
 ++    .replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
 ++}
 ++
-++function extractChildSessionId(metadata: Record<string, unknown> | undefined): string | null {
+++export function inferFenceLanguageFromPath(filePath: string): string {
+++  const normalized = filePath.trim().replace(/\\/g, "/");
+++  const leaf = normalized.split("/").pop() ?? "";
+++  if (!leaf) return "";
+++  const lowerLeaf = leaf.toLowerCase();
+++  if (lowerLeaf === "dockerfile" || lowerLeaf.startsWith("dockerfile.")) {
+++    return "dockerfile";
+++  }
+++  const dotIdx = lowerLeaf.lastIndexOf(".");
+++  if (dotIdx <= 0 || dotIdx === lowerLeaf.length - 1) return "";
+++  const ext = lowerLeaf.slice(dotIdx + 1);
+++  return EXTENSION_LANGUAGE_MAP[ext] ?? "";
+++}
+++
+++export function normalizeComparableFilePath(rawPath: string, workspaceRoot?: string): string {
+++  let cleaned = rawPath.trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+++  if (!cleaned) return "";
+++  const root = (workspaceRoot ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+++  if (root && cleaned.startsWith(`${root}/`)) {
+++    cleaned = cleaned.slice(root.length + 1);
+++  }
+++  if (cleaned.startsWith("./")) {
+++    cleaned = cleaned.slice(2);
+++  }
+++  return cleaned;
+++}
+++
+++function extractInputFilePath(input: Record<string, unknown>): string {
+++  for (const key of ["filePath", "file_path", "path"]) {
+++    const val = input[key];
+++    if (typeof val === "string" && val.trim()) {
+++      return val.trim();
+++    }
+++  }
+++  return "";
+++}
+++
+++function parseNumberedBody(
+++  body: string,
+++  linePattern: RegExp,
+++): {
+++  lines: string[];
+++  firstLine: number;
+++  lastLine: number;
+++  totalLines?: number;
+++  truncated: boolean;
+++  footerKind: ReadFooterKind;
+++} | null {
+++  const rawLines = normalizeNewlines(body).split("\n");
+++  // Trim single leading/trailing structural newline inside XML tag
+++  if (rawLines[0] === "") rawLines.shift();
+++  if (rawLines.at(-1) === "") rawLines.pop();
+++
+++  const parsedLines: Array<{ num: number; text: string }> = [];
+++  let inFooterZone = false;
+++  let footerKind: ReadFooterKind = "none";
+++  let totalLines: number | undefined;
+++  let truncated = false;
+++
+++  for (let i = 0; i < rawLines.length; i += 1) {
+++    const rawLine = rawLines[i]!;
+++    if (!inFooterZone) {
+++      const m = linePattern.exec(rawLine);
+++      if (m) {
+++        const num = Number(m[1]);
+++        if (!Number.isInteger(num) || num < 1) return null;
+++        if (parsedLines.length > 0 && num !== parsedLines[parsedLines.length - 1]!.num + 1) {
+++          return null;
+++        }
+++        parsedLines.push({ num, text: m[2] ?? "" });
+++        continue;
+++      }
+++      inFooterZone = true;
+++    }
+++
+++    if (rawLine === "") {
+++      continue;
+++    }
+++
+++    // Only one footer marker is valid in a canonical OpenCode Read envelope
+++    if (footerKind !== "none") {
+++      return null;
+++    }
+++
+++    const eofMatch = END_OF_FILE_PATTERN.exec(rawLine);
+++    if (eofMatch) {
+++      footerKind = "eof";
+++      totalLines = Number(eofMatch[1]);
+++      continue;
+++    }
+++
+++    const partialMatch = PARTIAL_FILE_PATTERN.exec(rawLine);
+++    if (partialMatch) {
+++      footerKind = "partial";
+++      totalLines = Number(partialMatch[3]);
+++      truncated = true;
+++      continue;
+++    }
+++
+++    const cappedMatch = OUTPUT_CAPPED_PATTERN.exec(rawLine);
+++    if (cappedMatch) {
+++      footerKind = "capped_50kb";
+++      truncated = true;
+++      continue;
+++    }
+++
+++    const moreV1Match = MORE_LINES_V1_PATTERN.exec(rawLine);
+++    if (moreV1Match) {
+++      footerKind = "more_lines";
+++      truncated = true;
+++      continue;
+++    }
+++
+++    return null;
+++  }
+++
+++  if (parsedLines.length === 0) {
+++    if (footerKind === "eof" && totalLines === 0) {
+++      return {
+++        lines: [],
+++        firstLine: 0,
+++        lastLine: 0,
+++        totalLines: 0,
+++        truncated: false,
+++        footerKind,
+++      };
+++    }
+++    return null;
+++  }
+++
+++  return {
+++    lines: parsedLines.map((entry) => entry.text),
+++    firstLine: parsedLines[0]!.num,
+++    lastLine: parsedLines[parsedLines.length - 1]!.num,
+++    totalLines,
+++    truncated,
+++    footerKind,
+++  };
+++}
+++
+++/**
+++ * Strictly parse OpenCode v1 (`<file>\n00001| ...`) and v2
+++ * (`<path>...</path>\n<type>file</type>\n<content>\n1: ...`) `read` envelopes.
+++ * Returns `null` on directory listings or any non-standard output so unknown
+++ * formats always fall back untouched.
+++ */
+++export function parseCanonicalReadEnvelope(params: {
+++  toolName: string;
+++  rawOutput: string;
+++  input: Record<string, unknown>;
+++  workspaceRoot?: string;
+++}): CanonicalReadFile | null {
+++  const { toolName, rawOutput, input, workspaceRoot } = params;
+++  if (toolName.trim().toLowerCase() !== "read") return null;
+++  const normalized = normalizeNewlines(rawOutput).trim();
+++  if (!normalized) return null;
+++
+++  // Variant A: OpenCode v2 `<path>...</path>\n<type>file</type>\n<content>...</content>`
+++  const v2Match =
+++    /^(?:<path>([\s\S]*?)<\/path>\s*)?<type>file<\/type>\s*<content>([\s\S]*?)<\/content>$/.exec(
+++      normalized,
+++    );
+++  if (v2Match) {
+++    const tagPath = (v2Match[1] ?? "").trim();
+++    const displayPath = tagPath || extractInputFilePath(input);
+++    const bodyResult = parseNumberedBody(v2Match[2] ?? "", V2_LINE_PATTERN);
+++    if (!bodyResult) return null;
+++    const cleanBody = bodyResult.lines.join("\n");
+++    return {
+++      envelopeVersion: "v2",
+++      displayPath,
+++      comparablePath: normalizeComparableFilePath(displayPath, workspaceRoot),
+++      fenceLanguage: inferFenceLanguageFromPath(displayPath),
+++      lines: bodyResult.lines,
+++      cleanBody,
+++      cleanBodySha256: sha256Hex(cleanBody),
+++      firstLine: bodyResult.firstLine,
+++      lastLine: bodyResult.lastLine,
+++      totalLines: bodyResult.totalLines,
+++      truncated: bodyResult.truncated,
+++      footerKind: bodyResult.footerKind,
+++    };
+++  }
+++
+++  // Variant B: OpenCode v1 `<file>\n00001| ...\n</file>`
+++  const v1Match = /^<file>([\s\S]*?)<\/file>$/.exec(normalized);
+++  if (v1Match) {
+++    const displayPath = extractInputFilePath(input);
+++    const bodyResult = parseNumberedBody(v1Match[1] ?? "", V1_LINE_PATTERN);
+++    if (!bodyResult) return null;
+++    const cleanBody = bodyResult.lines.join("\n");
+++    return {
+++      envelopeVersion: "v1",
+++      displayPath,
+++      comparablePath: normalizeComparableFilePath(displayPath, workspaceRoot),
+++      fenceLanguage: inferFenceLanguageFromPath(displayPath),
+++      lines: bodyResult.lines,
+++      cleanBody,
+++      cleanBodySha256: sha256Hex(cleanBody),
+++      firstLine: bodyResult.firstLine,
+++      lastLine: bodyResult.lastLine,
+++      totalLines: bodyResult.totalLines,
+++      truncated: bodyResult.truncated,
+++      footerKind: bodyResult.footerKind,
+++    };
+++  }
+++
+++  return null;
+++}
+++
+++export function extractChildSessionId(metadata: Record<string, unknown> | undefined): string | null {
 ++  if (!metadata) return null;
 ++  const candidate = metadata.sessionId ?? metadata.sessionID;
 ++  if (typeof candidate === "string" && candidate.trim()) {
@@ -4491,34 +4667,37 @@ index 00000000..ffac05c1
 ++  return null;
 ++}
 ++
-++function extractSyntheticAttachmentNames(metadata: Record<string, unknown> | undefined): string[] {
+++export function extractSyntheticAttachmentNames(metadata: Record<string, unknown> | undefined): string[] {
 ++  if (!metadata) return [];
 ++  const raw = metadata.omnirushAttachments;
 ++  if (!Array.isArray(raw)) return [];
 ++  const names: string[] = [];
 ++  for (const entry of raw) {
-++    if (!isRecord(entry)) continue;
+++    if (!isPlainObject(entry)) continue;
 ++    const name = typeof entry.name === "string" ? entry.name.trim() : "";
 ++    if (name) names.push(name);
 ++  }
 ++  return names;
 ++}
 ++
-++function formatFileAttachmentLabel(part: FilePart): string {
+++export function formatFileAttachmentLabel(part: FilePart): string {
 ++  const sourcePath =
 ++    part.source && (part.source.type === "file" || part.source.type === "symbol")
 ++      ? part.source.path.trim()
 ++      : part.source && part.source.type === "resource"
 ++        ? part.source.uri.trim()
 ++        : "";
-++  const primary = part.filename?.trim() || sourcePath || (part.url.startsWith("data:") ? "inline-attachment" : part.url);
+++  const primary =
+++    part.filename?.trim() ||
+++    sourcePath ||
+++    (part.url.startsWith("data:") ? "inline-attachment" : part.url);
 ++  const mime = part.mime?.trim();
 ++  return mime ? `${primary} (${mime})` : primary;
 ++}
 ++
-++function formatAssistantError(error: AssistantMessage["error"]): string | null {
+++export function formatAssistantError(error: AssistantMessage["error"]): string | null {
 ++  if (!error) return null;
-++  const dataRecord: Record<string, unknown> | null = isRecord(error.data) ? error.data : null;
+++  const dataRecord = isPlainObject(error.data) ? error.data : null;
 ++  const detail =
 ++    dataRecord && typeof dataRecord.message === "string" && dataRecord.message.trim()
 ++      ? dataRecord.message.trim()
@@ -4527,238 +4706,6 @@ index 00000000..ffac05c1
 ++    return `> **Error:** ${error.name}`;
 ++  }
 ++  return `> **Error (${error.name}):** ${normalizeNewlines(detail).replace(/\n+/g, " ")}`;
-++}
-++
-++function headingHashes(depth: number): string {
-++  const clamped = Math.min(6, Math.max(1, depth));
-++  return "#".repeat(clamped);
-++}
-++
-++function formatIsoTimestamp(epochMs: number | undefined): string | null {
-++  if (typeof epochMs !== "number" || !Number.isFinite(epochMs) || epochMs <= 0) return null;
-++  try {
-++    return new Date(epochMs).toISOString().replace(".000Z", "Z");
-++  } catch {
-++    return null;
-++  }
-++}
-++
-++function renderSubagentBlock(
-++  part: ToolPart,
-++  childTree: ExportableSessionTree,
-++  headingDepth: number,
-++  visited: ReadonlySet<string>,
-++): string | null {
-++  if (visited.has(childTree.session.id)) return null;
-++  const nextVisited = new Set(visited);
-++  nextVisited.add(childTree.session.id);
-++
-++  const input = part.state.input;
-++  const subagentType = typeof input.subagent_type === "string" ? input.subagent_type.trim() : "";
-++  const description =
-++    typeof input.description === "string" && input.description.trim()
-++      ? input.description.trim()
-++      : part.state.status === "completed" || part.state.status === "running"
-++        ? (part.state.title?.trim() ?? "")
-++        : "";
-++  const titleFallback = childTree.session.title?.trim() || childTree.session.id;
-++  const baseLabel = description || titleFallback;
-++  const label = subagentType ? `${baseLabel} (${subagentType})` : baseLabel;
-++
-++  const subHeading = headingHashes(headingDepth);
-++  const innerBody = renderMessagesSection(
-++    childTree,
-++    Math.min(6, headingDepth + 1),
-++    nextVisited,
-++  );
-++  if (!innerBody) {
-++    return `${subHeading} ⤷ Subagent: ${label}\n\n_(no recorded subagent turns)_\n\n${subHeading} ⤶ End subagent`;
-++  }
-++  return `${subHeading} ⤷ Subagent: ${label}\n\n${innerBody}\n\n${subHeading} ⤶ End subagent`;
-++}
-++
-++function renderToolPart(
-++  part: ToolPart,
-++  tree: ExportableSessionTree,
-++  headingDepth: number,
-++  visited: ReadonlySet<string>,
-++): string {
-++  const displayName = humanizeToolName(part.tool);
-++  const state = part.state;
-++  const codeModeFailed =
-++    Boolean(part.metadata && part.metadata.omnirushV2CodeMode === true) &&
-++    state.status === "completed" &&
-++    Boolean(state.metadata && state.metadata.error === true);
-++
-++  const statusSuffix =
-++    state.status === "error" || codeModeFailed
-++      ? " _(error)_"
-++      : state.status === "running"
-++        ? " _(running)_"
-++        : state.status === "pending"
-++          ? " _(pending)_"
-++          : "";
-++
-++  const stateTitle =
-++    (state.status === "completed" || state.status === "running") && state.title?.trim()
-++      ? ` — ${state.title.trim()}`
-++      : "";
-++
-++  const header = `**🛠 ${displayName}**${stateTitle}${statusSuffix}`;
-++  const blocks: string[] = [];
-++
-++  if (hasMeaningfulInput(state.input)) {
-++    blocks.push(fenceMarkdownCode(safeJsonStringify(state.input), "json"));
-++  } else if (state.status === "pending" && state.raw.trim()) {
-++    blocks.push(fenceMarkdownCode(state.raw));
-++  }
-++
-++  if (state.status === "completed") {
-++    if (state.output.trim()) {
-++      blocks.push(formatToolOutputBlock(state.output));
-++    }
-++    if (state.attachments && state.attachments.length > 0) {
-++      const labels = state.attachments.map(formatFileAttachmentLabel);
-++      blocks.push(`> Tool attachments: ${labels.join(", ")}`);
-++    }
-++  } else if (state.status === "error") {
-++    const liveOutput = extractLiveMetadataOutput(state.metadata);
-++    if (liveOutput) {
-++      blocks.push(formatToolOutputBlock(liveOutput));
-++    }
-++    const errText = state.error.trim() || "Tool execution failed";
-++    blocks.push(`_Error:_\n${fenceMarkdownCode(errText)}`);
-++  } else if (state.status === "running") {
-++    const liveOutput = extractLiveMetadataOutput(state.metadata);
-++    if (liveOutput) {
-++      blocks.push(formatToolOutputBlock(liveOutput));
-++    }
-++  }
-++
-++  const toolSection =
-++    blocks.length === 0
-++      ? `${header} _(no input or output)_`
-++      : `${header}\n\n${blocks.join("\n\n")}`;
-++
-++  const metadata =
-++    state.status === "completed" || state.status === "running" || state.status === "error"
-++      ? state.metadata
-++      : undefined;
-++  const childSessionId = extractChildSessionId(metadata);
-++  const childTree =
-++    childSessionId && tree.subagentSessions ? tree.subagentSessions.get(childSessionId) : undefined;
-++  if (!childTree) {
-++    return toolSection;
-++  }
-++
-++  const subagentBlock = renderSubagentBlock(
-++    part,
-++    childTree,
-++    Math.min(6, headingDepth + 1),
-++    visited,
-++  );
-++  return subagentBlock ? `${toolSection}\n\n${subagentBlock}` : toolSection;
-++}
-++
-++function renderMessageParts(
-++  message: ExportableSessionMessage,
-++  tree: ExportableSessionTree,
-++  headingDepth: number,
-++  visited: ReadonlySet<string>,
-++): string[] {
-++  const blocks: string[] = [];
-++  const attachedFiles: string[] = [];
-++
-++  const flushAttachments = () => {
-++    if (attachedFiles.length === 0) return;
-++    blocks.push(`> Attached files: ${attachedFiles.join(", ")}`);
-++    attachedFiles.length = 0;
-++  };
-++
-++  for (const part of message.parts) {
-++    switch (part.type) {
-++      case "reasoning": {
-++        const trimmed = normalizeNewlines(part.text).trim();
-++        if (!trimmed) break;
-++        flushAttachments();
-++        blocks.push(renderBlockquote("_Reasoning_", trimmed));
-++        break;
-++      }
-++      case "text": {
-++        if (part.ignored) break;
-++        if (part.synthetic) {
-++          const syntheticAttachments = extractSyntheticAttachmentNames(part.metadata);
-++          if (syntheticAttachments.length > 0) {
-++            attachedFiles.push(...syntheticAttachments);
-++          }
-++          break;
-++        }
-++        const normalized = normalizeNewlines(part.text).trim();
-++        if (!normalized) break;
-++        flushAttachments();
-++        blocks.push(normalized);
-++        break;
-++      }
-++      case "file": {
-++        attachedFiles.push(formatFileAttachmentLabel(part));
-++        break;
-++      }
-++      case "tool": {
-++        flushAttachments();
-++        blocks.push(renderToolPart(part, tree, headingDepth, visited));
-++        break;
-++      }
-++      case "subtask": {
-++        flushAttachments();
-++        const desc = part.description.trim() || part.prompt.trim();
-++        const subtaskHeader = `**Subtask (\`${part.agent}\`):** ${desc}`;
-++        if (part.prompt.trim() && part.prompt.trim() !== desc) {
-++          blocks.push(`${subtaskHeader}\n\n${renderBlockquote(null, part.prompt.trim())}`);
-++        } else {
-++          blocks.push(subtaskHeader);
-++        }
-++        break;
-++      }
-++      case "patch": {
-++        if (part.files.length > 0) {
-++          flushAttachments();
-++          blocks.push(`> Patched files: ${part.files.map((file) => `\`${file}\``).join(", ")}`);
-++        }
-++        break;
-++      }
-++      case "agent": {
-++        if (part.name.trim()) {
-++          flushAttachments();
-++          blocks.push(`> Agent: \`@${part.name.trim()}\``);
-++        }
-++        break;
-++      }
-++      case "retry": {
-++        flushAttachments();
-++        const retryMsg = formatAssistantError(part.error) ?? `> _Retry attempt ${part.attempt}_`;
-++        blocks.push(`> _Retry attempt ${part.attempt}_\n${retryMsg}`);
-++        break;
-++      }
-++      case "compaction": {
-++        flushAttachments();
-++        blocks.push(part.auto ? "> _Context compacted automatically_" : "> _Context compacted_");
-++        break;
-++      }
-++      case "step-start":
-++      case "step-finish":
-++      case "snapshot":
-++        break;
-++    }
-++  }
-++
-++  flushAttachments();
-++
-++  if (message.info.role === "assistant" && message.info.error) {
-++    const formattedError = formatAssistantError(message.info.error);
-++    if (formattedError) blocks.push(formattedError);
-++  }
-++
-++  return blocks;
 ++}
 ++
 ++/**
@@ -4774,17 +4721,1843 @@ index 00000000..ffac05c1
 ++  return messages.filter((message) => message.info.id < revertId);
 ++}
 ++
-++function renderMessagesSection(
-++  tree: ExportableSessionTree,
-++  headingDepth: number,
-++  visited: ReadonlySet<string>,
-++): string {
+++function tryParseJsonObjectOrArray(rawText: string): { parsed: unknown; pretty: string } | null {
+++  const trimmed = rawText.trim();
+++  if (
+++    !(trimmed.startsWith("{") && trimmed.endsWith("}")) &&
+++    !(trimmed.startsWith("[") && trimmed.endsWith("]"))
+++  ) {
+++    return null;
+++  }
+++  try {
+++    const parsed: unknown = JSON.parse(trimmed);
+++    if (typeof parsed === "object" && parsed !== null) {
+++      return { parsed, pretty: safeJsonStringify(parsed, 2) };
+++    }
+++  } catch {
+++    // Not valid JSON.
+++  }
+++  return null;
+++}
+++
+++function buildSubagentLabel(part: ToolPart, childSession: Session): string {
+++  const input = part.state.input;
+++  const subagentType = typeof input.subagent_type === "string" ? input.subagent_type.trim() : "";
+++  const description =
+++    typeof input.description === "string" && input.description.trim()
+++      ? input.description.trim()
+++      : part.state.status === "completed" || part.state.status === "running"
+++        ? (part.state.title?.trim() ?? "")
+++        : "";
+++  const titleFallback = childSession.title?.trim() || childSession.id;
+++  const baseLabel = description || titleFallback;
+++  return subagentType ? `${baseLabel} (${subagentType})` : baseLabel;
+++}
+++
+++export function buildCanonicalSessionNode(params: {
+++  tree: ExportableSessionTree;
+++  rootSubagents: ReadonlyMap<string, ExportableSessionTree> | undefined;
+++  headingDepth: number;
+++  turnPrefix: string;
+++  visited: ReadonlySet<string>;
+++  nextCallIndex: () => number;
+++}): CanonicalSessionNodeIR {
+++  const { tree, rootSubagents, headingDepth, turnPrefix, visited, nextCallIndex } = params;
 ++  const visible = filterVisibleBranchMessages(tree.session, tree.messages);
-++  const turnHeading = headingHashes(headingDepth);
-++  const renderedTurns: string[] = [];
+++  const workspaceRoot = tree.session.directory?.trim() ?? "";
+++  const messages: CanonicalMessageIR[] = [];
+++
+++  let localTurnNumber = 0;
 ++
 ++  for (const message of visible) {
-++    const blocks = renderMessageParts(message, tree, headingDepth, visited);
+++    localTurnNumber += 1;
+++    const turnLabel = turnPrefix ? `${turnPrefix}.${localTurnNumber}` : `Turn ${localTurnNumber}`;
+++    const parts: CanonicalMessagePartIR[] = [];
+++    const pendingAttachments: string[] = [];
+++
+++    const flushAttachments = () => {
+++      if (pendingAttachments.length === 0) return;
+++      parts.push({ kind: "attachments", labels: [...pendingAttachments] });
+++      pendingAttachments.length = 0;
+++    };
+++
+++    for (const part of message.parts) {
+++      switch (part.type) {
+++        case "reasoning": {
+++          const trimmed = normalizeNewlines(part.text).trim();
+++          if (!trimmed) break;
+++          flushAttachments();
+++          parts.push({ kind: "reasoning", text: trimmed });
+++          break;
+++        }
+++        case "text": {
+++          if (part.ignored) break;
+++          if (part.synthetic) {
+++            const syntheticAttachments = extractSyntheticAttachmentNames(part.metadata);
+++            if (syntheticAttachments.length > 0) {
+++              pendingAttachments.push(...syntheticAttachments);
+++            }
+++            break;
+++          }
+++          const normalized = normalizeNewlines(part.text).trim();
+++          if (!normalized) break;
+++          flushAttachments();
+++          parts.push({ kind: "text", text: normalized });
+++          break;
+++        }
+++        case "file": {
+++          pendingAttachments.push(formatFileAttachmentLabel(part));
+++          break;
+++        }
+++        case "tool": {
+++          flushAttachments();
+++          const callNum = nextCallIndex();
+++          const callRefId = `c${String(callNum).padStart(3, "0")}`;
+++          const displayName = humanizeToolName(part.tool);
+++          const state = part.state;
+++          const codeModeFailed =
+++            Boolean(part.metadata && part.metadata.omnirushV2CodeMode === true) &&
+++            state.status === "completed" &&
+++            Boolean(state.metadata && state.metadata.error === true);
+++
+++          const statusSuffix =
+++            state.status === "error" || codeModeFailed
+++              ? " _(error)_"
+++              : state.status === "running"
+++                ? " _(running)_"
+++                : state.status === "pending"
+++                  ? " _(pending)_"
+++                  : "";
+++
+++          const stateTitle =
+++            (state.status === "completed" || state.status === "running") && state.title?.trim()
+++              ? ` — ${state.title.trim()}`
+++              : "";
+++
+++          const hasInput = Object.keys(state.input).length > 0;
+++          const prettyInputJson = hasInput ? safeJsonStringify(state.input, 2) : null;
+++          const compactInputJson = hasInput ? tryFormatCompactJsonInput(state.input) : null;
+++          const pendingRawInput =
+++            !hasInput && state.status === "pending" && state.raw.trim() ? state.raw : null;
+++
+++          let rawOutputCandidate: string | null = null;
+++          if (state.status === "completed") {
+++            if (state.output.trim()) {
+++              rawOutputCandidate = state.output;
+++            }
+++          } else if (state.status === "error" || state.status === "running") {
+++            rawOutputCandidate = extractLiveMetadataOutput(state.metadata);
+++          }
+++
+++          const normalizedOutput =
+++            rawOutputCandidate !== null ? normalizeNewlines(rawOutputCandidate).trimEnd() : null;
+++          const nonEmptyOutput =
+++            normalizedOutput !== null && normalizedOutput.length > 0 ? normalizedOutput : null;
+++
+++          const parsedJsonResult =
+++            nonEmptyOutput !== null ? tryParseJsonObjectOrArray(nonEmptyOutput) : null;
+++
+++          const canonicalRead =
+++            state.status === "completed" && nonEmptyOutput !== null
+++              ? parseCanonicalReadEnvelope({
+++                  toolName: part.tool,
+++                  rawOutput: nonEmptyOutput,
+++                  input: state.input,
+++                  workspaceRoot,
+++                })
+++              : null;
+++
+++          const canonicalHashPayload =
+++            parsedJsonResult !== null ? parsedJsonResult.pretty : nonEmptyOutput;
+++          const outputSha256 =
+++            canonicalHashPayload !== null ? sha256Hex(canonicalHashPayload) : null;
+++          const outputBytes =
+++            canonicalHashPayload !== null ? utf8ByteLength(canonicalHashPayload) : 0;
+++          const outputLineCount =
+++            canonicalHashPayload !== null ? canonicalHashPayload.split("\n").length : 0;
+++
+++          const attachmentLabels =
+++            state.status === "completed" && state.attachments && state.attachments.length > 0
+++              ? state.attachments.map(formatFileAttachmentLabel)
+++              : [];
+++
+++          const errorText =
+++            state.status === "error" ? state.error.trim() || "Tool execution failed" : null;
+++
+++          const metadata =
+++            state.status === "completed" || state.status === "running" || state.status === "error"
+++              ? state.metadata
+++              : undefined;
+++          const childSessionId = extractChildSessionId(metadata);
+++          const childTree =
+++            childSessionId
+++              ? (tree.subagentSessions?.get(childSessionId) ?? rootSubagents?.get(childSessionId))
+++              : undefined;
+++
+++          let subagent: CanonicalSubagentIR | null = null;
+++          if (childTree && !visited.has(childTree.session.id)) {
+++            const nextVisited = new Set(visited);
+++            nextVisited.add(childTree.session.id);
+++            const subHeadingDepth = Math.min(6, headingDepth + 1);
+++            const childNode = buildCanonicalSessionNode({
+++              tree: childTree,
+++              rootSubagents: childTree.subagentSessions ?? rootSubagents,
+++              headingDepth: Math.min(6, subHeadingDepth + 1),
+++              turnPrefix: turnLabel,
+++              visited: nextVisited,
+++              nextCallIndex,
+++            });
+++            subagent = {
+++              label: buildSubagentLabel(part, childTree.session),
+++              headingDepth: subHeadingDepth,
+++              node: childNode,
+++            };
+++          }
+++
+++          parts.push({
+++            kind: "tool",
+++            callRefId,
+++            turnLabel,
+++            part,
+++            displayName,
+++            stateTitle,
+++            statusSuffix,
+++            hasInput,
+++            prettyInputJson,
+++            compactInputJson,
+++            pendingRawInput,
+++            normalizedOutput: nonEmptyOutput,
+++            outputSha256,
+++            outputBytes,
+++            outputLineCount,
+++            parsedOutputJson: parsedJsonResult ? parsedJsonResult.parsed : undefined,
+++            prettyOutputJson: parsedJsonResult ? parsedJsonResult.pretty : null,
+++            canonicalRead,
+++            errorText,
+++            attachmentLabels,
+++            subagent,
+++          });
+++          break;
+++        }
+++        case "subtask": {
+++          flushAttachments();
+++          const desc = part.description.trim() || part.prompt.trim();
+++          const promptTrimmed = part.prompt.trim();
+++          parts.push({
+++            kind: "subtask",
+++            agent: part.agent,
+++            description: desc,
+++            prompt: promptTrimmed && promptTrimmed !== desc ? promptTrimmed : null,
+++          });
+++          break;
+++        }
+++        case "patch": {
+++          if (part.files.length > 0) {
+++            flushAttachments();
+++            parts.push({ kind: "patch", files: [...part.files] });
+++          }
+++          break;
+++        }
+++        case "agent": {
+++          if (part.name.trim()) {
+++            flushAttachments();
+++            parts.push({ kind: "agent", name: part.name.trim() });
+++          }
+++          break;
+++        }
+++        case "retry": {
+++          flushAttachments();
+++          parts.push({
+++            kind: "retry",
+++            attempt: part.attempt,
+++            formattedError: formatAssistantError(part.error),
+++          });
+++          break;
+++        }
+++        case "compaction": {
+++          flushAttachments();
+++          parts.push({ kind: "compaction", auto: Boolean(part.auto) });
+++          break;
+++        }
+++        case "step-start":
+++        case "step-finish":
+++        case "snapshot":
+++          break;
+++      }
+++    }
+++
+++    flushAttachments();
+++
+++    const assistantError = message.info.role === "assistant" ? message.info.error : undefined;
+++    const formattedAssistantError = assistantError ? formatAssistantError(assistantError) : null;
+++
+++    if (parts.length === 0 && !formattedAssistantError) {
+++      localTurnNumber -= 1;
+++      continue;
+++    }
+++
+++    messages.push({
+++      info: message.info,
+++      turnLabel,
+++      parts,
+++      assistantError,
+++      formattedAssistantError,
+++    });
+++  }
+++
+++  return {
+++    session: tree.session,
+++    headingDepth,
+++    messages,
+++  };
+++}
+++
+++/**
+++ * Helper used during canonicalization before baseline bytes are attached.
+++ */
+++export function collectRootSessionStats(messages: ReadonlyArray<ExportableSessionMessage>): {
+++  models: string[];
+++  totalInputTokens: number;
+++  totalOutputTokens: number;
+++  totalReasoningTokens: number;
+++  totalCost: number;
+++} {
+++  const models = new Set<string>();
+++  let totalInputTokens = 0;
+++  let totalOutputTokens = 0;
+++  let totalReasoningTokens = 0;
+++  let totalCost = 0;
+++
+++  for (const message of messages) {
+++    if (message.info.role === "assistant") {
+++      const modelId =
+++        message.info.providerID && message.info.modelID
+++          ? `${message.info.providerID}/${message.info.modelID}`
+++          : message.info.modelID;
+++      if (modelId) models.add(modelId);
+++      totalInputTokens += message.info.tokens?.input || 0;
+++      totalOutputTokens += message.info.tokens?.output || 0;
+++      totalReasoningTokens += message.info.tokens?.reasoning || 0;
+++      totalCost += message.info.cost || 0;
+++    }
+++  }
+++
+++  return {
+++    models: [...models],
+++    totalInputTokens,
+++    totalOutputTokens,
+++    totalReasoningTokens,
+++    totalCost,
+++  };
+++}
+++
+++export function createCanonicalTranscriptIRWithoutBaseline(
+++  tree: ExportableSessionTree,
+++): Omit<CanonicalTranscriptIR, "baselineBytes"> {
+++  const visibleRoot = filterVisibleBranchMessages(tree.session, tree.messages);
+++  const visited = new Set<string>([tree.session.id]);
+++  let callCounter = 0;
+++  const root = buildCanonicalSessionNode({
+++    tree,
+++    rootSubagents: tree.subagentSessions,
+++    headingDepth: 2,
+++    turnPrefix: "",
+++    visited,
+++    nextCallIndex: () => {
+++      callCounter += 1;
+++      return callCounter;
+++    },
+++  });
+++  const stats = collectRootSessionStats(visibleRoot);
+++
+++  return {
+++    root,
+++    todos: tree.todos ? [...tree.todos] : [],
+++    models: stats.models,
+++    totalInputTokens: stats.totalInputTokens,
+++    totalOutputTokens: stats.totalOutputTokens,
+++    totalReasoningTokens: stats.totalReasoningTokens,
+++    totalCost: stats.totalCost,
+++  };
+++}
++diff --git a/apps/app/src/app/lib/markdown-export/file-delta.ts b/apps/app/src/app/lib/markdown-export/file-delta.ts
++new file mode 100644
++index 00000000..a8c3d0b2
++--- /dev/null
+++++ b/apps/app/src/app/lib/markdown-export/file-delta.ts
++@@ -0,0 +1,288 @@
+++import { sha256Hex } from "./hash-and-bytes";
+++import { normalizeNewlines } from "./structured-compact";
+++
+++const MIN_SKIP_UNCHANGED_RUN = 4;
+++const MAX_MYERS_EDIT_DISTANCE = 600;
+++const KEEP_DIRECTIVE_PATTERN = /^@@ keep base (\d+)\.\.(\d+) \((\d+) unchanged lines\) @@$/;
+++
+++type DiffOp =
+++  | { type: "equal"; baseStart: number; count: number; lines: string[] }
+++  | { type: "delete"; lines: string[] }
+++  | { type: "insert"; lines: string[] };
+++
+++/**
+++ * Bounded Myers O(ND) diff over trimmed interior lines. Returns `null` if the
+++ * edit distance exceeds `MAX_MYERS_EDIT_DISTANCE` (meaning the file was heavily
+++ * rewritten and a full Read snapshot is both smaller and clearer than a delta).
+++ */
+++function myersDiffLines(a: readonly string[], b: readonly string[]): DiffOp[] | null {
+++  const n = a.length;
+++  const m = b.length;
+++  if (n === 0 && m === 0) return [];
+++  if (n === 0) return [{ type: "insert", lines: [...b] }];
+++  if (m === 0) return [{ type: "delete", lines: [...a] }];
+++
+++  const maxD = Math.min(n + m, MAX_MYERS_EDIT_DISTANCE);
+++  const offset = n + m;
+++  const v = new Int32Array(2 * offset + 1);
+++  v.fill(-1);
+++  v[offset + 1] = 0;
+++  const trace: Int32Array[] = [];
+++
+++  let foundD = -1;
+++  for (let d = 0; d <= maxD; d += 1) {
+++    trace.push(v.slice());
+++    for (let k = -d; k <= d; k += 2) {
+++      const kIdx = offset + k;
+++      let x: number;
+++      if (k === -d || (k !== d && v[kIdx - 1]! < v[kIdx + 1]!)) {
+++        x = v[kIdx + 1]!;
+++      } else {
+++        x = v[kIdx - 1]! + 1;
+++      }
+++      let y = x - k;
+++      while (x < n && y < m && a[x] === b[y]) {
+++        x += 1;
+++        y += 1;
+++      }
+++      v[kIdx] = x;
+++      if (x >= n && y >= m) {
+++        foundD = d;
+++        break;
+++      }
+++    }
+++    if (foundD !== -1) break;
+++  }
+++
+++  if (foundD === -1) return null;
+++
+++  type RawStep = { kind: "eq"; baseIdx: number; line: string } | { kind: "del"; line: string } | { kind: "ins"; line: string };
+++  const revSteps: RawStep[] = [];
+++  let x = n;
+++  let y = m;
+++
+++  for (let d = foundD; d > 0; d -= 1) {
+++    const prevV = trace[d]!;
+++    const k = x - y;
+++    const kIdx = offset + k;
+++    let prevK: number;
+++    if (k === -d || (k !== d && prevV[kIdx - 1]! < prevV[kIdx + 1]!)) {
+++      prevK = k + 1;
+++    } else {
+++      prevK = k - 1;
+++    }
+++    const prevX = prevV[offset + prevK]!;
+++    const prevY = prevX - prevK;
+++
+++    while (x > prevX && y > prevY) {
+++      x -= 1;
+++      y -= 1;
+++      revSteps.push({ kind: "eq", baseIdx: x, line: a[x]! });
+++    }
+++    if (x === prevX) {
+++      y -= 1;
+++      revSteps.push({ kind: "ins", line: b[y]! });
+++    } else {
+++      x -= 1;
+++      revSteps.push({ kind: "del", line: a[x]! });
+++    }
+++  }
+++
+++  while (x > 0 && y > 0) {
+++    x -= 1;
+++    y -= 1;
+++    revSteps.push({ kind: "eq", baseIdx: x, line: a[x]! });
+++  }
+++
+++  revSteps.reverse();
+++  const ops: DiffOp[] = [];
+++  for (const step of revSteps) {
+++    const last = ops.at(-1);
+++    if (step.kind === "eq") {
+++      if (last && last.type === "equal") {
+++        last.count += 1;
+++        last.lines.push(step.line);
+++      } else {
+++        ops.push({ type: "equal", baseStart: step.baseIdx, count: 1, lines: [step.line] });
+++      }
+++    } else if (step.kind === "del") {
+++      if (last && last.type === "delete") {
+++        last.lines.push(step.line);
+++      } else {
+++        ops.push({ type: "delete", lines: [step.line] });
+++      }
+++    } else {
+++      if (last && last.type === "insert") {
+++        last.lines.push(step.line);
+++      } else {
+++        ops.push({ type: "insert", lines: [step.line] });
+++      }
+++    }
+++  }
+++  return ops;
+++}
+++
+++/**
+++ * Compute a deterministic, self-verifying lossless line delta from `baseLines`
+++ * to `targetLines`.
+++ *
+++ * Format rules inside the `diff` code block:
+++ * - Unchanged runs of `>= 4` lines emit `@@ keep base A..B (N unchanged lines) @@`
+++ *   (1-based inclusive indices into `baseLines`), keeping 1 context line adjacent
+++ *   to edits when interior runs are long enough so humans also have visual context.
+++ * - Short unchanged runs (`1..3` lines) or edge context lines emit `" " + line`.
+++ * - Deleted base lines emit `"-" + line`.
+++ * - Inserted target lines emit `"+" + line`.
+++ *
+++ * Every emitted delta is immediately expanded in-memory and verified against
+++ * `expectedTargetSha256` before returning; returns `null` if heavily rewritten
+++ * or if verification fails.
+++ */
+++export function computeLosslessFileDelta(
+++  baseLines: readonly string[],
+++  targetLines: readonly string[],
+++  expectedTargetSha256: string,
+++): string | null {
+++  if (baseLines.length === 0 || targetLines.length === 0) return null;
+++
+++  let prefixLen = 0;
+++  const minLen = Math.min(baseLines.length, targetLines.length);
+++  while (prefixLen < minLen && baseLines[prefixLen] === targetLines[prefixLen]) {
+++    prefixLen += 1;
+++  }
+++
+++  let suffixLen = 0;
+++  while (
+++    suffixLen < minLen - prefixLen &&
+++    baseLines[baseLines.length - 1 - suffixLen] === targetLines[targetLines.length - 1 - suffixLen]
+++  ) {
+++    suffixLen += 1;
+++  }
+++
+++  const midBase = baseLines.slice(prefixLen, baseLines.length - suffixLen);
+++  const midTarget = targetLines.slice(prefixLen, targetLines.length - suffixLen);
+++  const midOps = myersDiffLines(midBase, midTarget);
+++  if (!midOps) return null;
+++
+++  const allOps: DiffOp[] = [];
+++  if (prefixLen > 0) {
+++    allOps.push({
+++      type: "equal",
+++      baseStart: 0,
+++      count: prefixLen,
+++      lines: baseLines.slice(0, prefixLen),
+++    });
+++  }
+++  for (const op of midOps) {
+++    if (op.type === "equal") {
+++      allOps.push({
+++        type: "equal",
+++        baseStart: prefixLen + op.baseStart,
+++        count: op.count,
+++        lines: op.lines,
+++      });
+++    } else {
+++      allOps.push(op);
+++    }
+++  }
+++  if (suffixLen > 0) {
+++    const suffixStart = baseLines.length - suffixLen;
+++    allOps.push({
+++      type: "equal",
+++      baseStart: suffixStart,
+++      count: suffixLen,
+++      lines: baseLines.slice(suffixStart),
+++    });
+++  }
+++
+++  const outLines: string[] = [];
+++  for (let i = 0; i < allOps.length; i += 1) {
+++    const op = allOps[i]!;
+++    if (op.type === "delete") {
+++      for (const line of op.lines) outLines.push(`-${line}`);
+++      continue;
+++    }
+++    if (op.type === "insert") {
+++      for (const line of op.lines) outLines.push(`+${line}`);
+++      continue;
+++    }
+++
+++    const hasEditBefore = i > 0;
+++    const hasEditAfter = i < allOps.length - 1;
+++    const leadContext = hasEditBefore ? 1 : 0;
+++    const trailContext = hasEditAfter ? 1 : 0;
+++    const skippable = op.count - leadContext - trailContext;
+++
+++    if (skippable >= MIN_SKIP_UNCHANGED_RUN) {
+++      if (leadContext > 0) {
+++        outLines.push(` ${op.lines[0]!}`);
+++      }
+++      const skipStart1Based = op.baseStart + leadContext + 1;
+++      const skipEnd1Based = op.baseStart + op.count - trailContext;
+++      outLines.push(
+++        `@@ keep base ${skipStart1Based}..${skipEnd1Based} (${skippable} unchanged lines) @@`,
+++      );
+++      if (trailContext > 0) {
+++        outLines.push(` ${op.lines[op.lines.length - 1]!}`);
+++      }
+++    } else {
+++      for (const line of op.lines) {
+++        outLines.push(` ${line}`);
+++      }
+++    }
+++  }
+++
+++  const deltaBody = outLines.join("\n");
+++  try {
+++    const reconstructedLines = applyLosslessFileDelta(baseLines, deltaBody);
+++    const reconstructedBody = reconstructedLines.join("\n");
+++    if (sha256Hex(reconstructedBody) !== expectedTargetSha256) {
+++      return null;
+++    }
+++  } catch {
+++    return null;
+++  }
+++
+++  return deltaBody;
+++}
+++
+++/**
+++ * Deterministically reconstruct `targetLines` from `baseLines` and a lossless
+++ * `deltaBody` emitted by `computeLosslessFileDelta`.
+++ */
+++export function applyLosslessFileDelta(baseLines: readonly string[], deltaBody: string): string[] {
+++  const rawLines = normalizeNewlines(deltaBody).split("\n");
+++  const target: string[] = [];
+++
+++  for (const rawLine of rawLines) {
+++    const keepMatch = KEEP_DIRECTIVE_PATTERN.exec(rawLine);
+++    if (keepMatch) {
+++      const start1 = Number(keepMatch[1]);
+++      const end1 = Number(keepMatch[2]);
+++      const expectedCount = Number(keepMatch[3]);
+++      if (
+++        start1 < 1 ||
+++        end1 < start1 ||
+++        end1 > baseLines.length ||
+++        end1 - start1 + 1 !== expectedCount
+++      ) {
+++        throw new Error(`Invalid keep-base range ${start1}..${end1} for base of ${baseLines.length} lines`);
+++      }
+++      for (let idx = start1 - 1; idx < end1; idx += 1) {
+++        target.push(baseLines[idx]!);
+++      }
+++      continue;
+++    }
+++
+++    const prefix = rawLine[0];
+++    if (prefix === " " || prefix === "+") {
+++      target.push(rawLine.slice(1));
+++    } else if (prefix === "-") {
+++      continue;
+++    } else {
+++      throw new Error(`Unexpected line in lossless file delta: ${rawLine}`);
+++    }
+++  }
+++
+++  return target;
+++}
++diff --git a/apps/app/src/app/lib/markdown-export/hash-and-bytes.ts b/apps/app/src/app/lib/markdown-export/hash-and-bytes.ts
++new file mode 100644
++index 00000000..c19e6e64
++--- /dev/null
+++++ b/apps/app/src/app/lib/markdown-export/hash-and-bytes.ts
++@@ -0,0 +1,145 @@
+++const sharedTextEncoder = new TextEncoder();
+++
+++const SHA256_K = new Uint32Array([
+++  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+++  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+++  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+++  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+++  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+++  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+++  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+++  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+++]);
+++
+++const HEX_TABLE: string[] = Array.from({ length: 256 }, (_, idx) => idx.toString(16).padStart(2, "0"));
+++
+++/**
+++ * Compute exact UTF-8 byte length of a JS string in a single zero-allocation pass.
+++ * Matches `new TextEncoder().encode(value).byteLength` identically (including
+++ * surrogate pairs and lone-surrogate U+FFFD 3-byte replacements).
+++ */
+++export function utf8ByteLength(value: string): number {
+++  let bytes = 0;
+++  const len = value.length;
+++  for (let i = 0; i < len; i += 1) {
+++    const code = value.charCodeAt(i);
+++    if (code < 0x80) {
+++      bytes += 1;
+++    } else if (code < 0x800) {
+++      bytes += 2;
+++    } else if (code >= 0xd800 && code <= 0xdbff) {
+++      const next = i + 1 < len ? value.charCodeAt(i + 1) : 0;
+++      if (next >= 0xdc00 && next <= 0xdfff) {
+++        bytes += 4;
+++        i += 1;
+++      } else {
+++        bytes += 3;
+++      }
+++    } else {
+++      bytes += 3;
+++    }
+++  }
+++  return bytes;
+++}
+++
+++/**
+++ * Pure synchronous SHA-256 hex digest (64 lowercase hex chars) so `useMemo`
+++ * live size previews and deterministic IR construction run synchronously in
+++ * browsers, Electron renderers, and Bun/Node tests without async SubtleCrypto.
+++ */
+++export function sha256Hex(input: string | Uint8Array): string {
+++  const data = typeof input === "string" ? sharedTextEncoder.encode(input) : input;
+++  const bitLenHi = Math.floor(data.length / 0x20000000);
+++  const bitLenLo = (data.length << 3) >>> 0;
+++
+++  const paddedLength = (((data.length + 9 + 63) >> 6) << 6);
+++  const buffer = new Uint8Array(paddedLength);
+++  buffer.set(data);
+++  buffer[data.length] = 0x80;
+++
+++  const view = new DataView(buffer.buffer);
+++  view.setUint32(paddedLength - 8, bitLenHi, false);
+++  view.setUint32(paddedLength - 4, bitLenLo, false);
+++
+++  let h0 = 0x6a09e667;
+++  let h1 = 0xbb67ae85;
+++  let h2 = 0x3c6ef372;
+++  let h3 = 0xa54ff53a;
+++  let h4 = 0x510e527f;
+++  let h5 = 0x9b05688c;
+++  let h6 = 0x1f83d9ab;
+++  let h7 = 0x5be0cd19;
+++
+++  const w = new Uint32Array(64);
+++
+++  for (let offset = 0; offset < paddedLength; offset += 64) {
+++    for (let i = 0; i < 16; i += 1) {
+++      w[i] = view.getUint32(offset + i * 4, false);
+++    }
+++    for (let i = 16; i < 64; i += 1) {
+++      const w15 = w[i - 15]!;
+++      const w2 = w[i - 2]!;
+++      const s0 = (((w15 >>> 7) | (w15 << 25)) ^ ((w15 >>> 18) | (w15 << 14)) ^ (w15 >>> 3)) >>> 0;
+++      const s1 = (((w2 >>> 17) | (w2 << 15)) ^ ((w2 >>> 19) | (w2 << 13)) ^ (w2 >>> 10)) >>> 0;
+++      w[i] = (w[i - 16]! + s0 + w[i - 7]! + s1) >>> 0;
+++    }
+++
+++    let a = h0;
+++    let b = h1;
+++    let c = h2;
+++    let d = h3;
+++    let e = h4;
+++    let f = h5;
+++    let g = h6;
+++    let h = h7;
+++
+++    for (let i = 0; i < 64; i += 1) {
+++      const S1 = (((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7))) >>> 0;
+++      const ch = ((e & f) ^ (~e & g)) >>> 0;
+++      const temp1 = (h + S1 + ch + SHA256_K[i]! + w[i]!) >>> 0;
+++      const S0 = (((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10))) >>> 0;
+++      const maj = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;
+++      const temp2 = (S0 + maj) >>> 0;
+++
+++      h = g;
+++      g = f;
+++      f = e;
+++      e = (d + temp1) >>> 0;
+++      d = c;
+++      c = b;
+++      b = a;
+++      a = (temp1 + temp2) >>> 0;
+++    }
+++
+++    h0 = (h0 + a) >>> 0;
+++    h1 = (h1 + b) >>> 0;
+++    h2 = (h2 + c) >>> 0;
+++    h3 = (h3 + d) >>> 0;
+++    h4 = (h4 + e) >>> 0;
+++    h5 = (h5 + f) >>> 0;
+++    h6 = (h6 + g) >>> 0;
+++    h7 = (h7 + h) >>> 0;
+++  }
+++
+++  const out = new Uint8Array(32);
+++  const outView = new DataView(out.buffer);
+++  outView.setUint32(0, h0, false);
+++  outView.setUint32(4, h1, false);
+++  outView.setUint32(8, h2, false);
+++  outView.setUint32(12, h3, false);
+++  outView.setUint32(16, h4, false);
+++  outView.setUint32(20, h5, false);
+++  outView.setUint32(24, h6, false);
+++  outView.setUint32(28, h7, false);
+++
+++  let hex = "";
+++  for (let i = 0; i < 32; i += 1) {
+++    hex += HEX_TABLE[out[i]!]!;
+++  }
+++  return hex;
+++}
+++
+++/** Short 12-hex SHA-256 prefix (48 bits) matching `sqz` reference granularity. */
+++export function shortSha256(fullHex: string): string {
+++  return fullHex.slice(0, 12);
+++}
++diff --git a/apps/app/src/app/lib/markdown-export/lossless-expander.ts b/apps/app/src/app/lib/markdown-export/lossless-expander.ts
++new file mode 100644
++index 00000000..22a5d75e
++--- /dev/null
+++++ b/apps/app/src/app/lib/markdown-export/lossless-expander.ts
++@@ -0,0 +1,329 @@
+++import { applyLosslessFileDelta } from "./file-delta";
+++import { sha256Hex } from "./hash-and-bytes";
+++import {
+++  decodeLosslessToon,
+++  normalizeNewlines,
+++  safeJsonStringify,
+++  TOON_HEADER_LINE,
+++} from "./structured-compact";
+++import type { CanonicalTranscriptIR, ExpandedLosslessBlock } from "./types";
+++
+++const ANCHOR_LINE_PATTERN = /^<a id="(export-ref-c\d+)"><\/a>$/;
+++const CAPTION_SHA_PATTERN = /`sha256:([0-9a-f]{12})`_$/;
+++const EXACT_REF_PATTERN =
+++  /^> \[↩ Identical (?:output )?to .+ · `sha256:([0-9a-f]{12})`\]\(#(export-ref-c\d+)\)$/;
+++const RANGE_REF_PATTERN =
+++  /^> \[↩ Contained in .+\(slice (\d+)\.\.(\d+), (\d+) lines\) · `sha256:([0-9a-f]{12})`\]\(#(export-ref-c\d+)\)$/;
+++const DELTA_REF_PATTERN =
+++  /^> \[Δ Delta for .+ · base `sha256:([0-9a-f]{12})` → `sha256:([0-9a-f]{12})`\]\(#(export-ref-c\d+)\)$/;
+++const FENCE_OPEN_PATTERN = /^(`{3,})([^`]*)$/;
+++
+++function readFencedBlockAt(
+++  lines: readonly string[],
+++  openLineIndex: number,
+++): { lang: string; body: string; nextIndex: number } {
+++  const openLine = lines[openLineIndex] ?? "";
+++  const m = FENCE_OPEN_PATTERN.exec(openLine);
+++  if (!m) {
+++    throw new Error(`Expected fenced code block at line ${openLineIndex + 1}`);
+++  }
+++  const fenceLen = m[1]!.length;
+++  const lang = m[2]!.trim();
+++  const closePattern = new RegExp(`^\`{${fenceLen},}\\s*$`);
+++
+++  const bodyLines: string[] = [];
+++  for (let idx = openLineIndex + 1; idx < lines.length; idx += 1) {
+++    const line = lines[idx]!;
+++    if (closePattern.test(line)) {
+++      return {
+++        lang,
+++        body: bodyLines.join("\n"),
+++        nextIndex: idx + 1,
+++      };
+++    }
+++    bodyLines.push(line);
+++  }
+++  throw new Error(`Unclosed fenced code block opened at line ${openLineIndex + 1}`);
+++}
+++
+++/**
+++ * Self-contained lossless Markdown verifier & expander.
+++ *
+++ * Parses an exported `.md` document alone (zero external database or session state),
+++ * resolves every `#export-ref-...` exact reference, line-range slice, 1-hop file delta,
+++ * and `TOON-JSON v1` table, and verifies every embedded `sha256:...` digest.
+++ */
+++export function expandLosslessMarkdown(markdown: string): ExpandedLosslessBlock[] {
+++  const lines = normalizeNewlines(markdown).split("\n");
+++  const resolvedAnchors = new Map<string, string>();
+++  const results: ExpandedLosslessBlock[] = [];
+++
+++  let pendingAnchorId: string | null = null;
+++  let pendingShaPrefix: string | null = null;
+++
+++  let i = 0;
+++  while (i < lines.length) {
+++    const line = lines[i]!;
+++
+++    // 1. Fenced code block (tracked on ALL blocks so inner example text is never misread as anchors/refs)
+++    if (FENCE_OPEN_PATTERN.test(line)) {
+++      const fenced = readFencedBlockAt(lines, i);
+++      i = fenced.nextIndex;
+++
+++      if (fenced.lang === "toon" && fenced.body.startsWith(TOON_HEADER_LINE)) {
+++        const decoded = decodeLosslessToon(fenced.body);
+++        const prettyJson = safeJsonStringify(decoded, 2);
+++        const digest = sha256Hex(prettyJson);
+++        if (pendingShaPrefix && !digest.startsWith(pendingShaPrefix)) {
+++          throw new Error(
+++            `Source TOON SHA-256 mismatch at ${pendingAnchorId ?? "unanchored"}: expected ${pendingShaPrefix}, got ${digest}`,
+++          );
+++        }
+++        if (pendingAnchorId) {
+++          resolvedAnchors.set(pendingAnchorId, prettyJson);
+++          results.push({
+++            kind: "source",
+++            anchorId: pendingAnchorId,
+++            expectedSha256Prefix: pendingShaPrefix ?? undefined,
+++            reconstructedText: prettyJson,
+++            actualSha256: digest,
+++          });
+++        }
+++        results.push({
+++          kind: "toon_table",
+++          anchorId: pendingAnchorId ?? undefined,
+++          reconstructedText: prettyJson,
+++          actualSha256: digest,
+++        });
+++        pendingAnchorId = null;
+++        pendingShaPrefix = null;
+++        continue;
+++      }
+++
+++      if (pendingAnchorId) {
+++        const digest = sha256Hex(fenced.body);
+++        if (pendingShaPrefix && !digest.startsWith(pendingShaPrefix)) {
+++          throw new Error(
+++            `Source block SHA-256 mismatch at ${pendingAnchorId}: expected ${pendingShaPrefix}, got ${digest}`,
+++          );
+++        }
+++        resolvedAnchors.set(pendingAnchorId, fenced.body);
+++        results.push({
+++          kind: "source",
+++          anchorId: pendingAnchorId,
+++          expectedSha256Prefix: pendingShaPrefix ?? undefined,
+++          reconstructedText: fenced.body,
+++          actualSha256: digest,
+++        });
+++        pendingAnchorId = null;
+++        pendingShaPrefix = null;
+++      }
+++      continue;
+++    }
+++
+++    // 2. HTML anchor marker
+++    const anchorMatch = ANCHOR_LINE_PATTERN.exec(line.trim());
+++    if (anchorMatch) {
+++      pendingAnchorId = anchorMatch[1]!;
+++      pendingShaPrefix = null;
+++      i += 1;
+++      continue;
+++    }
+++
+++    // 3. Caption carrying source SHA-256 right after an anchor
+++    if (pendingAnchorId && line.startsWith("_")) {
+++      const shaMatch = CAPTION_SHA_PATTERN.exec(line.trim());
+++      if (shaMatch) {
+++        pendingShaPrefix = shaMatch[1]!;
+++      }
+++      i += 1;
+++      continue;
+++    }
+++
+++    // 4. Exact deduplication reference
+++    const exactMatch = EXACT_REF_PATTERN.exec(line.trim());
+++    if (exactMatch) {
+++      const expectedSha = exactMatch[1]!;
+++      const targetAnchor = exactMatch[2]!;
+++      const baseText = resolvedAnchors.get(targetAnchor);
+++      if (baseText === undefined) {
+++        throw new Error(`Unresolved exact reference target #${targetAnchor}`);
+++      }
+++      const actualSha = sha256Hex(baseText);
+++      if (!actualSha.startsWith(expectedSha)) {
+++        throw new Error(
+++          `Exact ref SHA-256 mismatch for #${targetAnchor}: expected ${expectedSha}, got ${actualSha}`,
+++        );
+++      }
+++      if (pendingAnchorId) {
+++        resolvedAnchors.set(pendingAnchorId, baseText);
+++      }
+++      results.push({
+++        kind: "exact_ref",
+++        anchorId: pendingAnchorId ?? undefined,
+++        targetAnchorId: targetAnchor,
+++        expectedSha256Prefix: expectedSha,
+++        reconstructedText: baseText,
+++        actualSha256: actualSha,
+++      });
+++      pendingAnchorId = null;
+++      pendingShaPrefix = null;
+++      i += 1;
+++      continue;
+++    }
+++
+++    // 5. Line-range containment reference
+++    const rangeMatch = RANGE_REF_PATTERN.exec(line.trim());
+++    if (rangeMatch) {
+++      const sliceStart1 = Number(rangeMatch[1]);
+++      const sliceEnd1 = Number(rangeMatch[2]);
+++      const expectedLines = Number(rangeMatch[3]);
+++      const expectedSha = rangeMatch[4]!;
+++      const targetAnchor = rangeMatch[5]!;
+++
+++      const baseText = resolvedAnchors.get(targetAnchor);
+++      if (baseText === undefined) {
+++        throw new Error(`Unresolved range reference target #${targetAnchor}`);
+++      }
+++      const baseLines = baseText.split("\n");
+++      if (
+++        sliceStart1 < 1 ||
+++        sliceEnd1 < sliceStart1 ||
+++        sliceEnd1 > baseLines.length ||
+++        sliceEnd1 - sliceStart1 + 1 !== expectedLines
+++      ) {
+++        throw new Error(
+++          `Invalid slice ${sliceStart1}..${sliceEnd1} against #${targetAnchor} (${baseLines.length} lines)`,
+++        );
+++      }
+++      const slicedText = baseLines.slice(sliceStart1 - 1, sliceEnd1).join("\n");
+++      const actualSha = sha256Hex(slicedText);
+++      if (!actualSha.startsWith(expectedSha)) {
+++        throw new Error(
+++          `Range ref SHA-256 mismatch for #${targetAnchor}: expected ${expectedSha}, got ${actualSha}`,
+++        );
+++      }
+++      if (pendingAnchorId) {
+++        resolvedAnchors.set(pendingAnchorId, slicedText);
+++      }
+++      results.push({
+++        kind: "range_ref",
+++        anchorId: pendingAnchorId ?? undefined,
+++        targetAnchorId: targetAnchor,
+++        expectedSha256Prefix: expectedSha,
+++        reconstructedText: slicedText,
+++        actualSha256: actualSha,
+++      });
+++      pendingAnchorId = null;
+++      pendingShaPrefix = null;
+++      i += 1;
+++      continue;
+++    }
+++
+++    // 6. Post-edit file delta reference
+++    const deltaMatch = DELTA_REF_PATTERN.exec(line.trim());
+++    if (deltaMatch) {
+++      const expectedBaseSha = deltaMatch[1]!;
+++      const expectedTargetSha = deltaMatch[2]!;
+++      const targetAnchor = deltaMatch[3]!;
+++
+++      const baseText = resolvedAnchors.get(targetAnchor);
+++      if (baseText === undefined) {
+++        throw new Error(`Unresolved delta base anchor #${targetAnchor}`);
+++      }
+++      const actualBaseSha = sha256Hex(baseText);
+++      if (!actualBaseSha.startsWith(expectedBaseSha)) {
+++        throw new Error(
+++          `Delta base SHA-256 mismatch for #${targetAnchor}: expected ${expectedBaseSha}, got ${actualBaseSha}`,
+++        );
+++      }
+++
+++      let diffIdx = i + 1;
+++      while (diffIdx < lines.length && lines[diffIdx]!.trim() === "") {
+++        diffIdx += 1;
+++      }
+++      const diffBlock = readFencedBlockAt(lines, diffIdx);
+++      if (diffBlock.lang !== "diff") {
+++        throw new Error(`Expected diff fenced block after delta header, got '${diffBlock.lang}'`);
+++      }
+++
+++      const reconstructedLines = applyLosslessFileDelta(baseText.split("\n"), diffBlock.body);
+++      const reconstructedText = reconstructedLines.join("\n");
+++      const actualTargetSha = sha256Hex(reconstructedText);
+++      if (!actualTargetSha.startsWith(expectedTargetSha)) {
+++        throw new Error(
+++          `Delta target SHA-256 mismatch: expected ${expectedTargetSha}, got ${actualTargetSha}`,
+++        );
+++      }
+++
+++      if (pendingAnchorId) {
+++        resolvedAnchors.set(pendingAnchorId, reconstructedText);
+++      }
+++      results.push({
+++        kind: "delta_ref",
+++        anchorId: pendingAnchorId ?? undefined,
+++        targetAnchorId: targetAnchor,
+++        expectedSha256Prefix: expectedTargetSha,
+++        reconstructedText,
+++        actualSha256: actualTargetSha,
+++      });
+++      pendingAnchorId = null;
+++      pendingShaPrefix = null;
+++      i = diffBlock.nextIndex;
+++      continue;
+++    }
+++
+++    // Clear stale pending anchor if a section divider or new tool header begins without consuming it
+++    if (pendingAnchorId && (line === "---" || line.startsWith("**🛠 ") || line.startsWith("## "))) {
+++      throw new Error(`Dangling unconsumed export anchor #${pendingAnchorId}`);
+++    }
+++
+++    i += 1;
+++  }
+++
+++  if (pendingAnchorId) {
+++    throw new Error(`Dangling unconsumed export anchor #${pendingAnchorId} at EOF`);
+++  }
+++
+++  return results;
+++}
+++
+++/**
+++ * Assert that every compressed reference/delta/TOON block in `markdown` expands
+++ * cleanly and matches the canonical SHA-256 digests in `ir`.
+++ */
+++export function verifyLosslessRoundTrip(
+++  ir: CanonicalTranscriptIR,
+++  markdown: string,
+++): { verifiedBlocks: ExpandedLosslessBlock[] } {
+++  const verifiedBlocks = expandLosslessMarkdown(markdown);
+++  const validDigests = new Set<string>();
+++
+++  const walk = (node: CanonicalTranscriptIR["root"]) => {
+++    for (const msg of node.messages) {
+++      for (const part of msg.parts) {
+++        if (part.kind !== "tool") continue;
+++        if (part.canonicalRead) {
+++          validDigests.add(part.canonicalRead.cleanBodySha256);
+++        }
+++        if (part.outputSha256) {
+++          validDigests.add(part.outputSha256);
+++        }
+++        if (part.subagent) {
+++          walk(part.subagent.node);
+++        }
+++      }
+++    }
+++  };
+++  walk(ir.root);
+++
+++  for (const block of verifiedBlocks) {
+++    if (!validDigests.has(block.actualSha256)) {
+++      throw new Error(
+++        `Reconstructed ${block.kind} block produced unknown SHA-256 ${block.actualSha256}`,
+++      );
+++    }
+++  }
+++
+++  return { verifiedBlocks };
+++}
++diff --git a/apps/app/src/app/lib/markdown-export/render-markdown.ts b/apps/app/src/app/lib/markdown-export/render-markdown.ts
++new file mode 100644
++index 00000000..4579cad6
++--- /dev/null
+++++ b/apps/app/src/app/lib/markdown-export/render-markdown.ts
++@@ -0,0 +1,897 @@
+++import type { Todo } from "@opencode-ai/sdk/v2/client";
+++
+++import { createCanonicalTranscriptIRWithoutBaseline } from "./canonicalize";
+++import { computeLosslessFileDelta } from "./file-delta";
+++import { sha256Hex, shortSha256, utf8ByteLength } from "./hash-and-bytes";
+++import {
+++  fenceMarkdownCode,
+++  normalizeNewlines,
+++  tryEncodeLosslessToon,
+++} from "./structured-compact";
+++import type {
+++  CanonicalMessageIR,
+++  CanonicalReadFile,
+++  CanonicalSessionNodeIR,
+++  CanonicalToolPartIR,
+++  CanonicalTranscriptIR,
+++  CompressionStats,
+++  ExportableSessionTree,
+++  ExportMarkdownOptions,
+++  ExportRenderResult,
+++} from "./types";
+++import { RAW_EXPORT_MARKDOWN_OPTIONS } from "./types";
+++
+++const MIN_DEDUP_NET_WIN_BYTES = 64;
+++const MIN_RANGE_CANDIDATE_BYTES = 160;
+++const MIN_RANGE_CANDIDATE_LINES = 3;
+++const MIN_DELTA_CANDIDATE_BYTES = 200;
+++const MIN_DELTA_CANDIDATE_LINES = 6;
+++const MIN_DELTA_NET_WIN_BYTES = 96;
+++const MIN_DELTA_SAVED_RATIO = 0.2;
+++
+++type ToolOutputPlan =
+++  | { kind: "none" }
+++  | { kind: "raw"; fencedBlock: string }
+++  | {
+++      kind: "canonical_read";
+++      read: CanonicalReadFile;
+++      fencedBlock: string;
+++    }
+++  | {
+++      kind: "toon_table";
+++      fencedBlock: string;
+++      sha256: string;
+++    }
+++  | {
+++      kind: "exact_ref";
+++      targetCallRefId: string;
+++      markdownBlock: string;
+++    }
+++  | {
+++      kind: "range_ref";
+++      targetCallRefId: string;
+++      markdownBlock: string;
+++    }
+++  | {
+++      kind: "delta_ref";
+++      targetCallRefId: string;
+++      markdownBlock: string;
+++    };
+++
+++type ToolRenderPlan = {
+++  inputBlock: string | null;
+++  outputPlan: ToolOutputPlan;
+++  outputSourceSha256: string | null;
+++};
+++
+++type LosslessPassState = {
+++  plans: Map<string, ToolRenderPlan>;
+++  referencedCallIds: Set<string>;
+++  stats: CompressionStats;
+++};
+++
+++function emptyStats(): CompressionStats {
+++  return {
+++    exactDedupCount: 0,
+++    rangeRefCount: 0,
+++    deltaCount: 0,
+++    canonicalReadCount: 0,
+++    compactJsonCount: 0,
+++    toonTableCount: 0,
+++    anchorCount: 0,
+++    savedBytesByDedup: 0,
+++    savedBytesByRange: 0,
+++    savedBytesByDelta: 0,
+++    savedBytesByStructured: 0,
+++  };
+++}
+++
+++function sanitizeInlineLinkCode(value: string): string {
+++  return value.replace(/[`[\]\r\n]+/g, " ").trim();
+++}
+++
+++function formatReadMetaSummary(read: CanonicalReadFile, shaPrefix?: string): string {
+++  const parts: string[] = [];
+++  if (read.displayPath) {
+++    parts.push(`File: \`${sanitizeInlineLinkCode(read.displayPath)}\``);
+++  }
+++  if (read.lines.length === 0) {
+++    parts.push("Empty file (0 lines)");
+++  } else {
+++    let rangePart = `Lines L${read.firstLine}–L${read.lastLine}`;
+++    if (read.footerKind === "eof" && typeof read.totalLines === "number") {
+++      rangePart += ` (EOF, ${read.totalLines} lines)`;
+++    } else if (read.footerKind === "partial" && typeof read.totalLines === "number") {
+++      rangePart += ` of ${read.totalLines} (truncated)`;
+++    } else if (read.footerKind === "capped_50kb") {
+++      rangePart += " (capped at 50 KB)";
+++    } else if (read.footerKind === "more_lines") {
+++      rangePart += " (truncated)";
+++    }
+++    parts.push(rangePart);
+++  }
+++  if (shaPrefix) {
+++    parts.push(`\`sha256:${shaPrefix}\``);
+++  }
+++  return `_${parts.join(" · ")}_`;
+++}
+++
+++function formatReadShortRangeLabel(read: CanonicalReadFile): string {
+++  if (read.lines.length === 0) return "0 lines";
+++  const count = read.lines.length;
+++  const suffix =
+++    read.footerKind === "eof"
+++      ? ", EOF"
+++      : read.truncated
+++        ? ", truncated"
+++        : "";
+++  return `L${read.firstLine}–L${read.lastLine}, ${count} lines${suffix}`;
+++}
+++
+++function renderRawToolOutputBlock(tool: CanonicalToolPartIR): string {
+++  if (tool.normalizedOutput === null) return "";
+++  if (tool.prettyOutputJson !== null) {
+++    return fenceMarkdownCode(tool.prettyOutputJson, "json");
+++  }
+++  return fenceMarkdownCode(tool.normalizedOutput);
+++}
+++
+++function renderCanonicalReadUnanchored(read: CanonicalReadFile): string {
+++  const metaLine = formatReadMetaSummary(read);
+++  if (read.lines.length === 0) return metaLine;
+++  const bodyFence = fenceMarkdownCode(read.cleanBody, read.fenceLanguage, true);
+++  return `${metaLine}\n\n${bodyFence}`;
+++}
+++
+++function anchorOverheadBytes(callRefId: string, isRead: boolean): number {
+++  // `<a id="export-ref-c001"></a>\n\n` plus sha256 tag on source caption
+++  const anchorTag = `<a id="export-ref-${callRefId}"></a>\n\n`;
+++  const captionExtra = isRead ? " · `sha256:000000000000`" : "_Output (`sha256:000000000000`):_\n\n";
+++  return utf8ByteLength(anchorTag) + utf8ByteLength(captionExtra);
+++}
+++
+++function collectToolsInDocumentOrder(node: CanonicalSessionNodeIR, out: CanonicalToolPartIR[]): void {
+++  for (const message of node.messages) {
+++    for (const part of message.parts) {
+++      if (part.kind !== "tool") continue;
+++      out.push(part);
+++      if (part.subagent) {
+++        collectToolsInDocumentOrder(part.subagent.node, out);
+++      }
+++    }
+++  }
+++}
+++
+++function findContainedLineSlice(
+++  sourceLines: readonly string[],
+++  sourceFirstLine: number,
+++  samePath: boolean,
+++  target: CanonicalReadFile,
+++): number | null {
+++  const targetLen = target.lines.length;
+++  if (targetLen === 0 || targetLen > sourceLines.length) return null;
+++
+++  // O(1) expected index check when line numbers align on the same file
+++  if (samePath && target.firstLine >= sourceFirstLine) {
+++    const directIdx = target.firstLine - sourceFirstLine;
+++    if (directIdx + targetLen <= sourceLines.length) {
+++      let match = true;
+++      for (let i = 0; i < targetLen; i += 1) {
+++        if (sourceLines[directIdx + i] !== target.lines[i]) {
+++          match = false;
+++          break;
+++        }
+++      }
+++      if (match) return directIdx;
+++    }
+++  }
+++
+++  if (!samePath) return null;
+++
+++  const firstTargetLine = target.lines[0]!;
+++  const maxStart = sourceLines.length - targetLen;
+++  for (let start = 0; start <= maxStart; start += 1) {
+++    if (sourceLines[start] !== firstTargetLine) continue;
+++    let match = true;
+++    for (let i = 1; i < targetLen; i += 1) {
+++      if (sourceLines[start + i] !== target.lines[i]) {
+++        match = false;
+++        break;
+++      }
+++    }
+++    if (match) return start;
+++  }
+++  return null;
+++}
+++
+++function buildLosslessPlans(root: CanonicalSessionNodeIR): LosslessPassState {
+++  const tools: CanonicalToolPartIR[] = [];
+++  collectToolsInDocumentOrder(root, tools);
+++
+++  const plans = new Map<string, ToolRenderPlan>();
+++  const referencedCallIds = new Set<string>();
+++  const stats = emptyStats();
+++
+++  const firstByReadBodyHash = new Map<string, CanonicalToolPartIR>();
+++  const firstByOutputHash = new Map<string, CanonicalToolPartIR>();
+++  const inlineReadSnapshots: CanonicalToolPartIR[] = [];
+++
+++  for (const tool of tools) {
+++    let inputBlock: string | null = null;
+++    if (tool.hasInput && tool.prettyInputJson !== null) {
+++      if (tool.compactInputJson !== null) {
+++        const prettyFenced = fenceMarkdownCode(tool.prettyInputJson, "json");
+++        const compactFenced = fenceMarkdownCode(tool.compactInputJson, "json");
+++        const saved = utf8ByteLength(prettyFenced) - utf8ByteLength(compactFenced);
+++        if (saved > 0) {
+++          inputBlock = compactFenced;
+++          stats.compactJsonCount += 1;
+++          stats.savedBytesByStructured += saved;
+++        } else {
+++          inputBlock = prettyFenced;
+++        }
+++      } else {
+++        inputBlock = fenceMarkdownCode(tool.prettyInputJson, "json");
+++      }
+++    } else if (tool.pendingRawInput !== null) {
+++      inputBlock = fenceMarkdownCode(tool.pendingRawInput);
+++    }
+++
+++    if (tool.normalizedOutput === null) {
+++      plans.set(tool.callRefId, {
+++        inputBlock,
+++        outputPlan: { kind: "none" },
+++        outputSourceSha256: null,
+++      });
+++      continue;
+++    }
+++
+++    const rawBaselineBlock = renderRawToolOutputBlock(tool);
+++    const rawBaselineBytes = utf8ByteLength(rawBaselineBlock);
+++
+++    // Branch 1: Canonical OpenCode `Read` file envelope
+++    if (tool.canonicalRead !== null) {
+++      const read = tool.canonicalRead;
+++      const canonicalInlineBlock = renderCanonicalReadUnanchored(read);
+++      const canonicalInlineBytes = utf8ByteLength(canonicalInlineBlock);
+++
+++      // Pass B (Read): Exact content-addressed deduplication
+++      const exactReadMatch = firstByReadBodyHash.get(read.cleanBodySha256);
+++      if (exactReadMatch && exactReadMatch.canonicalRead) {
+++        const srcRead = exactReadMatch.canonicalRead;
+++        const pathLabel = sanitizeInlineLinkCode(read.displayPath || srcRead.displayPath || "file");
+++        const refBlock = `> [↩ Identical to ${exactReadMatch.turnLabel} · Read \`${pathLabel}\` (${formatReadShortRangeLabel(read)}) · \`sha256:${shortSha256(read.cleanBodySha256)}\`](#export-ref-${exactReadMatch.callRefId})`;
+++        const extraAnchor = referencedCallIds.has(exactReadMatch.callRefId)
+++          ? 0
+++          : anchorOverheadBytes(exactReadMatch.callRefId, true);
+++        const totalCost = utf8ByteLength(refBlock) + extraAnchor;
+++        if (rawBaselineBytes - totalCost >= MIN_DEDUP_NET_WIN_BYTES) {
+++          referencedCallIds.add(exactReadMatch.callRefId);
+++          stats.exactDedupCount += 1;
+++          stats.savedBytesByDedup += rawBaselineBytes - totalCost;
+++          plans.set(tool.callRefId, {
+++            inputBlock,
+++            outputPlan: {
+++              kind: "exact_ref",
+++              targetCallRefId: exactReadMatch.callRefId,
+++              markdownBlock: refBlock,
+++            },
+++            outputSourceSha256: read.cleanBodySha256,
+++          });
+++          continue;
+++        }
+++      }
+++
+++      // Pass C (Read): Line-range containment inside an earlier inline Read snapshot
+++      const cleanBodyBytes = utf8ByteLength(read.cleanBody);
+++      if (
+++        cleanBodyBytes >= MIN_RANGE_CANDIDATE_BYTES &&
+++        read.lines.length >= MIN_RANGE_CANDIDATE_LINES
+++      ) {
+++        let matchedRangePlan: { src: CanonicalToolPartIR; refBlock: string; netSaved: number } | null =
+++          null;
+++        for (const candidateTool of inlineReadSnapshots) {
+++          const srcRead = candidateTool.canonicalRead!;
+++          const samePath =
+++            Boolean(read.comparablePath) &&
+++            Boolean(srcRead.comparablePath) &&
+++            read.comparablePath === srcRead.comparablePath;
+++          if (!samePath) continue;
+++
+++          const sliceIdx = findContainedLineSlice(
+++            srcRead.lines,
+++            srcRead.firstLine,
+++            true,
+++            read,
+++          );
+++          if (sliceIdx === null) continue;
+++
+++          const slicedBody = srcRead.lines.slice(sliceIdx, sliceIdx + read.lines.length).join("\n");
+++          if (slicedBody !== read.cleanBody || sha256Hex(slicedBody) !== read.cleanBodySha256) {
+++            continue;
+++          }
+++
+++          const sliceStart1 = sliceIdx + 1;
+++          const sliceEnd1 = sliceIdx + read.lines.length;
+++          const pathLabel = sanitizeInlineLinkCode(read.displayPath || srcRead.displayPath || "file");
+++          const refBlock = `> [↩ Contained in ${candidateTool.turnLabel} · Read \`${pathLabel}\`: lines L${read.firstLine}–L${read.lastLine} (slice ${sliceStart1}..${sliceEnd1}, ${read.lines.length} lines) · \`sha256:${shortSha256(read.cleanBodySha256)}\`](#export-ref-${candidateTool.callRefId})`;
+++          const extraAnchor = referencedCallIds.has(candidateTool.callRefId)
+++            ? 0
+++            : anchorOverheadBytes(candidateTool.callRefId, true);
+++          const totalCost = utf8ByteLength(refBlock) + extraAnchor;
+++          const netSaved = rawBaselineBytes - totalCost;
+++          if (netSaved >= MIN_DEDUP_NET_WIN_BYTES) {
+++            matchedRangePlan = { src: candidateTool, refBlock, netSaved };
+++            break;
+++          }
+++        }
+++
+++        if (matchedRangePlan) {
+++          referencedCallIds.add(matchedRangePlan.src.callRefId);
+++          stats.rangeRefCount += 1;
+++          stats.savedBytesByRange += matchedRangePlan.netSaved;
+++          plans.set(tool.callRefId, {
+++            inputBlock,
+++            outputPlan: {
+++              kind: "range_ref",
+++              targetCallRefId: matchedRangePlan.src.callRefId,
+++              markdownBlock: matchedRangePlan.refBlock,
+++            },
+++            outputSourceSha256: read.cleanBodySha256,
+++          });
+++          if (!firstByReadBodyHash.has(read.cleanBodySha256)) {
+++            firstByReadBodyHash.set(read.cleanBodySha256, tool);
+++          }
+++          continue;
+++        }
+++      }
+++
+++      // Pass D (Read): 1-hop post-edit file delta against the most recent inline Read snapshot of the same file
+++      if (
+++        Boolean(read.comparablePath) &&
+++        cleanBodyBytes >= MIN_DELTA_CANDIDATE_BYTES &&
+++        read.lines.length >= MIN_DELTA_CANDIDATE_LINES
+++      ) {
+++        let bestDelta: { src: CanonicalToolPartIR; markdownBlock: string; netSaved: number } | null =
+++          null;
+++        for (let idx = inlineReadSnapshots.length - 1; idx >= 0; idx -= 1) {
+++          const baseTool = inlineReadSnapshots[idx]!;
+++          const baseRead = baseTool.canonicalRead!;
+++          if (baseRead.comparablePath !== read.comparablePath) continue;
+++          if (baseRead.lines.length === 0) continue;
+++
+++          const deltaBody = computeLosslessFileDelta(
+++            baseRead.lines,
+++            read.lines,
+++            read.cleanBodySha256,
+++          );
+++          if (!deltaBody) continue;
+++
+++          const pathLabel = sanitizeInlineLinkCode(read.displayPath || baseRead.displayPath || "file");
+++          const deltaHeader = `> [Δ Delta for \`${pathLabel}\` (${formatReadShortRangeLabel(read)}) from ${baseTool.turnLabel} · Read (L${baseRead.firstLine}–L${baseRead.lastLine}) · base \`sha256:${shortSha256(baseRead.cleanBodySha256)}\` → \`sha256:${shortSha256(read.cleanBodySha256)}\`](#export-ref-${baseTool.callRefId})`;
+++          const fencedDelta = fenceMarkdownCode(deltaBody, "diff", true);
+++          const markdownBlock = `${deltaHeader}\n\n${fencedDelta}`;
+++          const extraAnchor = referencedCallIds.has(baseTool.callRefId)
+++            ? 0
+++            : anchorOverheadBytes(baseTool.callRefId, true);
+++          const totalCost = utf8ByteLength(markdownBlock) + extraAnchor;
+++          const savedVsCanonical = canonicalInlineBytes - totalCost;
+++          if (
+++            savedVsCanonical >= MIN_DELTA_NET_WIN_BYTES &&
+++            savedVsCanonical / canonicalInlineBytes >= MIN_DELTA_SAVED_RATIO &&
+++            rawBaselineBytes - totalCost >= MIN_DELTA_NET_WIN_BYTES
+++          ) {
+++            bestDelta = {
+++              src: baseTool,
+++              markdownBlock,
+++              netSaved: rawBaselineBytes - totalCost,
+++            };
+++            break;
+++          }
+++        }
+++
+++        if (bestDelta) {
+++          referencedCallIds.add(bestDelta.src.callRefId);
+++          stats.deltaCount += 1;
+++          stats.savedBytesByDelta += bestDelta.netSaved;
+++          plans.set(tool.callRefId, {
+++            inputBlock,
+++            outputPlan: {
+++              kind: "delta_ref",
+++              targetCallRefId: bestDelta.src.callRefId,
+++              markdownBlock: bestDelta.markdownBlock,
+++            },
+++            outputSourceSha256: read.cleanBodySha256,
+++          });
+++          if (!firstByReadBodyHash.has(read.cleanBodySha256)) {
+++            firstByReadBodyHash.set(read.cleanBodySha256, tool);
+++          }
+++          continue;
+++        }
+++      }
+++
+++      // Pass E (Read): Emit canonical stripped Read block when smaller than raw OpenCode XML envelope
+++      if (canonicalInlineBytes < rawBaselineBytes) {
+++        stats.canonicalReadCount += 1;
+++        stats.savedBytesByStructured += rawBaselineBytes - canonicalInlineBytes;
+++        plans.set(tool.callRefId, {
+++          inputBlock,
+++          outputPlan: {
+++            kind: "canonical_read",
+++            read,
+++            fencedBlock:
+++              read.lines.length === 0
+++                ? ""
+++                : fenceMarkdownCode(read.cleanBody, read.fenceLanguage, true),
+++          },
+++          outputSourceSha256: read.cleanBodySha256,
+++        });
+++        if (read.lines.length > 0) {
+++          if (!firstByReadBodyHash.has(read.cleanBodySha256)) {
+++            firstByReadBodyHash.set(read.cleanBodySha256, tool);
+++          }
+++          inlineReadSnapshots.push(tool);
+++        }
+++        continue;
+++      }
+++    }
+++
+++    // Branch 2: General tool output (Bash, Grep, Glob, JSON/MCP, directory Read, error live output, etc.)
+++    if (tool.outputSha256 !== null) {
+++      const exactMatch = firstByOutputHash.get(tool.outputSha256);
+++      if (exactMatch) {
+++        const refBlock = `> [↩ Identical output to ${exactMatch.turnLabel} · ${sanitizeInlineLinkCode(exactMatch.displayName)} (${tool.outputLineCount} lines, ${tool.outputBytes.toLocaleString("en-US")} B) · \`sha256:${shortSha256(tool.outputSha256)}\`](#export-ref-${exactMatch.callRefId})`;
+++        const extraAnchor = referencedCallIds.has(exactMatch.callRefId)
+++          ? 0
+++          : anchorOverheadBytes(exactMatch.callRefId, false);
+++        const totalCost = utf8ByteLength(refBlock) + extraAnchor;
+++        if (rawBaselineBytes - totalCost >= MIN_DEDUP_NET_WIN_BYTES) {
+++          referencedCallIds.add(exactMatch.callRefId);
+++          stats.exactDedupCount += 1;
+++          stats.savedBytesByDedup += rawBaselineBytes - totalCost;
+++          plans.set(tool.callRefId, {
+++            inputBlock,
+++            outputPlan: {
+++              kind: "exact_ref",
+++              targetCallRefId: exactMatch.callRefId,
+++              markdownBlock: refBlock,
+++            },
+++            outputSourceSha256: tool.outputSha256,
+++          });
+++          continue;
+++        }
+++      }
+++
+++      firstByOutputHash.set(tool.outputSha256, tool);
+++
+++      // Pass E (Tabular JSON): Try strictly lossless TOON-JSON v1 encoding on uniform JSON object arrays
+++      if (tool.parsedOutputJson !== undefined && tool.prettyOutputJson !== null) {
+++        const toonBody = tryEncodeLosslessToon(tool.parsedOutputJson, tool.prettyOutputJson);
+++        if (toonBody !== null) {
+++          const toonFenced = fenceMarkdownCode(toonBody, "toon");
+++          const saved = rawBaselineBytes - utf8ByteLength(toonFenced);
+++          if (saved >= MIN_DEDUP_NET_WIN_BYTES) {
+++            stats.toonTableCount += 1;
+++            stats.savedBytesByStructured += saved;
+++            plans.set(tool.callRefId, {
+++              inputBlock,
+++              outputPlan: {
+++                kind: "toon_table",
+++                fencedBlock: toonFenced,
+++                sha256: tool.outputSha256,
+++              },
+++              outputSourceSha256: tool.outputSha256,
+++            });
+++            continue;
+++          }
+++        }
+++      }
+++    }
+++
+++    plans.set(tool.callRefId, {
+++      inputBlock,
+++      outputPlan: {
+++        kind: "raw",
+++        fencedBlock: rawBaselineBlock,
+++      },
+++      outputSourceSha256: tool.outputSha256,
+++    });
+++  }
+++
+++  stats.anchorCount = referencedCallIds.size;
+++  return { plans, referencedCallIds, stats };
+++}
+++
+++function headingHashes(depth: number): string {
+++  const clamped = Math.min(6, Math.max(1, depth));
+++  return "#".repeat(clamped);
+++}
+++
+++function renderBlockquote(headerLine: string | null, text: string): string {
+++  const lines = normalizeNewlines(text).split("\n");
+++  const quoted = lines.map((line) => (line.length > 0 ? `> ${line}` : ">"));
+++  if (headerLine) {
+++    return [`> ${headerLine}`, ...quoted].join("\n");
+++  }
+++  return quoted.join("\n");
+++}
+++
+++function formatIsoTimestamp(epochMs: number | undefined): string | null {
+++  if (typeof epochMs !== "number" || !Number.isFinite(epochMs) || epochMs <= 0) return null;
+++  try {
+++    return new Date(epochMs).toISOString().replace(".000Z", "Z");
+++  } catch {
+++    return null;
+++  }
+++}
+++
+++function renderToolFromIR(
+++  tool: CanonicalToolPartIR,
+++  options: ExportMarkdownOptions,
+++  lossless: LosslessPassState | null,
+++): string {
+++  const header = `**🛠 ${tool.displayName}**${tool.stateTitle}${tool.statusSuffix}`;
+++  const blocks: string[] = [];
+++  const plan = lossless ? lossless.plans.get(tool.callRefId) : undefined;
+++  const isAnchored = Boolean(lossless && lossless.referencedCallIds.has(tool.callRefId));
+++
+++  if (plan) {
+++    if (plan.inputBlock !== null) {
+++      blocks.push(plan.inputBlock);
+++    }
+++    const out = plan.outputPlan;
+++    switch (out.kind) {
+++      case "none":
+++        break;
+++      case "canonical_read": {
+++        if (isAnchored) {
+++          blocks.push(`<a id="export-ref-${tool.callRefId}"></a>`);
+++          blocks.push(formatReadMetaSummary(out.read, shortSha256(out.read.cleanBodySha256)));
+++        } else {
+++          blocks.push(formatReadMetaSummary(out.read));
+++        }
+++        if (out.fencedBlock) {
+++          blocks.push(out.fencedBlock);
+++        }
+++        break;
+++      }
+++      case "toon_table": {
+++        if (isAnchored) {
+++          blocks.push(`<a id="export-ref-${tool.callRefId}"></a>`);
+++          blocks.push(`_Output (\`sha256:${shortSha256(out.sha256)}\`):_`);
+++        }
+++        blocks.push(out.fencedBlock);
+++        break;
+++      }
+++      case "raw": {
+++        if (isAnchored && plan.outputSourceSha256) {
+++          blocks.push(`<a id="export-ref-${tool.callRefId}"></a>`);
+++          blocks.push(`_Output (\`sha256:${shortSha256(plan.outputSourceSha256)}\`):_`);
+++        }
+++        blocks.push(out.fencedBlock);
+++        break;
+++      }
+++      case "exact_ref":
+++      case "range_ref":
+++      case "delta_ref": {
+++        if (isAnchored) {
+++          blocks.push(`<a id="export-ref-${tool.callRefId}"></a>`);
+++        }
+++        blocks.push(out.markdownBlock);
+++        break;
+++      }
+++    }
+++  } else {
+++    if (tool.hasInput && tool.prettyInputJson !== null) {
+++      blocks.push(fenceMarkdownCode(tool.prettyInputJson, "json"));
+++    } else if (tool.pendingRawInput !== null) {
+++      blocks.push(fenceMarkdownCode(tool.pendingRawInput));
+++    }
+++    if (tool.normalizedOutput !== null) {
+++      blocks.push(renderRawToolOutputBlock(tool));
+++    }
+++  }
+++
+++  if (tool.attachmentLabels.length > 0) {
+++    blocks.push(`> Tool attachments: ${tool.attachmentLabels.join(", ")}`);
+++  }
+++  if (tool.errorText !== null) {
+++    blocks.push(`_Error:_\n${fenceMarkdownCode(tool.errorText)}`);
+++  }
+++
+++  const toolSection =
+++    blocks.length === 0
+++      ? `${header} _(no input or output)_`
+++      : `${header}\n\n${blocks.join("\n\n")}`;
+++
+++  if (!tool.subagent) {
+++    return toolSection;
+++  }
+++
+++  const subHeading = headingHashes(tool.subagent.headingDepth);
+++  const subBody = renderSessionNodeMessages(tool.subagent.node, options, lossless);
+++  const subSection = subBody.markdown
+++    ? `${subHeading} ⤷ Subagent: ${tool.subagent.label}\n\n${subBody.markdown}\n\n${subHeading} ⤶ End subagent`
+++    : `${subHeading} ⤷ Subagent: ${tool.subagent.label}\n\n_(no recorded subagent turns)_\n\n${subHeading} ⤶ End subagent`;
+++
+++  return `${toolSection}\n\n${subSection}`;
+++}
+++
+++function renderMessageBlocks(
+++  message: CanonicalMessageIR,
+++  options: ExportMarkdownOptions,
+++  lossless: LosslessPassState | null,
+++): string[] {
+++  const blocks: string[] = [];
+++
+++  for (const part of message.parts) {
+++    switch (part.kind) {
+++      case "reasoning": {
+++        if (!options.includeReasoning) break;
+++        blocks.push(renderBlockquote("_Reasoning_", part.text));
+++        break;
+++      }
+++      case "text": {
+++        blocks.push(part.text);
+++        break;
+++      }
+++      case "attachments": {
+++        blocks.push(`> Attached files: ${part.labels.join(", ")}`);
+++        break;
+++      }
+++      case "tool": {
+++        if (!options.includeToolCalls) break;
+++        blocks.push(renderToolFromIR(part, options, lossless));
+++        break;
+++      }
+++      case "subtask": {
+++        const subtaskHeader = `**Subtask (\`${part.agent}\`):** ${part.description}`;
+++        if (part.prompt) {
+++          blocks.push(`${subtaskHeader}\n\n${renderBlockquote(null, part.prompt)}`);
+++        } else {
+++          blocks.push(subtaskHeader);
+++        }
+++        break;
+++      }
+++      case "patch": {
+++        blocks.push(`> Patched files: ${part.files.map((file) => `\`${file}\``).join(", ")}`);
+++        break;
+++      }
+++      case "agent": {
+++        blocks.push(`> Agent: \`@${part.name}\``);
+++        break;
+++      }
+++      case "retry": {
+++        const retryMsg = part.formattedError ?? `> _Retry attempt ${part.attempt}_`;
+++        blocks.push(`> _Retry attempt ${part.attempt}_\n${retryMsg}`);
+++        break;
+++      }
+++      case "compaction": {
+++        blocks.push(part.auto ? "> _Context compacted automatically_" : "> _Context compacted_");
+++        break;
+++      }
+++    }
+++  }
+++
+++  if (message.formattedAssistantError) {
+++    blocks.push(message.formattedAssistantError);
+++  }
+++
+++  return blocks;
+++}
+++
+++function renderSessionNodeMessages(
+++  node: CanonicalSessionNodeIR,
+++  options: ExportMarkdownOptions,
+++  lossless: LosslessPassState | null,
+++): { markdown: string; renderedTurnCount: number } {
+++  const turnHeading = headingHashes(node.headingDepth);
+++  const renderedTurns: string[] = [];
+++
+++  for (const message of node.messages) {
+++    const blocks = renderMessageBlocks(message, options, lossless);
 ++    if (blocks.length === 0) continue;
 ++
 ++    const roleTitle = message.info.role === "user" ? "User" : "Assistant";
@@ -4816,11 +6589,14 @@ index 00000000..ffac05c1
 ++    renderedTurns.push(`${turnHeading} ${roleTitle}${metaLine}\n${blocks.join("\n\n")}`);
 ++  }
 ++
-++  return renderedTurns.join("\n\n---\n\n");
+++  return {
+++    markdown: renderedTurns.join("\n\n---\n\n"),
+++    renderedTurnCount: renderedTurns.length,
+++  };
 ++}
 ++
-++function renderTodosSection(todos: ReadonlyArray<Todo> | undefined): string | null {
-++  if (!todos || todos.length === 0) return null;
+++function renderTodosSection(todos: ReadonlyArray<Todo>): string | null {
+++  if (todos.length === 0) return null;
 ++  const lines: string[] = [];
 ++  for (const todo of todos) {
 ++    const content = todo.content.trim();
@@ -4838,113 +6614,756 @@ index 00000000..ffac05c1
 ++  return `## Tasks\n\n${lines.join("\n")}`;
 ++}
 ++
-++/**
-++ * Format a full OmniRush chat session/branch (including model reasoning,
-++ * tool calls with JSON inputs & outputs, errors, attachments, todos, and
-++ * nested sub-agent sessions) as a standalone Markdown document.
-++ */
-++export function formatSessionAsMarkdown(tree: ExportableSessionTree): string {
-++  const visible = filterVisibleBranchMessages(tree.session, tree.messages);
-++  const visited = new Set<string>([tree.session.id]);
-++  const body = renderMessagesSection(tree, 2, visited);
+++function renderMarkdownInternal(
+++  ir: Omit<CanonicalTranscriptIR, "baselineBytes">,
+++  options: ExportMarkdownOptions,
+++): { markdown: string; stats: CompressionStats } {
+++  const useLossless = options.includeToolCalls && options.compression !== "off";
+++  const lossless = useLossless ? buildLosslessPlans(ir.root) : null;
+++  const stats = lossless ? lossless.stats : emptyStats();
 ++
-++  const rawTitle = tree.session.title?.trim() ?? "";
+++  const bodyResult = renderSessionNodeMessages(ir.root, options, lossless);
+++  const rawTitle = ir.root.session.title?.trim() ?? "";
 ++  const title = rawTitle ? normalizeNewlines(rawTitle).replace(/\n+/g, " ") : "OmniRush conversation";
 ++
-++  const models = new Set<string>();
-++  let totalInputTokens = 0;
-++  let totalOutputTokens = 0;
-++  let totalReasoningTokens = 0;
-++  let totalCost = 0;
-++  let renderedTurnCount = 0;
-++
-++  for (const message of visible) {
-++    const hasContent =
-++      message.parts.some((part) => {
-++        if (part.type === "text") return !part.ignored && (!part.synthetic || extractSyntheticAttachmentNames(part.metadata).length > 0) && Boolean(part.text.trim() || part.synthetic);
-++        if (part.type === "reasoning") return Boolean(part.text.trim());
-++        return (
-++          part.type === "tool" ||
-++          part.type === "file" ||
-++          part.type === "subtask" ||
-++          part.type === "patch" ||
-++          part.type === "agent" ||
-++          part.type === "retry" ||
-++          part.type === "compaction"
-++        );
-++      }) || Boolean(message.info.role === "assistant" && message.info.error);
-++    if (hasContent) renderedTurnCount += 1;
-++
-++    if (message.info.role === "assistant") {
-++      const modelId =
-++        message.info.providerID && message.info.modelID
-++          ? `${message.info.providerID}/${message.info.modelID}`
-++          : message.info.modelID;
-++      if (modelId) models.add(modelId);
-++      totalInputTokens += message.info.tokens?.input || 0;
-++      totalOutputTokens += message.info.tokens?.output || 0;
-++      totalReasoningTokens += message.info.tokens?.reasoning || 0;
-++      totalCost += message.info.cost || 0;
-++    }
-++  }
-++
-++  const countLabel = `${renderedTurnCount} ${renderedTurnCount === 1 ? "message" : "messages"}`;
+++  const countLabel = `${bodyResult.renderedTurnCount} ${bodyResult.renderedTurnCount === 1 ? "message" : "messages"}`;
 ++  const metadataBullets: string[] = [];
-++  if (tree.session.directory?.trim()) {
-++    metadataBullets.push(`- **Workspace:** \`${tree.session.directory.trim()}\``);
+++
+++  if (ir.root.session.directory?.trim()) {
+++    metadataBullets.push(`- **Workspace:** \`${ir.root.session.directory.trim()}\``);
 ++  }
-++  if (tree.session.parentID?.trim()) {
-++    metadataBullets.push(`- **Parent session:** \`${tree.session.parentID.trim()}\``);
+++  if (ir.root.session.parentID?.trim()) {
+++    metadataBullets.push(`- **Parent session:** \`${ir.root.session.parentID.trim()}\``);
 ++  }
-++  const createdIso = formatIsoTimestamp(tree.session.time?.created);
-++  const updatedIso = formatIsoTimestamp(tree.session.time?.updated);
+++  const createdIso = formatIsoTimestamp(ir.root.session.time?.created);
+++  const updatedIso = formatIsoTimestamp(ir.root.session.time?.updated);
 ++  if (createdIso && updatedIso && createdIso !== updatedIso) {
 ++    metadataBullets.push(`- **Created:** ${createdIso} · **Updated:** ${updatedIso}`);
 ++  } else if (createdIso) {
 ++    metadataBullets.push(`- **Created:** ${createdIso}`);
 ++  }
-++  if (models.size > 0) {
-++    metadataBullets.push(`- **Models:** ${[...models].map((m) => `\`${m}\``).join(", ")}`);
+++  if (ir.models.length > 0) {
+++    metadataBullets.push(`- **Models:** ${ir.models.map((m) => `\`${m}\``).join(", ")}`);
 ++  }
-++  if (totalInputTokens > 0 || totalOutputTokens > 0 || totalReasoningTokens > 0) {
-++    const tokenParts = [`${totalInputTokens.toLocaleString("en-US")} input`, `${totalOutputTokens.toLocaleString("en-US")} output`];
-++    if (totalReasoningTokens > 0) {
-++      tokenParts.push(`${totalReasoningTokens.toLocaleString("en-US")} reasoning`);
+++  if (ir.totalInputTokens > 0 || ir.totalOutputTokens > 0 || ir.totalReasoningTokens > 0) {
+++    const tokenParts = [
+++      `${ir.totalInputTokens.toLocaleString("en-US")} input`,
+++      `${ir.totalOutputTokens.toLocaleString("en-US")} output`,
+++    ];
+++    if (ir.totalReasoningTokens > 0) {
+++      tokenParts.push(`${ir.totalReasoningTokens.toLocaleString("en-US")} reasoning`);
 ++    }
-++    const costSuffix = totalCost > 0 ? ` ($${totalCost.toFixed(4)})` : "";
+++    const costSuffix = ir.totalCost > 0 ? ` ($${ir.totalCost.toFixed(4)})` : "";
 ++    metadataBullets.push(`- **Tokens:** ${tokenParts.join(", ")}${costSuffix}`);
+++  }
+++
+++  const omittedItems: string[] = [];
+++  if (!options.includeToolCalls) omittedItems.push("tool calls");
+++  if (!options.includeReasoning) omittedItems.push("reasoning");
+++  if (omittedItems.length > 0) {
+++    metadataBullets.push(`- **Omitted:** ${omittedItems.join(", ")}`);
+++  }
+++
+++  const totalGrossSaved =
+++    stats.savedBytesByDedup +
+++    stats.savedBytesByRange +
+++    stats.savedBytesByDelta +
+++    stats.savedBytesByStructured;
+++
+++  if (useLossless && totalGrossSaved >= 128) {
+++    const summaryParts: string[] = [];
+++    if (stats.exactDedupCount > 0) summaryParts.push(`${stats.exactDedupCount} deduplicated`);
+++    if (stats.rangeRefCount > 0) summaryParts.push(`${stats.rangeRefCount} range refs`);
+++    if (stats.deltaCount > 0) summaryParts.push(`${stats.deltaCount} deltas`);
+++    if (stats.toonTableCount > 0) summaryParts.push(`${stats.toonTableCount} TOON tables`);
+++    const detailSuffix = summaryParts.length > 0 ? ` (${summaryParts.join(", ")})` : "";
+++    metadataBullets.push(`- **Compression:** \`${options.compression}\`${detailSuffix}`);
 ++  }
 ++
 ++  const headerLines = [
 ++    `# ${title}`,
-++    `_${countLabel} · Session \`${tree.session.id}\`_`,
+++    `_${countLabel} · Session \`${ir.root.session.id}\`_`,
 ++  ];
 ++  if (metadataBullets.length > 0) {
 ++    headerLines.push("", ...metadataBullets);
 ++  }
 ++
 ++  const sections = [headerLines.join("\n")];
-++  if (body) {
-++    sections.push(body);
+++  if (bodyResult.markdown) {
+++    sections.push(bodyResult.markdown);
 ++  } else {
 ++    sections.push("_(no messages in this branch)_");
 ++  }
 ++
-++  const todosSection = renderTodosSection(tree.todos);
+++  const todosSection = renderTodosSection(ir.todos);
 ++  if (todosSection) {
 ++    sections.push(todosSection);
 ++  }
 ++
-++  return `${sections.join("\n\n---\n\n")}\n`;
+++  return {
+++    markdown: `${sections.join("\n\n---\n\n")}\n`,
+++    stats,
+++  };
+++}
+++
+++/**
+++ * Build a reusable, pre-parsed, pre-hashed canonical Intermediate Representation
+++ * of a session export tree so interactive checkbox / compression toggles can
+++ * recompute exact output bytes in milliseconds without re-fetching or re-hashing.
+++ */
+++export function buildCanonicalTranscriptIR(tree: ExportableSessionTree): CanonicalTranscriptIR {
+++  const base = createCanonicalTranscriptIRWithoutBaseline(tree);
+++  const rawRendered = renderMarkdownInternal(base, RAW_EXPORT_MARKDOWN_OPTIONS);
+++  return {
+++    ...base,
+++    baselineBytes: utf8ByteLength(rawRendered.markdown),
+++  };
+++}
+++
+++/**
+++ * Synchronously render Markdown and compute exact UTF-8 byte metrics from a
+++ * pre-built `CanonicalTranscriptIR`.
+++ */
+++export function renderTranscriptFromIR(
+++  ir: CanonicalTranscriptIR,
+++  partialOptions?: Partial<ExportMarkdownOptions>,
+++): ExportRenderResult {
+++  const options: ExportMarkdownOptions = {
+++    includeToolCalls: partialOptions?.includeToolCalls ?? RAW_EXPORT_MARKDOWN_OPTIONS.includeToolCalls,
+++    includeReasoning: partialOptions?.includeReasoning ?? RAW_EXPORT_MARKDOWN_OPTIONS.includeReasoning,
+++    compression: partialOptions?.compression ?? RAW_EXPORT_MARKDOWN_OPTIONS.compression,
+++  };
+++
+++  let rendered = renderMarkdownInternal(ir, options);
+++  let utf8Bytes = utf8ByteLength(rendered.markdown);
+++
+++  // Strict document-level monotonicity guard: lossless compression of the full
+++  // transcript must never produce a file larger than the raw baseline.
+++  if (
+++    options.includeToolCalls &&
+++    options.includeReasoning &&
+++    options.compression !== "off" &&
+++    utf8Bytes > ir.baselineBytes
+++  ) {
+++    rendered = renderMarkdownInternal(ir, RAW_EXPORT_MARKDOWN_OPTIONS);
+++    utf8Bytes = ir.baselineBytes;
+++  }
+++
+++  const savedBytes = Math.max(0, ir.baselineBytes - utf8Bytes);
+++  const savedRatio = ir.baselineBytes > 0 ? savedBytes / ir.baselineBytes : 0;
+++  const estimatedTokens = Math.ceil(utf8Bytes / 4);
+++
+++  return {
+++    markdown: rendered.markdown,
+++    utf8Bytes,
+++    baselineBytes: ir.baselineBytes,
+++    savedBytes,
+++    savedRatio,
+++    estimatedTokens,
+++    stats: rendered.stats,
+++  };
+++}
++diff --git a/apps/app/src/app/lib/markdown-export/structured-compact.ts b/apps/app/src/app/lib/markdown-export/structured-compact.ts
++new file mode 100644
++index 00000000..e8155f76
++--- /dev/null
+++++ b/apps/app/src/app/lib/markdown-export/structured-compact.ts
++@@ -0,0 +1,281 @@
+++import { utf8ByteLength } from "./hash-and-bytes";
+++
+++export const TOON_HEADER_LINE = "# TOON-JSON v1 (lossless tabular JSON)";
+++
+++const MAX_COMPACT_INPUT_CHARS = 140;
+++const MIN_TOON_ROWS = 4;
+++const MIN_TOON_SAVED_BYTES = 120;
+++const MIN_TOON_SAVED_RATIO = 0.15;
+++
+++export function isPlainObject(value: unknown): value is Record<string, unknown> {
+++  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+++  const proto = Object.getPrototypeOf(value);
+++  return proto === Object.prototype || proto === null;
+++}
+++
+++export function normalizeNewlines(value: string): string {
+++  return value.replace(/\r\n?/g, "\n");
+++}
+++
+++/**
+++ * Compute a backtick code fence guaranteed to be strictly longer than any
+++ * contiguous run of backticks inside `content`, preventing Markdown injection
+++ * or broken code blocks even when exporting conversations containing Markdown.
+++ */
+++export function fenceMarkdownCode(
+++  content: string,
+++  language = "",
+++  preserveTrailingNewline = false,
+++): string {
+++  const normalized = normalizeNewlines(content);
+++  let longestRun = 0;
+++  let currentRun = 0;
+++  for (let i = 0; i < normalized.length; i += 1) {
+++    if (normalized.charCodeAt(i) === 96 /* ` */) {
+++      currentRun += 1;
+++      if (currentRun > longestRun) longestRun = currentRun;
+++    } else {
+++      currentRun = 0;
+++    }
+++  }
+++  const fence = "`".repeat(Math.max(3, longestRun + 1));
+++  const safeLang = language.replace(/`/g, "").trim();
+++  const body =
+++    !preserveTrailingNewline && normalized.endsWith("\n")
+++      ? normalized.slice(0, -1)
+++      : normalized;
+++  return `${fence}${safeLang}\n${body}\n${fence}`;
+++}
+++
+++export function safeJsonStringify(value: unknown, space: number | undefined = 2): string {
+++  const seen = new WeakSet<object>();
+++  try {
+++    const serialized = JSON.stringify(
+++      value,
+++      (_key, current: unknown) => {
+++        if (typeof current === "bigint") return current.toString();
+++        if (typeof current === "object" && current !== null) {
+++          if (seen.has(current)) return "[Circular]";
+++          seen.add(current);
+++        }
+++        return current;
+++      },
+++      space,
+++    );
+++    return typeof serialized === "string" ? serialized : String(value);
+++  } catch {
+++    return String(value);
+++  }
+++}
+++
+++function isJsonPrimitive(value: unknown): value is string | number | boolean | null {
+++  if (value === null) return true;
+++  const t = typeof value;
+++  if (t === "string" || t === "boolean") return true;
+++  if (t === "number") return Number.isFinite(value);
+++  return false;
+++}
+++
+++/**
+++ * Render small, single-line-friendly tool `input` objects on one line (`{"filePath": "a.ts", "offset": 1}`)
+++ * when `<= 140` chars and free of embedded newlines. Returns `null` when multi-line pretty JSON is clearer.
+++ */
+++export function tryFormatCompactJsonInput(input: Record<string, unknown>): string | null {
+++  const keys = Object.keys(input);
+++  if (keys.length === 0 || keys.length > 6) return null;
+++  for (const key of keys) {
+++    const val = input[key];
+++    if (!isJsonPrimitive(val)) return null;
+++    if (typeof val === "string" && (val.includes("\n") || val.includes("\r") || val.length > 96)) {
+++      return null;
+++    }
+++  }
+++  const parts = keys.map((key) => `${JSON.stringify(key)}: ${JSON.stringify(input[key])}`);
+++  const compact = `{${parts.join(", ")}}`;
+++  return compact.length <= MAX_COMPACT_INPUT_CHARS ? compact : null;
+++}
+++
+++function checkUniformPrimitiveRows(rows: unknown[]): { keys: string[]; objects: Record<string, unknown>[] } | null {
+++  if (rows.length < MIN_TOON_ROWS) return null;
+++  const first = rows[0];
+++  if (!isPlainObject(first)) return null;
+++  const keys = Object.keys(first);
+++  if (keys.length === 0 || keys.length > 24) return null;
+++
+++  const objects: Record<string, unknown>[] = [];
+++  for (const item of rows) {
+++    if (!isPlainObject(item)) return null;
+++    const itemKeys = Object.keys(item);
+++    if (itemKeys.length !== keys.length) return null;
+++    for (let i = 0; i < keys.length; i += 1) {
+++      const k = keys[i]!;
+++      if (itemKeys[i] !== k) return null;
+++      if (!isJsonPrimitive(item[k])) return null;
+++    }
+++    objects.push(item);
+++  }
+++  return { keys, objects };
+++}
+++
+++/**
+++ * Encode uniform JSON object arrays (either top-level `[...]` or a plain wrapper
+++ * object with primitive metadata fields + exactly one uniform object array) into a
+++ * strictly lossless, deterministic TOON-JSON v1 table.
+++ *
+++ * Returns `null` unless the structure is 100% lossless-eligible AND passes the
+++ * Net-Win Gate (`>= 120` bytes and `>= 15%` smaller than pretty-printed JSON).
+++ */
+++export function tryEncodeLosslessToon(parsedJson: unknown, prettyJsonBaseline: string): string | null {
+++  let candidateLines: string[] | null = null;
+++
+++  if (Array.isArray(parsedJson)) {
+++    const uniform = checkUniformPrimitiveRows(parsedJson);
+++    if (!uniform) return null;
+++    const headerCols = uniform.keys.map((k) => JSON.stringify(k)).join(",");
+++    candidateLines = [
+++      TOON_HEADER_LINE,
+++      `[${uniform.objects.length}]{${headerCols}}:`,
+++      ...uniform.objects.map(
+++        (row) => `  ${uniform.keys.map((k) => JSON.stringify(row[k])).join(",")}`,
+++      ),
+++    ];
+++  } else if (isPlainObject(parsedJson)) {
+++    const entries = Object.entries(parsedJson);
+++    if (entries.length === 0 || entries.length > 8) return null;
+++    let arrayEntryIndex = -1;
+++    for (let i = 0; i < entries.length; i += 1) {
+++      const [, val] = entries[i]!;
+++      if (Array.isArray(val)) {
+++        if (arrayEntryIndex !== -1) return null;
+++        arrayEntryIndex = i;
+++      } else if (!isJsonPrimitive(val)) {
+++        return null;
+++      }
+++    }
+++    if (arrayEntryIndex === -1) return null;
+++    const [arrayKey, rawRows] = entries[arrayEntryIndex]!;
+++    const uniform = checkUniformPrimitiveRows(rawRows as unknown[]);
+++    if (!uniform) return null;
+++
+++    const lines: string[] = [TOON_HEADER_LINE];
+++    for (let i = 0; i < entries.length; i += 1) {
+++      const [key, val] = entries[i]!;
+++      if (i === arrayEntryIndex) {
+++        const headerCols = uniform.keys.map((k) => JSON.stringify(k)).join(",");
+++        lines.push(`${JSON.stringify(arrayKey)}[${uniform.objects.length}]{${headerCols}}:`);
+++        for (const row of uniform.objects) {
+++          lines.push(`  ${uniform.keys.map((k) => JSON.stringify(row[k])).join(",")}`);
+++        }
+++      } else {
+++        lines.push(`${JSON.stringify(key)}: ${JSON.stringify(val)}`);
+++      }
+++    }
+++    candidateLines = lines;
+++  }
+++
+++  if (!candidateLines) return null;
+++  const encoded = candidateLines.join("\n");
+++  const baselineBytes = utf8ByteLength(prettyJsonBaseline);
+++  const encodedBytes = utf8ByteLength(encoded);
+++  const saved = baselineBytes - encodedBytes;
+++  if (saved < MIN_TOON_SAVED_BYTES || saved / baselineBytes < MIN_TOON_SAVED_RATIO) {
+++    return null;
+++  }
+++  return encoded;
+++}
+++
+++/**
+++ * Parse a comma-separated sequence of `JSON.stringify` tokens on a single line.
+++ */
+++function parseJsonTupleLine(line: string): unknown[] {
+++  const parsed: unknown = JSON.parse(`[${line}]`);
+++  if (!Array.isArray(parsed)) {
+++    throw new Error("Invalid TOON tuple row");
+++  }
+++  return parsed;
+++}
+++
+++/**
+++ * Decode a `TOON-JSON v1` block back into the exact original JS value
+++ * (`Array<Record<string, unknown>>` or wrapper `Record<string, unknown>`).
+++ */
+++export function decodeLosslessToon(toonText: string): unknown {
+++  const lines = normalizeNewlines(toonText).trim().split("\n");
+++  if (lines[0]?.trim() !== TOON_HEADER_LINE) {
+++    throw new Error("Missing TOON-JSON v1 header");
+++  }
+++
+++  const rootArrayMatch = /^\[(\d+)\]\{(.+)\}:$/.exec(lines[1]?.trim() ?? "");
+++  if (rootArrayMatch) {
+++    const expectedCount = Number(rootArrayMatch[1]);
+++    const keys = parseJsonTupleLine(rootArrayMatch[2]!) as string[];
+++    const rows: Record<string, unknown>[] = [];
+++    for (let i = 2; i < lines.length; i += 1) {
+++      const rawRow = lines[i]!;
+++      if (!rawRow.trim()) continue;
+++      if (!rawRow.startsWith("  ")) {
+++        throw new Error(`Unexpected root TOON row indentation at line ${i + 1}`);
+++      }
+++      const values = parseJsonTupleLine(rawRow.slice(2));
+++      if (values.length !== keys.length) {
+++        throw new Error(`TOON row column count mismatch at line ${i + 1}`);
+++      }
+++      const obj: Record<string, unknown> = {};
+++      for (let c = 0; c < keys.length; c += 1) {
+++        obj[keys[c]!] = values[c];
+++      }
+++      rows.push(obj);
+++    }
+++    if (rows.length !== expectedCount) {
+++      throw new Error(`TOON row count mismatch: expected ${expectedCount}, got ${rows.length}`);
+++    }
+++    return rows;
+++  }
+++
+++  const result: Record<string, unknown> = {};
+++  let idx = 1;
+++  while (idx < lines.length) {
+++    const line = lines[idx]!;
+++    if (!line.trim()) {
+++      idx += 1;
+++      continue;
+++    }
+++    const tableFieldMatch = /^("(?:[^"\\]|\\.)*")\[(\d+)\]\{(.+)\}:$/.exec(line.trim());
+++    if (tableFieldMatch) {
+++      const fieldKey = JSON.parse(tableFieldMatch[1]!) as string;
+++      const expectedCount = Number(tableFieldMatch[2]);
+++      const keys = parseJsonTupleLine(tableFieldMatch[3]!) as string[];
+++      const rows: Record<string, unknown>[] = [];
+++      idx += 1;
+++      for (let r = 0; r < expectedCount; r += 1) {
+++        const rowLine = lines[idx];
+++        if (rowLine === undefined || !rowLine.startsWith("  ")) {
+++          throw new Error(`Missing indented TOON row for field ${fieldKey}`);
+++        }
+++        const values = parseJsonTupleLine(rowLine.slice(2));
+++        if (values.length !== keys.length) {
+++          throw new Error(`Column count mismatch in TOON field ${fieldKey}`);
+++        }
+++        const obj: Record<string, unknown> = {};
+++        for (let c = 0; c < keys.length; c += 1) {
+++          obj[keys[c]!] = values[c];
+++        }
+++        rows.push(obj);
+++        idx += 1;
+++      }
+++      result[fieldKey] = rows;
+++      continue;
+++    }
+++
+++    const kvMatch = /^("(?:[^"\\]|\\.)*"):\s+(.+)$/.exec(line.trim());
+++    if (!kvMatch) {
+++      throw new Error(`Invalid TOON wrapper property line: ${line}`);
+++    }
+++    const propKey = JSON.parse(kvMatch[1]!) as string;
+++    const propVal: unknown = JSON.parse(kvMatch[2]!);
+++    result[propKey] = propVal;
+++    idx += 1;
+++  }
+++
+++  return result;
+++}
++diff --git a/apps/app/src/app/lib/markdown-export/types.ts b/apps/app/src/app/lib/markdown-export/types.ts
++new file mode 100644
++index 00000000..b5d949e1
++--- /dev/null
+++++ b/apps/app/src/app/lib/markdown-export/types.ts
++@@ -0,0 +1,194 @@
+++import type {
+++  AssistantMessage,
+++  Message,
+++  Part,
+++  Session,
+++  Todo,
+++  ToolPart,
+++} from "@opencode-ai/sdk/v2/client";
+++
+++export type ExportableSessionMessage = {
+++  info: Message;
+++  parts: Part[];
+++};
+++
+++export type ExportableSessionTree = {
+++  session: Session;
+++  messages: ExportableSessionMessage[];
+++  todos?: Todo[];
+++  /** Child sub-agent sessions keyed by their OpenCode session ID (`task` tool `state.metadata.sessionId`). */
+++  subagentSessions?: ReadonlyMap<string, ExportableSessionTree>;
+++};
+++
+++export type ParsedExportSlashCommand = {
+++  /** Optional relative path inside the workspace (`/export notes/chat.md`), or `null` for direct Downloads export. */
+++  filename: string | null;
+++};
+++
+++export type RelativeExportPathValidation =
+++  | { ok: true; relativePath: string }
+++  | { ok: false; reason: string };
+++
+++/**
+++ * Deterministic compression profiles:
+++ * - `"off"`: raw formatted transcript without deduplication or compaction
+++ * - `"lossless"`: strictly reversible deduplication, range containment, post-edit file deltas, Read prefix stripping, compact small JSON inputs, and lossless TOON tables
+++ * - `"smart"`: Stage 2 CLI/log noise reduction layered on top of `"lossless"`
+++ * - `"stubs"`: Stage 2 compact stubs for superseded intermediate reads layered on top of `"smart"`
+++ */
+++export type CompressionMode = "off" | "lossless" | "smart" | "stubs";
+++
+++export type ExportMarkdownOptions = {
+++  includeToolCalls: boolean;
+++  includeReasoning: boolean;
+++  compression: CompressionMode;
+++};
+++
+++/**
+++ * Default options for the interactive Export Markdown dialog (all three
+++ * checkboxes enabled, lossless compression selected).
+++ */
+++export const DEFAULT_EXPORT_MARKDOWN_OPTIONS: Readonly<ExportMarkdownOptions> = {
+++  includeToolCalls: true,
+++  includeReasoning: true,
+++  compression: "lossless",
+++};
+++
+++/**
+++ * Default options when `formatSessionAsMarkdown(tree)` is called programmatically
+++ * without explicit options (preserves raw uncompressed output compatibility).
+++ */
+++export const RAW_EXPORT_MARKDOWN_OPTIONS: Readonly<ExportMarkdownOptions> = {
+++  includeToolCalls: true,
+++  includeReasoning: true,
+++  compression: "off",
+++};
+++
+++export type ReadFooterKind = "none" | "eof" | "partial" | "capped_50kb" | "more_lines";
+++
+++export type CanonicalReadFile = {
+++  envelopeVersion: "v1" | "v2";
+++  /** Display file path (from `<path>` tag or tool input). */
+++  displayPath: string;
+++  /** Workspace-normalized path key for matching re-reads across turns. */
+++  comparablePath: string;
+++  /** Syntax-highlighting fence language inferred from file extension (`"ts"`, `"py"`, `""`, etc.). */
+++  fenceLanguage: string;
+++  /** Stripped file lines without `00001| ` or `1: ` prefixes. */
+++  lines: string[];
+++  /** Joined `lines.join("\n")`. */
+++  cleanBody: string;
+++  /** Full 64-hex SHA-256 of `cleanBody`. */
+++  cleanBodySha256: string;
+++  firstLine: number;
+++  lastLine: number;
+++  totalLines?: number;
+++  truncated: boolean;
+++  footerKind: ReadFooterKind;
+++};
+++
+++export type CanonicalToolPartIR = {
+++  kind: "tool";
+++  /** Deterministic document-order call ID (`"c001"`, `"c002"`, ...). */
+++  callRefId: string;
+++  /** Human-readable turn locator (`"Turn 1"`, `"Turn 2.1"`, ...). */
+++  turnLabel: string;
+++  part: ToolPart;
+++  displayName: string;
+++  stateTitle: string;
+++  statusSuffix: string;
+++  hasInput: boolean;
+++  prettyInputJson: string | null;
+++  compactInputJson: string | null;
+++  pendingRawInput: string | null;
+++  /** Normalized (`\n`, `trimEnd()`) completed/live output text when present. */
+++  normalizedOutput: string | null;
+++  outputSha256: string | null;
+++  outputBytes: number;
+++  outputLineCount: number;
+++  /** Parsed JSON value when `normalizedOutput` is valid JSON object/array. */
+++  parsedOutputJson: unknown | undefined;
+++  prettyOutputJson: string | null;
+++  /** Parsed OpenCode Read file envelope when strictly matched. */
+++  canonicalRead: CanonicalReadFile | null;
+++  errorText: string | null;
+++  attachmentLabels: string[];
+++  /** Nested sub-agent session node when this `task` call spawned a child session. */
+++  subagent: CanonicalSubagentIR | null;
+++};
+++
+++export type CanonicalSubagentIR = {
+++  label: string;
+++  headingDepth: number;
+++  node: CanonicalSessionNodeIR;
+++};
+++
+++export type CanonicalMessagePartIR =
+++  | { kind: "reasoning"; text: string }
+++  | { kind: "text"; text: string }
+++  | { kind: "attachments"; labels: string[] }
+++  | CanonicalToolPartIR
+++  | { kind: "subtask"; agent: string; description: string; prompt: string | null }
+++  | { kind: "patch"; files: string[] }
+++  | { kind: "agent"; name: string }
+++  | { kind: "retry"; attempt: number; formattedError: string | null }
+++  | { kind: "compaction"; auto: boolean };
+++
+++export type CanonicalMessageIR = {
+++  info: Message;
+++  turnLabel: string;
+++  parts: CanonicalMessagePartIR[];
+++  assistantError: AssistantMessage["error"] | undefined;
+++  formattedAssistantError: string | null;
+++};
+++
+++export type CanonicalSessionNodeIR = {
+++  session: Session;
+++  headingDepth: number;
+++  messages: CanonicalMessageIR[];
+++};
+++
+++export type CanonicalTranscriptIR = {
+++  root: CanonicalSessionNodeIR;
+++  todos: Todo[];
+++  models: string[];
+++  totalInputTokens: number;
+++  totalOutputTokens: number;
+++  totalReasoningTokens: number;
+++  totalCost: number;
+++  /** Cached UTF-8 byte count of the full uncompressed transcript (`includeToolCalls: true, includeReasoning: true, compression: "off"`). */
+++  baselineBytes: number;
+++};
+++
+++export type CompressionStats = {
+++  exactDedupCount: number;
+++  rangeRefCount: number;
+++  deltaCount: number;
+++  canonicalReadCount: number;
+++  compactJsonCount: number;
+++  toonTableCount: number;
+++  anchorCount: number;
+++  savedBytesByDedup: number;
+++  savedBytesByRange: number;
+++  savedBytesByDelta: number;
+++  savedBytesByStructured: number;
+++};
+++
+++export type ExportRenderResult = {
+++  markdown: string;
+++  utf8Bytes: number;
+++  baselineBytes: number;
+++  savedBytes: number;
+++  savedRatio: number;
+++  estimatedTokens: number;
+++  stats: CompressionStats;
+++};
+++
+++export type ExpandedLosslessBlock = {
+++  kind: "source" | "exact_ref" | "range_ref" | "delta_ref" | "toon_table";
+++  anchorId?: string;
+++  targetAnchorId?: string;
+++  expectedSha256Prefix?: string;
+++  reconstructedText: string;
+++  actualSha256: string;
+++};
++diff --git a/apps/app/src/app/lib/session-markdown-export.ts b/apps/app/src/app/lib/session-markdown-export.ts
++new file mode 100644
++index 00000000..14a24565
++--- /dev/null
+++++ b/apps/app/src/app/lib/session-markdown-export.ts
++@@ -0,0 +1,233 @@
+++import type { Session } from "@opencode-ai/sdk/v2/client";
+++
+++import {
+++  extractChildSessionId,
+++  filterVisibleBranchMessages,
+++  inferFenceLanguageFromPath,
+++  normalizeComparableFilePath,
+++  parseCanonicalReadEnvelope,
+++} from "./markdown-export/canonicalize";
+++import { applyLosslessFileDelta, computeLosslessFileDelta } from "./markdown-export/file-delta";
+++import { sha256Hex, shortSha256, utf8ByteLength } from "./markdown-export/hash-and-bytes";
+++import { expandLosslessMarkdown, verifyLosslessRoundTrip } from "./markdown-export/lossless-expander";
+++import { buildCanonicalTranscriptIR, renderTranscriptFromIR } from "./markdown-export/render-markdown";
+++import {
+++  decodeLosslessToon,
+++  fenceMarkdownCode,
+++  tryEncodeLosslessToon,
+++  tryFormatCompactJsonInput,
+++} from "./markdown-export/structured-compact";
+++import {
+++  DEFAULT_EXPORT_MARKDOWN_OPTIONS,
+++  RAW_EXPORT_MARKDOWN_OPTIONS,
+++  type CanonicalMessageIR,
+++  type CanonicalMessagePartIR,
+++  type CanonicalReadFile,
+++  type CanonicalSessionNodeIR,
+++  type CanonicalSubagentIR,
+++  type CanonicalToolPartIR,
+++  type CanonicalTranscriptIR,
+++  type CompressionMode,
+++  type CompressionStats,
+++  type ExpandedLosslessBlock,
+++  type ExportableSessionMessage,
+++  type ExportableSessionTree,
+++  type ExportMarkdownOptions,
+++  type ExportRenderResult,
+++  type ParsedExportSlashCommand,
+++  type ReadFooterKind,
+++  type RelativeExportPathValidation,
+++} from "./markdown-export/types";
+++
+++export {
+++  applyLosslessFileDelta,
+++  buildCanonicalTranscriptIR,
+++  computeLosslessFileDelta,
+++  decodeLosslessToon,
+++  DEFAULT_EXPORT_MARKDOWN_OPTIONS,
+++  expandLosslessMarkdown,
+++  fenceMarkdownCode,
+++  filterVisibleBranchMessages,
+++  inferFenceLanguageFromPath,
+++  normalizeComparableFilePath,
+++  parseCanonicalReadEnvelope,
+++  RAW_EXPORT_MARKDOWN_OPTIONS,
+++  renderTranscriptFromIR,
+++  sha256Hex,
+++  shortSha256,
+++  tryEncodeLosslessToon,
+++  tryFormatCompactJsonInput,
+++  utf8ByteLength,
+++  verifyLosslessRoundTrip,
+++};
+++
+++export type {
+++  CanonicalMessageIR,
+++  CanonicalMessagePartIR,
+++  CanonicalReadFile,
+++  CanonicalSessionNodeIR,
+++  CanonicalSubagentIR,
+++  CanonicalToolPartIR,
+++  CanonicalTranscriptIR,
+++  CompressionMode,
+++  CompressionStats,
+++  ExpandedLosslessBlock,
+++  ExportableSessionMessage,
+++  ExportableSessionTree,
+++  ExportMarkdownOptions,
+++  ExportRenderResult,
+++  ParsedExportSlashCommand,
+++  ReadFooterKind,
+++  RelativeExportPathValidation,
+++};
+++
+++const MAX_SLUG_UTF8_BYTES = 64;
+++
+++/**
+++ * Format a full OmniRush chat session/branch (including model reasoning,
+++ * tool calls with JSON inputs & outputs, errors, attachments, todos, and
+++ * nested sub-agent sessions) as a standalone Markdown document.
+++ *
+++ * When `options` is omitted, renders the raw uncompressed transcript for
+++ * backward compatibility; pass `{ compression: "lossless" }` (or
+++ * `DEFAULT_EXPORT_MARKDOWN_OPTIONS`) to run the deterministic lossless pipeline.
+++ */
+++export function formatSessionAsMarkdown(
+++  tree: ExportableSessionTree,
+++  options?: Partial<ExportMarkdownOptions>,
+++): string {
+++  const ir = buildCanonicalTranscriptIR(tree);
+++  return renderTranscriptFromIR(ir, options).markdown;
 ++}
 ++
 ++function truncateUtf8ByCodePoint(input: string, maxBytes: number): string {
-++  const encoder = new TextEncoder();
-++  if (encoder.encode(input).byteLength <= maxBytes) return input;
+++  if (utf8ByteLength(input) <= maxBytes) return input;
 ++  let result = "";
 ++  let usedBytes = 0;
 ++  for (const ch of input) {
-++    const chunkBytes = encoder.encode(ch).byteLength;
+++    const chunkBytes = utf8ByteLength(ch);
 ++    if (usedBytes + chunkBytes > maxBytes) break;
 ++    result += ch;
 ++    usedBytes += chunkBytes;
@@ -5644,6 +8063,593 @@ index 00000000..ffac05c1
 +       listAgents={listAgents}
 +       selectedAgent={selectedAgent}
 +       onSelectAgent={setSelectedAgent}
++diff --git a/apps/app/tests/markdown-export-lossless.test.ts b/apps/app/tests/markdown-export-lossless.test.ts
++new file mode 100644
++index 00000000..188e4043
++--- /dev/null
+++++ b/apps/app/tests/markdown-export-lossless.test.ts
++@@ -0,0 +1,581 @@
+++import { describe, expect, test } from "bun:test";
+++import type { AssistantMessage, Part, Session, UserMessage } from "@opencode-ai/sdk/v2/client";
+++
+++import {
+++  applyLosslessFileDelta,
+++  buildCanonicalTranscriptIR,
+++  computeLosslessFileDelta,
+++  decodeLosslessToon,
+++  DEFAULT_EXPORT_MARKDOWN_OPTIONS,
+++  expandLosslessMarkdown,
+++  formatSessionAsMarkdown,
+++  parseCanonicalReadEnvelope,
+++  renderTranscriptFromIR,
+++  sha256Hex,
+++  tryEncodeLosslessToon,
+++  tryFormatCompactJsonInput,
+++  utf8ByteLength,
+++  verifyLosslessRoundTrip,
+++  type ExportableSessionMessage,
+++  type ExportableSessionTree,
+++} from "../src/app/lib/session-markdown-export";
+++
+++function makeSession(overrides: Partial<Session> = {}): Session {
+++  return {
+++    id: "ses_lossless_01",
+++    slug: "lossless-export",
+++    projectID: "proj_1",
+++    directory: "/workspace/omnirush-gui",
+++    title: "Lossless Markdown Compression",
+++    version: "2.0.0",
+++    time: {
+++      created: Date.UTC(2026, 9, 30, 10, 0, 0),
+++      updated: Date.UTC(2026, 9, 30, 10, 30, 0),
+++    },
+++    ...overrides,
+++  };
+++}
+++
+++function makeUser(id: string, sessionID: string, text: string): ExportableSessionMessage {
+++  const info: UserMessage = {
+++    id,
+++    sessionID,
+++    role: "user",
+++    time: { created: Date.UTC(2026, 9, 30, 10, 0, 0) },
+++    agent: "build",
+++    model: { providerID: "anthropic", modelID: "claude-sonnet-4-5" },
+++  };
+++  return {
+++    info,
+++    parts: [{ id: `${id}_p1`, sessionID, messageID: id, type: "text", text }],
+++  };
+++}
+++
+++function makeAssistant(
+++  id: string,
+++  sessionID: string,
+++  parentID: string,
+++  parts: Part[],
+++): ExportableSessionMessage {
+++  const info: AssistantMessage = {
+++    id,
+++    sessionID,
+++    role: "assistant",
+++    parentID,
+++    time: {
+++      created: Date.UTC(2026, 9, 30, 10, 1, 0),
+++      completed: Date.UTC(2026, 9, 30, 10, 2, 0),
+++    },
+++    modelID: "claude-sonnet-4-5",
+++    providerID: "anthropic",
+++    mode: "build",
+++    agent: "build",
+++    path: { cwd: "/workspace/omnirush-gui", root: "/workspace/omnirush-gui" },
+++    cost: 0.025,
+++    tokens: {
+++      input: 2000,
+++      output: 600,
+++      reasoning: 400,
+++      cache: { read: 0, write: 0 },
+++    },
+++  };
+++  return { info, parts };
+++}
+++
+++function makeV2ReadOutput(
+++  filePath: string,
+++  lines: string[],
+++  startLine = 1,
+++  footer?: string,
+++): string {
+++  const numbered = lines.map((line, idx) => `${startLine + idx}: ${line}`).join("\n");
+++  const effectiveFooter = footer ?? `(End of file - total ${startLine + lines.length - 1} lines)`;
+++  return `<path>${filePath}</path>\n<type>file</type>\n<content>\n${numbered}\n\n${effectiveFooter}\n</content>`;
+++}
+++
+++function makeV1ReadOutput(lines: string[], startLine = 1, footer?: string): string {
+++  const numbered = lines
+++    .map((line, idx) => `${String(startLine + idx).padStart(5, "0")}| ${line}`)
+++    .join("\n");
+++  const effectiveFooter = footer ?? `(End of file - total ${startLine + lines.length - 1} lines)`;
+++  return `<file>\n${numbered}\n\n${effectiveFooter}\n</file>`;
+++}
+++
+++describe("markdown-export Stage 1 lossless engine", () => {
+++  test("sha256Hex and utf8ByteLength match WebCrypto and TextEncoder across ASCII, Cyrillic, emoji, and lone surrogates", async () => {
+++    const encoder = new TextEncoder();
+++    const samples = [
+++      "",
+++      "abc",
+++      "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+++      "a".repeat(257),
+++      "Привет, мир! 🚀🧪漢字",
+++      "lone-high-\uD800-and-lone-low-\uDC00-and-pair-\uD83D\uDE80",
+++    ];
+++
+++    for (const sample of samples) {
+++      const encoded = encoder.encode(sample);
+++      expect(utf8ByteLength(sample)).toBe(encoded.byteLength);
+++
+++      const digestBuf = await crypto.subtle.digest("SHA-256", encoded);
+++      const expectedHex = Array.from(new Uint8Array(digestBuf), (b) =>
+++        b.toString(16).padStart(2, "0"),
+++      ).join("");
+++      expect(sha256Hex(sample)).toBe(expectedHex);
+++    }
+++  });
+++
+++  test("strictly canonicalizes OpenCode v1 and v2 Read file envelopes while rejecting directories and malformed lines", () => {
+++    const sampleLines = [
+++      'import { createServer } from "node:http";',
+++      "",
+++      "export function start(port: number) {",
+++      "  return createServer().listen(port);",
+++      "}",
+++      "",
+++    ];
+++
+++    const v2 = parseCanonicalReadEnvelope({
+++      toolName: "read",
+++      rawOutput: makeV2ReadOutput("/workspace/omnirush-gui/src/server.ts", sampleLines, 1),
+++      input: { filePath: "/workspace/omnirush-gui/src/server.ts" },
+++      workspaceRoot: "/workspace/omnirush-gui",
+++    });
+++    expect(v2).not.toBeNull();
+++    expect(v2!.comparablePath).toBe("src/server.ts");
+++    expect(v2!.fenceLanguage).toBe("ts");
+++    expect(v2!.lines).toEqual(sampleLines);
+++    expect(v2!.firstLine).toBe(1);
+++    expect(v2!.lastLine).toBe(6);
+++    expect(v2!.footerKind).toBe("eof");
+++
+++    const v1 = parseCanonicalReadEnvelope({
+++      toolName: "read",
+++      rawOutput: makeV1ReadOutput(sampleLines, 1),
+++      input: { filePath: "./src/server.ts" },
+++      workspaceRoot: "/workspace/omnirush-gui",
+++    });
+++    expect(v1).not.toBeNull();
+++    expect(v1!.comparablePath).toBe("src/server.ts");
+++    expect(v1!.cleanBodySha256).toBe(v2!.cleanBodySha256);
+++
+++    // Directory listings must NOT be misclassified as file bodies
+++    const dirEnvelope = `<path>/workspace/src</path>\n<type>directory</type>\n<entries>\nserver.ts\n(1 entries)\n</entries>`;
+++    expect(
+++      parseCanonicalReadEnvelope({
+++        toolName: "read",
+++        rawOutput: dirEnvelope,
+++        input: { filePath: "/workspace/src" },
+++      }),
+++    ).toBeNull();
+++
+++    // Non-contiguous line numbers must bail out safely
+++    const broken = `<file>\n00001| first\n00003| jumped\n</file>`;
+++    expect(
+++      parseCanonicalReadEnvelope({
+++        toolName: "read",
+++        rawOutput: broken,
+++        input: { filePath: "broken.txt" },
+++      }),
+++    ).toBeNull();
+++  });
+++
+++  test("round-trips lossless file deltas even with embedded @@ directives, backticks, and trailing blank lines", () => {
+++    const baseLines = Array.from({ length: 80 }, (_, idx) => `const line_${idx + 1} = ${idx + 1};`);
+++    baseLines.push("");
+++
+++    const targetLines = [...baseLines];
+++    targetLines.splice(
+++      35,
+++      2,
+++      'const updated = "new value";',
+++      "@@ keep base 1..999 (999 unchanged lines) @@",
+++      "const markdownFence = '```diff';",
+++    );
+++
+++    const targetSha = sha256Hex(targetLines.join("\n"));
+++    const delta = computeLosslessFileDelta(baseLines, targetLines, targetSha);
+++    expect(delta).not.toBeNull();
+++    expect(delta!).toContain("@@ keep base ");
+++    expect(delta!).toContain("+@@ keep base 1..999 (999 unchanged lines) @@");
+++
+++    const reconstructed = applyLosslessFileDelta(baseLines, delta!);
+++    expect(reconstructed).toEqual(targetLines);
+++    expect(sha256Hex(reconstructed.join("\n"))).toBe(targetSha);
+++  });
+++
+++  test("encodes and decodes TOON-JSON v1 losslessly while preserving primitive types and skipping irregular JSON", () => {
+++    const wrapperPayload = {
+++      status: "ok",
+++      total: 6,
+++      diagnostics: [
+++        { id: "1", line: 12, fatal: false, code: "TS2322", message: 'Type "123" is not assignable, see docs', hint: null },
+++        { id: "2", line: 45, fatal: true, code: "TS2304", message: "Cannot find name 'window'", hint: "dom" },
+++        { id: "3", line: 88, fatal: false, code: "TS6133", message: "'unused' is declared but never read", hint: null },
+++        { id: "4", line: 102, fatal: false, code: "TS7006", message: "Parameter 'x' implicitly has an 'any' type", hint: null },
+++        { id: "5", line: 149, fatal: true, code: "TS2554", message: "Expected 2 arguments, but got 1", hint: "check sig" },
+++        { id: "6", line: 210, fatal: false, code: "TS18048", message: "'item' is possibly 'undefined'", hint: null },
+++      ],
+++    };
+++
+++    const pretty = JSON.stringify(wrapperPayload, null, 2);
+++    const toon = tryEncodeLosslessToon(wrapperPayload, pretty);
+++    expect(toon).not.toBeNull();
+++    expect(decodeLosslessToon(toon!)).toEqual(wrapperPayload);
+++
+++    // Irregular keys or nested objects must return null so standard JSON is preserved
+++    const irregular = [
+++      { id: 1, nested: { a: 1 } },
+++      { id: 2, nested: { a: 2 } },
+++      { id: 3, nested: { a: 3 } },
+++      { id: 4, nested: { a: 4 } },
+++    ];
+++    expect(tryEncodeLosslessToon(irregular, JSON.stringify(irregular, null, 2))).toBeNull();
+++
+++    expect(tryFormatCompactJsonInput({ filePath: "src/auth.ts", offset: 1, limit: 100 })).toBe(
+++      '{"filePath": "src/auth.ts", "offset": 1, "limit": 100}',
+++    );
+++    expect(tryFormatCompactJsonInput({ content: "line1\nline2" })).toBeNull();
+++  });
+++
+++  test("compresses multi-turn + subagent transcript losslessly, verifies 100% SHA-256 round-trip, respects Undo, and emits English-only service text", () => {
+++    const sourceFileLines = Array.from(
+++      { length: 90 },
+++      (_, idx) => `export const configValue_${String(idx + 1).padStart(3, "0")} = "setting_${idx + 1}_with_realistic_padding";`,
+++    );
+++    // Include triple backticks and trailing blank line inside the source file
+++    sourceFileLines[10] = 'export const docComment = "Example:\\n```ts\\nconst x = 1;\\n```";';
+++    sourceFileLines.push("");
+++
+++    const editedFileLines = [...sourceFileLines];
+++    editedFileLines[44] = 'export const configValue_045 = "UPDATED_AFTER_EDIT_045";';
+++    editedFileLines.splice(45, 0, 'export const injectedFlag = true;');
+++
+++    const repeatedBashOutput = Array.from(
+++      { length: 28 },
+++      (_, i) => `packages/module-${i + 1}/src/index.ts: clean (0 warnings, 0 errors)`,
+++    ).join("\n");
+++
+++    const uniformMcpJson = JSON.stringify(
+++      Array.from({ length: 8 }, (_, idx) => ({
+++        issueNumber: 300 + idx,
+++        state: idx % 2 === 0 ? "open" : "closed",
+++        author: `dev_${idx}`,
+++        title: `Deterministic export check #${idx + 1}`,
+++        milestone: null,
+++      })),
+++      null,
+++      2,
+++    );
+++
+++    const subagentId = "ses_child_lossless";
+++    const childTree: ExportableSessionTree = {
+++      session: makeSession({
+++        id: subagentId,
+++        parentID: "ses_lossless_01",
+++        title: "Verify config module",
+++      }),
+++      messages: [
+++        makeUser("msg_c1", subagentId, "Check src/config.ts inside subagent."),
+++        makeAssistant("msg_c2", subagentId, "msg_c1", [
+++          {
+++            id: "prt_c_reason",
+++            sessionID: subagentId,
+++            messageID: "msg_c2",
+++            type: "reasoning",
+++            text: "Re-reading the full config file in the subagent.",
+++            time: { start: 1, end: 2 },
+++          },
+++          // Exact cross-session re-read (v1 envelope matching parent's v2 envelope!)
+++          {
+++            id: "prt_c_read",
+++            sessionID: subagentId,
+++            messageID: "msg_c2",
+++            type: "tool",
+++            callID: "call_c_read",
+++            tool: "read",
+++            state: {
+++              status: "completed",
+++              input: { filePath: "src/config.ts" },
+++              output: makeV1ReadOutput(sourceFileLines, 1),
+++              title: "src/config.ts",
+++              metadata: {},
+++              time: { start: 2, end: 3 },
+++            },
+++          },
+++        ]),
+++      ],
+++    };
+++
+++    const rootTree: ExportableSessionTree = {
+++      session: makeSession({
+++        revert: { messageID: "msg_05" },
+++      }),
+++      subagentSessions: new Map([[subagentId, childTree]]),
+++      messages: [
+++        makeUser(
+++          "msg_01",
+++          "ses_lossless_01",
+++          "Inspect src/config.ts, run checks, and note this literal example:\n```markdown\n<a id=\"export-ref-c999\"></a>\n> [↩ Identical to Turn 99 · Bash · `sha256:000000000000`](#export-ref-c999)\n```",
+++        ),
+++        makeAssistant("msg_02", "ses_lossless_01", "msg_01", [
+++          {
+++            id: "prt_r1",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_02",
+++            type: "reasoning",
+++            text: "First I will read src/config.ts and run the workspace check.",
+++            time: { start: 10, end: 12 },
+++          },
+++          // 1. Initial full Read (v2 envelope)
+++          {
+++            id: "prt_t1",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_02",
+++            type: "tool",
+++            callID: "call_1",
+++            tool: "read",
+++            state: {
+++              status: "completed",
+++              input: { filePath: "/workspace/omnirush-gui/src/config.ts" },
+++              output: makeV2ReadOutput("/workspace/omnirush-gui/src/config.ts", sourceFileLines, 1),
+++              title: "src/config.ts",
+++              metadata: {},
+++              time: { start: 12, end: 15 },
+++            },
+++          },
+++          // 2. Bash output #1
+++          {
+++            id: "prt_t2",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_02",
+++            type: "tool",
+++            callID: "call_2",
+++            tool: "bash",
+++            state: {
+++              status: "completed",
+++              input: { command: "pnpm check:modules" },
+++              output: repeatedBashOutput,
+++              title: "Check modules",
+++              metadata: {},
+++              time: { start: 15, end: 18 },
+++            },
+++          },
+++          // 3. Spawn subagent (which re-reads src/config.ts)
+++          {
+++            id: "prt_t3",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_02",
+++            type: "tool",
+++            callID: "call_3",
+++            tool: "task",
+++            state: {
+++              status: "completed",
+++              input: { description: "Verify config module", subagent_type: "explore" },
+++              output: "Subagent verified src/config.ts",
+++              title: "Verify config module",
+++              metadata: { sessionId: subagentId },
+++              time: { start: 18, end: 25 },
+++            },
+++          },
+++        ]),
+++        makeUser("msg_03", "ses_lossless_01", "Now read lines 20-55, update line 45, and re-verify."),
+++        makeAssistant("msg_04", "ses_lossless_01", "msg_03", [
+++          // 4. Line-range containment Read (L20-L55 inside Turn 2's L1-L91)
+++          {
+++            id: "prt_t4",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_04",
+++            type: "tool",
+++            callID: "call_4",
+++            tool: "read",
+++            state: {
+++              status: "completed",
+++              input: { filePath: "src/config.ts", offset: 20, limit: 36 },
+++              output: makeV2ReadOutput(
+++                "/workspace/omnirush-gui/src/config.ts",
+++                sourceFileLines.slice(19, 55),
+++                20,
+++                "(Showing lines 20-55 of 91. Use offset=56 to continue.)",
+++              ),
+++              title: "src/config.ts",
+++              metadata: {},
+++              time: { start: 30, end: 31 },
+++            },
+++          },
+++          // 5. Post-edit full Read (1-hop delta against Turn 2's Read)
+++          {
+++            id: "prt_t5",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_04",
+++            type: "tool",
+++            callID: "call_5",
+++            tool: "read",
+++            state: {
+++              status: "completed",
+++              input: { filePath: "src/config.ts" },
+++              output: makeV2ReadOutput("/workspace/omnirush-gui/src/config.ts", editedFileLines, 1),
+++              title: "src/config.ts",
+++              metadata: {},
+++              time: { start: 32, end: 34 },
+++            },
+++          },
+++          // 6. Identical re-read of the edited file (exact dedup chaining onto the delta block!)
+++          {
+++            id: "prt_t6",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_04",
+++            type: "tool",
+++            callID: "call_6",
+++            tool: "read",
+++            state: {
+++              status: "completed",
+++              input: { filePath: "src/config.ts" },
+++              output: makeV2ReadOutput("/workspace/omnirush-gui/src/config.ts", editedFileLines, 1),
+++              title: "src/config.ts",
+++              metadata: {},
+++              time: { start: 35, end: 36 },
+++            },
+++          },
+++          // 7. Identical Bash output #2
+++          {
+++            id: "prt_t7",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_04",
+++            type: "tool",
+++            callID: "call_7",
+++            tool: "bash",
+++            state: {
+++              status: "completed",
+++              input: { command: "pnpm check:modules" },
+++              output: repeatedBashOutput,
+++              title: "Check modules again",
+++              metadata: {},
+++              time: { start: 36, end: 38 },
+++            },
+++          },
+++          // 8. Uniform JSON array output -> TOON table
+++          {
+++            id: "prt_t8",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_04",
+++            type: "tool",
+++            callID: "call_8",
+++            tool: "github_list_issues",
+++            state: {
+++              status: "completed",
+++              input: { repo: "omnirush-ai/omnirush-gui", limit: 8 },
+++              output: uniformMcpJson,
+++              title: "List issues",
+++              metadata: {},
+++              time: { start: 38, end: 40 },
+++            },
+++          },
+++          {
+++            id: "prt_final_text",
+++            sessionID: "ses_lossless_01",
+++            messageID: "msg_04",
+++            type: "text",
+++            text: "Configuration updated and verified.",
+++          },
+++        ]),
+++        // Reverted turn (must be completely excluded from IR and anchors)
+++        makeUser("msg_05", "ses_lossless_01", "REVERTED_TURN_MUST_NOT_APPEAR"),
+++      ],
+++    };
+++
+++    const ir = buildCanonicalTranscriptIR(rootTree);
+++    const losslessResult = renderTranscriptFromIR(ir, DEFAULT_EXPORT_MARKDOWN_OPTIONS);
+++
+++    // 1. Byte metrics and substantial net compression win
+++    expect(losslessResult.utf8Bytes).toBe(new TextEncoder().encode(losslessResult.markdown).byteLength);
+++    expect(losslessResult.baselineBytes).toBe(
+++      new TextEncoder().encode(formatSessionAsMarkdown(rootTree)).byteLength,
+++    );
+++    expect(losslessResult.utf8Bytes).toBeLessThan(losslessResult.baselineBytes * 0.6);
+++    expect(losslessResult.savedBytes).toBe(losslessResult.baselineBytes - losslessResult.utf8Bytes);
+++
+++    // 2. Verify all Stage 1 passes triggered
+++    expect(losslessResult.stats.exactDedupCount).toBe(3); // subagent Read + edited Read re-read + repeated Bash
+++    expect(losslessResult.stats.rangeRefCount).toBe(1);
+++    expect(losslessResult.stats.deltaCount).toBe(1);
+++    expect(losslessResult.stats.canonicalReadCount).toBe(1);
+++    expect(losslessResult.stats.toonTableCount).toBe(1);
+++    expect(losslessResult.stats.compactJsonCount).toBeGreaterThanOrEqual(6);
+++
+++    // 3. Reverted turn is absent, fake anchor inside user code block was NOT parsed as real anchor
+++    expect(losslessResult.markdown).not.toContain("REVERTED_TURN_MUST_NOT_APPEAR");
+++    const roundTrip = verifyLosslessRoundTrip(ir, losslessResult.markdown);
+++    expect(roundTrip.verifiedBlocks.some((b) => b.anchorId === "export-ref-c999")).toBe(false);
+++
+++    // Verify exact reconstructed payloads match original source data byte-for-byte
+++    const deltaExpanded = roundTrip.verifiedBlocks.find((b) => b.kind === "delta_ref");
+++    expect(deltaExpanded).toBeDefined();
+++    expect(deltaExpanded!.reconstructedText).toBe(editedFileLines.join("\n"));
+++
+++    const rangeExpanded = roundTrip.verifiedBlocks.find((b) => b.kind === "range_ref");
+++    expect(rangeExpanded).toBeDefined();
+++    expect(rangeExpanded!.reconstructedText).toBe(sourceFileLines.slice(19, 55).join("\n"));
+++
+++    const toonExpanded = roundTrip.verifiedBlocks.find((b) => b.kind === "toon_table");
+++    expect(toonExpanded).toBeDefined();
+++    expect(JSON.parse(toonExpanded!.reconstructedText)).toEqual(JSON.parse(uniformMcpJson));
+++
+++    // 4. Zero Russian / Cyrillic characters anywhere in exported output when session content is ASCII
+++    expect(/[\u0400-\u04FF]/.test(losslessResult.markdown)).toBe(false);
+++
+++    // 5. Filtering checkboxes (includeToolCalls / includeReasoning) recalculate live size cleanly
+++    const noTools = renderTranscriptFromIR(ir, {
+++      includeToolCalls: false,
+++      includeReasoning: true,
+++      compression: "lossless",
+++    });
+++    expect(noTools.markdown).toContain("- **Omitted:** tool calls");
+++    expect(noTools.markdown).not.toContain("**🛠");
+++    expect(noTools.markdown).toContain("> _Reasoning_");
+++    expect(noTools.utf8Bytes).toBeLessThan(losslessResult.utf8Bytes);
+++
+++    const dialogueOnly = renderTranscriptFromIR(ir, {
+++      includeToolCalls: false,
+++      includeReasoning: false,
+++      compression: "lossless",
+++    });
+++    expect(dialogueOnly.markdown).toContain("- **Omitted:** tool calls, reasoning");
+++    expect(dialogueOnly.markdown).not.toContain("> _Reasoning_");
+++    expect(dialogueOnly.utf8Bytes).toBeLessThan(noTools.utf8Bytes);
+++  });
+++
+++  test("emits zero HTML anchors when a session has no duplicate, range, or delta references", () => {
+++    const tree: ExportableSessionTree = {
+++      session: makeSession(),
+++      messages: [
+++        makeUser("m1", "ses_lossless_01", "Read a short file."),
+++        makeAssistant("m2", "ses_lossless_01", "m1", [
+++          {
+++            id: "p1",
+++            sessionID: "ses_lossless_01",
+++            messageID: "m2",
+++            type: "tool",
+++            callID: "c1",
+++            tool: "read",
+++            state: {
+++              status: "completed",
+++              input: { filePath: "src/tiny.ts" },
+++              output: makeV2ReadOutput("/workspace/omnirush-gui/src/tiny.ts", ["export const x = 1;"], 1),
+++              title: "src/tiny.ts",
+++              metadata: {},
+++              time: { start: 1, end: 2 },
+++            },
+++          },
+++        ]),
+++      ],
+++    };
+++
+++    const ir = buildCanonicalTranscriptIR(tree);
+++    const rendered = renderTranscriptFromIR(ir, DEFAULT_EXPORT_MARKDOWN_OPTIONS);
+++    expect(rendered.markdown).not.toContain("<a id=");
+++    expect(rendered.stats.anchorCount).toBe(0);
+++    expect(expandLosslessMarkdown(rendered.markdown)).toEqual([]);
+++    expect(rendered.utf8Bytes).toBeLessThanOrEqual(rendered.baselineBytes);
+++  });
+++});
 +diff --git a/apps/app/tests/session-markdown-export.test.ts b/apps/app/tests/session-markdown-export.test.ts
 +new file mode 100644
 +index 00000000..2fb18868
@@ -6306,10 +9312,10 @@ index 00000000..df604348
 +}
 diff --git a/fork/scripts/lib/patch-groups.mjs b/fork/scripts/lib/patch-groups.mjs
 new file mode 100644
-index 00000000..e09e17a2
+index 00000000..6761ff14
 --- /dev/null
 +++ b/fork/scripts/lib/patch-groups.mjs
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,162 @@
 +// The port, split into patch files. Each group is a set of paths whose diff
 +// against upstream is stored under fork/patches; keeping them apart makes a
 +// conflict easy to locate ("0003 no longer applies" is one file, not five).
@@ -6451,6 +9457,7 @@ index 00000000..e09e17a2
 +      "packages/types/src/desktop-ipc.ts",
 +      "apps/desktop/electron/save-file.mjs",
 +      "apps/desktop/electron/save-file.test.mjs",
++      "apps/app/src/app/lib/markdown-export",
 +      "apps/app/src/app/lib/session-markdown-export.ts",
 +      "apps/app/src/react-app/domains/session/commands/export-session-markdown.ts",
 +      "apps/app/src/react-app/domains/session/commands/session-command-controls.tsx",
@@ -6461,6 +9468,7 @@ index 00000000..e09e17a2
 +      "apps/app/src/i18n/locales/en.ts",
 +      "apps/app/src/i18n/locales/zh.ts",
 +      "apps/app/src/i18n/locales/ru.ts",
++      "apps/app/tests/markdown-export-lossless.test.ts",
 +      "apps/app/tests/session-markdown-export.test.ts",
 +      "docs/session-markdown-export.md",
 +    ],
