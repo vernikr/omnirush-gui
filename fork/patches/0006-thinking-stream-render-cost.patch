@@ -1,5 +1,5 @@
 diff --git a/apps/app/src/components/chat/reasoning-block.tsx b/apps/app/src/components/chat/reasoning-block.tsx
-index fd4ddec8..ab0391c5 100644
+index fd4ddec..ab0391c 100644
 --- a/apps/app/src/components/chat/reasoning-block.tsx
 +++ b/apps/app/src/components/chat/reasoning-block.tsx
 @@ -23,7 +23,7 @@ type ReasoningBlockProps = {
@@ -36,7 +36,7 @@ index fd4ddec8..ab0391c5 100644
      </Collapsible>
    )
 diff --git a/apps/app/src/components/markdown/markdown-primitive.ts b/apps/app/src/components/markdown/markdown-primitive.ts
-index 00858afa..d07f1528 100644
+index 00858af..d07f152 100644
 --- a/apps/app/src/components/markdown/markdown-primitive.ts
 +++ b/apps/app/src/components/markdown/markdown-primitive.ts
 @@ -13,7 +13,7 @@ import {
@@ -91,7 +91,7 @@ index 00858afa..d07f1528 100644
  
      return `<a href="${safe}" data-omnirush-link-href="${originalHref}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-[var(--omnirush-link,var(--indigo-10))] no-underline transition-colors hover:text-[var(--omnirush-link-hover,var(--indigo-8))]">${faviconHtml}${text}</a>`;
 diff --git a/apps/app/src/components/markdown/markdown.tsx b/apps/app/src/components/markdown/markdown.tsx
-index 51ebcf97..2dbdabee 100644
+index 51ebcf9..2dbdabe 100644
 --- a/apps/app/src/components/markdown/markdown.tsx
 +++ b/apps/app/src/components/markdown/markdown.tsx
 @@ -25,6 +25,7 @@ import {
@@ -137,7 +137,7 @@ index 51ebcf97..2dbdabee 100644
  
 diff --git a/apps/app/src/components/markdown/use-streaming-render-pace.ts b/apps/app/src/components/markdown/use-streaming-render-pace.ts
 new file mode 100644
-index 00000000..295b8352
+index 0000000..295b835
 --- /dev/null
 +++ b/apps/app/src/components/markdown/use-streaming-render-pace.ts
 @@ -0,0 +1,83 @@
@@ -225,7 +225,7 @@ index 00000000..295b8352
 +  return paced ? published : text;
 +}
 diff --git a/apps/app/src/react-app/domains/session/status/session-progress.ts b/apps/app/src/react-app/domains/session/status/session-progress.ts
-index aac67914..0502af03 100644
+index aac6791..0502af0 100644
 --- a/apps/app/src/react-app/domains/session/status/session-progress.ts
 +++ b/apps/app/src/react-app/domains/session/status/session-progress.ts
 @@ -54,6 +54,27 @@ function partFingerprint(part: UIMessage["parts"][number], value: () => unknown)
@@ -267,7 +267,7 @@ index aac67914..0502af03 100644
          parts[key] = partFingerprint(part, () => [part.state, part.input,
 diff --git a/docs/intel-mac-performance.md b/docs/intel-mac-performance.md
 new file mode 100644
-index 00000000..357dc5b5
+index 0000000..357dc5b
 --- /dev/null
 +++ b/docs/intel-mac-performance.md
 @@ -0,0 +1,116 @@
@@ -388,7 +388,7 @@ index 00000000..357dc5b5
 +   9223–9227) shows `Recalculate Style`, `Layout`, `marked` lexer frames and the
 +   GPU process' `Compositing` rows.
 diff --git a/evals/specs/streamed-markdown-answer.e2e.test.ts b/evals/specs/streamed-markdown-answer.e2e.test.ts
-index 74c644bb..93d53bfd 100644
+index 74c644b..93d53bf 100644
 --- a/evals/specs/streamed-markdown-answer.e2e.test.ts
 +++ b/evals/specs/streamed-markdown-answer.e2e.test.ts
 @@ -21,6 +21,7 @@ const blockSentinels = [

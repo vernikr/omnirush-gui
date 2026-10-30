@@ -1,5 +1,5 @@
 diff --git a/README.md b/README.md
-index 76ee16e9..6418af69 100644
+index 76ee16e..6418af6 100644
 --- a/README.md
 +++ b/README.md
 @@ -11,22 +11,20 @@
@@ -84,7 +84,7 @@ index 76ee16e9..6418af69 100644
  ## Updating
  
 diff --git a/RELEASING.md b/RELEASING.md
-index 714bd1c8..33f7853b 100644
+index 714bd1c..33f7853 100644
 --- a/RELEASING.md
 +++ b/RELEASING.md
 @@ -44,3 +44,28 @@ A run is safe to repeat. An image or WSL asset that already exists with the same
@@ -118,7 +118,7 @@ index 714bd1c8..33f7853b 100644
 +on; no workflow change is needed.
 diff --git a/docs/intel-mac-plan.md b/docs/intel-mac-plan.md
 new file mode 100644
-index 00000000..f51d7931
+index 0000000..f51d793
 --- /dev/null
 +++ b/docs/intel-mac-plan.md
 @@ -0,0 +1,251 @@
@@ -374,7 +374,7 @@ index 00000000..f51d7931
 +3. Уточнить про **подпись**: собираем неподписанные сборки (быстро, но Gatekeeper + self-install) или у тебя есть Apple Developer ID для подписи/нотаризации?
 +4. Уточнить **какую macOS** стоит на твоём Intel Mac (определяет, можно ли переходить на Electron 44+).
 diff --git a/docs/updates.md b/docs/updates.md
-index 4e7ddba2..ee8a529e 100644
+index 4e7ddba..ee8a529 100644
 --- a/docs/updates.md
 +++ b/docs/updates.md
 @@ -18,20 +18,30 @@ Failures are shown verbatim on the page, minus the `Error invoking remote method

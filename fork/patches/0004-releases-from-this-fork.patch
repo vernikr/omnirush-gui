@@ -1,5 +1,5 @@
 diff --git a/apps/desktop/electron/main.mjs b/apps/desktop/electron/main.mjs
-index 5d7dab44..64523caf 100644
+index 5d7dab4..64523ca 100644
 --- a/apps/desktop/electron/main.mjs
 +++ b/apps/desktop/electron/main.mjs
 @@ -25,6 +25,7 @@ import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./run
@@ -83,7 +83,7 @@ index 5d7dab44..64523caf 100644
    watchWindowForPlacements(mainWindow);
  
 diff --git a/apps/desktop/electron/preload.mjs b/apps/desktop/electron/preload.mjs
-index 1b5c303e..4a88edf8 100644
+index 1b5c303..4a88edf 100644
 --- a/apps/desktop/electron/preload.mjs
 +++ b/apps/desktop/electron/preload.mjs
 @@ -1,4 +1,4 @@
@@ -195,7 +195,7 @@ index 1b5c303e..4a88edf8 100644
    document.addEventListener("DOMContentLoaded", installMenuOverlayDismissListeners, { once: true });
  }
 diff --git a/apps/desktop/electron/recovery.mjs b/apps/desktop/electron/recovery.mjs
-index 3b7906a8..ed094f1a 100644
+index 3b7906a..ed094f1 100644
 --- a/apps/desktop/electron/recovery.mjs
 +++ b/apps/desktop/electron/recovery.mjs
 @@ -103,7 +103,7 @@ function validRecoveryArtifactIdentity(artifact) {
@@ -222,7 +222,7 @@ index 3b7906a8..ed094f1a 100644
      const artifact = {
 diff --git a/apps/desktop/electron/save-file.mjs b/apps/desktop/electron/save-file.mjs
 new file mode 100644
-index 00000000..75714387
+index 0000000..7571438
 --- /dev/null
 +++ b/apps/desktop/electron/save-file.mjs
 @@ -0,0 +1,241 @@
@@ -469,7 +469,7 @@ index 00000000..75714387
 +}
 diff --git a/apps/desktop/electron/save-file.test.mjs b/apps/desktop/electron/save-file.test.mjs
 new file mode 100644
-index 00000000..6ccebd88
+index 0000000..6ccebd8
 --- /dev/null
 +++ b/apps/desktop/electron/save-file.test.mjs
 @@ -0,0 +1,160 @@
@@ -634,7 +634,7 @@ index 00000000..6ccebd88
 +  }
 +});
 diff --git a/apps/desktop/electron/updater.mjs b/apps/desktop/electron/updater.mjs
-index 6cf82ab0..9c16f053 100644
+index 6cf82ab..9c16f05 100644
 --- a/apps/desktop/electron/updater.mjs
 +++ b/apps/desktop/electron/updater.mjs
 @@ -67,7 +67,7 @@ function resolveAppVersion(app) {
@@ -674,7 +674,7 @@ index 6cf82ab0..9c16f053 100644
        if (!response.ok) return null;
        return selectRecoveryArtifact(parseRecoveryManifest(await response.text()), {
 diff --git a/apps/desktop/electron/updater.test.mjs b/apps/desktop/electron/updater.test.mjs
-index 1f033f89..915a4447 100644
+index 1f033f8..915a444 100644
 --- a/apps/desktop/electron/updater.test.mjs
 +++ b/apps/desktop/electron/updater.test.mjs
 @@ -34,7 +34,7 @@ import {
@@ -796,7 +796,7 @@ index 1f033f89..915a4447 100644
  
 diff --git a/apps/desktop/electron/window-zoom.mjs b/apps/desktop/electron/window-zoom.mjs
 new file mode 100644
-index 00000000..606a062d
+index 0000000..606a062
 --- /dev/null
 +++ b/apps/desktop/electron/window-zoom.mjs
 @@ -0,0 +1,124 @@
@@ -926,7 +926,7 @@ index 00000000..606a062d
 +}
 diff --git a/apps/desktop/electron/window-zoom.test.mjs b/apps/desktop/electron/window-zoom.test.mjs
 new file mode 100644
-index 00000000..0168e6a4
+index 0000000..0168e6a
 --- /dev/null
 +++ b/apps/desktop/electron/window-zoom.test.mjs
 @@ -0,0 +1,143 @@

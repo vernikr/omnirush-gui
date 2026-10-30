@@ -469,7 +469,7 @@ function buildCompressionPlans(
         }
       }
 
-      // Pass E (Read): Emit canonical stripped Read block when smaller than raw OpenCode XML envelope
+      // Pass E (Read): Emit canonical stripped Read block when smaller than raw OpenCode envelope
       if (canonicalInlineBytes < rawBaselineBytes) {
         stats.canonicalReadCount += 1;
         stats.savedBytesByStructured += rawBaselineBytes - canonicalInlineBytes;
@@ -493,6 +493,16 @@ function buildCompressionPlans(
         }
         continue;
       }
+
+      plans.set(tool.callRefId, {
+        inputBlock,
+        outputPlan: {
+          kind: "raw",
+          fencedBlock: rawBaselineBlock,
+        },
+        outputSourceSha256: tool.outputSha256,
+      });
+      continue;
     }
 
     // Branch 2: General tool output (Bash, Grep, Glob, JSON/MCP, directory Read, error live output, etc.)

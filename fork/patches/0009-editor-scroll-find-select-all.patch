@@ -1,6 +1,6 @@
 diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts b/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts
 new file mode 100644
-index 00000000..09fcd43b
+index 0000000..09fcd43
 --- /dev/null
 +++ b/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts
 @@ -0,0 +1,94 @@
@@ -100,7 +100,7 @@ index 00000000..09fcd43b
 +}
 diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.css b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.css
 new file mode 100644
-index 00000000..75204d3d
+index 0000000..75204d3
 --- /dev/null
 +++ b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.css
 @@ -0,0 +1,9 @@
@@ -114,7 +114,7 @@ index 00000000..75204d3d
 +  color: inherit;
 +}
 diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
-index 738adbc6..66dfb729 100644
+index 738adbc..66dfb72 100644
 --- a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
 +++ b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
 @@ -1,7 +1,7 @@
@@ -311,7 +311,7 @@ index 738adbc6..66dfb729 100644
            <PreviewLoading />
          ) : isError ? (
 diff --git a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
-index 76a2ff62..f9b718ea 100644
+index 76a2ff6..f9b718e 100644
 --- a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
 @@ -747,10 +747,20 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
@@ -356,7 +356,7 @@ index 76a2ff62..f9b718ea 100644
  
    const panelRoundedClass =
 diff --git a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-index 54262b60..b8948313 100644
+index 54262b6..b894831 100644
 --- a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
 @@ -31,6 +31,7 @@ import {
@@ -485,7 +485,7 @@ index 54262b60..b8948313 100644
          <ImperativeHandlePlugin editorRef={ref} />
        </div>
 diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-index e6a4472e..ff55a2d8 100644
+index e6a4472..ff55a2d 100644
 --- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 @@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
@@ -576,7 +576,7 @@ index e6a4472e..ff55a2d8 100644
      if (resolveFindOwnerSessionId() === props.sessionId) {
 diff --git a/apps/app/tests/artifact-find.test.ts b/apps/app/tests/artifact-find.test.ts
 new file mode 100644
-index 00000000..445a2521
+index 0000000..445a252
 --- /dev/null
 +++ b/apps/app/tests/artifact-find.test.ts
 @@ -0,0 +1,52 @@
@@ -633,7 +633,7 @@ index 00000000..445a2521
 +  expect(matches[0]?.toString()).toBe("Keep searching");
 +});
 diff --git a/apps/app/tests/composer-focus-continuity.test.tsx b/apps/app/tests/composer-focus-continuity.test.tsx
-index f11d5510..0fe166ef 100644
+index f11d551..0fe166e 100644
 --- a/apps/app/tests/composer-focus-continuity.test.tsx
 +++ b/apps/app/tests/composer-focus-continuity.test.tsx
 @@ -492,6 +492,18 @@ test("composer focus and optimistic sends preserve drafts through snapshots and
@@ -656,7 +656,7 @@ index f11d5510..0fe166ef 100644
      expect(creations).toBe(2);
      expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
 diff --git a/evals/specs/artifact-code-browser.e2e.test.ts b/evals/specs/artifact-code-browser.e2e.test.ts
-index 7227108b..55f52a8c 100644
+index 7227108..55f52a8 100644
 --- a/evals/specs/artifact-code-browser.e2e.test.ts
 +++ b/evals/specs/artifact-code-browser.e2e.test.ts
 @@ -8,6 +8,14 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
@@ -675,7 +675,7 @@ index 7227108b..55f52a8c 100644
      await user.type({ placeholder: "Search files" }, "omnirush-artifact-proof.ts");
      await user.press("Tab");
 diff --git a/evals/specs/attachment-upload-loading-state.e2e.test.ts b/evals/specs/attachment-upload-loading-state.e2e.test.ts
-index a864814f..89fb6790 100644
+index a864814..89fb679 100644
 --- a/evals/specs/attachment-upload-loading-state.e2e.test.ts
 +++ b/evals/specs/attachment-upload-loading-state.e2e.test.ts
 @@ -67,6 +67,31 @@ test(`attaching an image in ${entryPoint} retains the draft until the upload is

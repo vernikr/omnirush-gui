@@ -89,14 +89,22 @@ describe("markdown-export Stage 2 Safety Router, Smart CLI, and Compact Stubs", 
       "Received: 200",
       "      at <anonymous> (/workspace/omnirush-gui/tests/auth.test.ts:88:14)",
       ...Array.from({ length: 12 }, (_, idx) => `  ✓ vitest suite > check #${idx + 1} (2 ms)`),
+      "Running python unittest:",
+      ...Array.from(
+        { length: 8 },
+        (_, idx) => `test_case_${idx + 1} (test_iss.IssIntakeTests.test_case_${idx + 1}) ... ok`,
+      ),
+      "FAIL: test_crossed_quote (test_iss.IssIntakeTests.test_crossed_quote)",
       " 24 pass",
       " 1 fail",
     ].join("\n");
 
     const collapsed = collapsePassingTestRuns(mixedSuite);
-    expect(collapsed.collapsedLines).toBe(36);
+    expect(collapsed.collapsedLines).toBe(44);
     expect(collapsed.text).toContain("[... collapsed 24 passing test lines ...]");
     expect(collapsed.text).toContain("[... collapsed 12 passing test lines ...]");
+    expect(collapsed.text).toContain("[... collapsed 8 passing test lines ...]");
+    expect(collapsed.text).toContain("FAIL: test_crossed_quote (test_iss.IssIntakeTests.test_crossed_quote)");
     expect(collapsed.text).toContain("(fail) auth > rejects expired token [3.10ms]");
     expect(collapsed.text).toContain("Expected: 401");
     expect(collapsed.text).toContain("Received: 200");

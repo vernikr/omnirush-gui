@@ -1,5 +1,5 @@
 diff --git a/apps/app/tests/markdown-code-block.test.ts b/apps/app/tests/markdown-code-block.test.ts
-index 3bbfb64c..323e09ac 100644
+index 3bbfb64..323e09a 100644
 --- a/apps/app/tests/markdown-code-block.test.ts
 +++ b/apps/app/tests/markdown-code-block.test.ts
 @@ -71,14 +71,14 @@ describe("markdown code blocks", () => {

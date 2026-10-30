@@ -1,9 +1,9 @@
 diff --git a/apps/app/src/app/lib/markdown-export/canonicalize.ts b/apps/app/src/app/lib/markdown-export/canonicalize.ts
 new file mode 100644
-index 00000000..83df48ab
+index 0000000..0dbc837
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/canonicalize.ts
-@@ -0,0 +1,769 @@
+@@ -0,0 +1,814 @@
 +import type {
 +  AssistantMessage,
 +  FilePart,
@@ -112,6 +112,9 @@ index 00000000..83df48ab
 +  /^\(Showing lines (\d+)-(\d+) of (\d+)\. Use offset=(\d+) to continue\.\)$/;
 +const MORE_LINES_V1_PATTERN =
 +  /^\(File has more lines\. Use 'offset' parameter to read beyond line (\d+)\)$/;
++const ENGINE2_TRUNCATED_PATTERN =
++  /^\[Output truncated\. Continue reading with offset: (\d+)\]$/;
++const ENGINE2_READ_HEADER_PATTERN = /^Read file (.+), lines (\d+)-(\d+)$/;
 +
 +const V2_LINE_PATTERN = /^(\d+): ?(.*)$/;
 +const V1_LINE_PATTERN = /^0*(\d+)\| ?(.*)$/;
@@ -240,6 +243,13 @@ index 00000000..83df48ab
 +      continue;
 +    }
 +
++    const engine2TruncatedMatch = ENGINE2_TRUNCATED_PATTERN.exec(rawLine);
++    if (engine2TruncatedMatch) {
++      footerKind = "more_lines";
++      truncated = true;
++      continue;
++    }
++
 +    return null;
 +  }
 +
@@ -332,6 +342,41 @@ index 00000000..83df48ab
 +      truncated: bodyResult.truncated,
 +      footerKind: bodyResult.footerKind,
 +    };
++  }
++
++  // Variant C: OpenCode Engine2 `Read file <path>, lines <start>-<end>\n1: ...`
++  const newlineIdx = normalized.indexOf("\n");
++  if (newlineIdx > 0) {
++    const firstLineText = normalized.slice(0, newlineIdx);
++    const hdrMatch = ENGINE2_READ_HEADER_PATTERN.exec(firstLineText);
++    if (hdrMatch) {
++      const headerPath = (hdrMatch[1] ?? "").trim();
++      const expectedFirst = Number(hdrMatch[2]);
++      const expectedLast = Number(hdrMatch[3]);
++      const bodyResult = parseNumberedBody(normalized.slice(newlineIdx + 1), V2_LINE_PATTERN);
++      if (
++        bodyResult &&
++        bodyResult.firstLine === expectedFirst &&
++        bodyResult.lastLine === expectedLast
++      ) {
++        const displayPath = headerPath || extractInputFilePath(input);
++        const cleanBody = bodyResult.lines.join("\n");
++        return {
++          envelopeVersion: "v2",
++          displayPath,
++          comparablePath: normalizeComparableFilePath(displayPath, workspaceRoot),
++          fenceLanguage: inferFenceLanguageFromPath(displayPath),
++          lines: bodyResult.lines,
++          cleanBody,
++          cleanBodySha256: sha256Hex(cleanBody),
++          firstLine: bodyResult.firstLine,
++          lastLine: bodyResult.lastLine,
++          totalLines: bodyResult.totalLines,
++          truncated: bodyResult.truncated,
++          footerKind: bodyResult.footerKind,
++        };
++      }
++    }
 +  }
 +
 +  return null;
@@ -775,7 +820,7 @@ index 00000000..83df48ab
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/file-delta.ts b/apps/app/src/app/lib/markdown-export/file-delta.ts
 new file mode 100644
-index 00000000..a8c3d0b2
+index 0000000..a8c3d0b
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/file-delta.ts
 @@ -0,0 +1,288 @@
@@ -1069,7 +1114,7 @@ index 00000000..a8c3d0b2
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/hash-and-bytes.ts b/apps/app/src/app/lib/markdown-export/hash-and-bytes.ts
 new file mode 100644
-index 00000000..c19e6e64
+index 0000000..c19e6e6
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/hash-and-bytes.ts
 @@ -0,0 +1,145 @@
@@ -1220,7 +1265,7 @@ index 00000000..c19e6e64
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/lossless-expander.ts b/apps/app/src/app/lib/markdown-export/lossless-expander.ts
 new file mode 100644
-index 00000000..22a5d75e
+index 0000000..22a5d75
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/lossless-expander.ts
 @@ -0,0 +1,329 @@
@@ -1555,10 +1600,10 @@ index 00000000..22a5d75e
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/render-markdown.ts b/apps/app/src/app/lib/markdown-export/render-markdown.ts
 new file mode 100644
-index 00000000..5521f74a
+index 0000000..eddf40f
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/render-markdown.ts
-@@ -0,0 +1,1015 @@
+@@ -0,0 +1,1025 @@
 +import type { Todo } from "@opencode-ai/sdk/v2/client";
 +
 +import { createCanonicalTranscriptIRWithoutBaseline } from "./canonicalize";
@@ -2030,7 +2075,7 @@ index 00000000..5521f74a
 +        }
 +      }
 +
-+      // Pass E (Read): Emit canonical stripped Read block when smaller than raw OpenCode XML envelope
++      // Pass E (Read): Emit canonical stripped Read block when smaller than raw OpenCode envelope
 +      if (canonicalInlineBytes < rawBaselineBytes) {
 +        stats.canonicalReadCount += 1;
 +        stats.savedBytesByStructured += rawBaselineBytes - canonicalInlineBytes;
@@ -2054,6 +2099,16 @@ index 00000000..5521f74a
 +        }
 +        continue;
 +      }
++
++      plans.set(tool.callRefId, {
++        inputBlock,
++        outputPlan: {
++          kind: "raw",
++          fencedBlock: rawBaselineBlock,
++        },
++        outputSourceSha256: tool.outputSha256,
++      });
++      continue;
 +    }
 +
 +    // Branch 2: General tool output (Bash, Grep, Glob, JSON/MCP, directory Read, error live output, etc.)
@@ -2576,10 +2631,10 @@ index 00000000..5521f74a
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/safety-router.ts b/apps/app/src/app/lib/markdown-export/safety-router.ts
 new file mode 100644
-index 00000000..6f939fd0
+index 0000000..6a3f376
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/safety-router.ts
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,140 @@
 +import { isPlainObject } from "./structured-compact";
 +import type {
 +  CanonicalToolPartIR,
@@ -2610,9 +2665,14 @@ index 00000000..6f939fd0
 +  /^panic:\s+\S/m,
 +  /^goroutine \d+ \[running\]:/m,
 +  /^fatal error:\s+\S/m,
-+  // Unhandled JS/TS/runtime errors & package manager errors
++  // Unhandled JS/TS/runtime errors, Git fatal errors, timeouts & package manager errors
 +  /^(?:Uncaught\s+)?(?:TypeError|ReferenceError|SyntaxError|RangeError|URIError|EvalError|AssertionError|AggregateError|FATAL ERROR):\s+\S/m,
 +  /^(?:npm ERR!|ERR_PNPM_[A-Z0-9_]+|Segmentation fault|Bus error)\b/m,
++  /^fatal:\s+\S/m,
++  /^(?:Command exceeded timeout of \d+\s*ms|Timed out before completion)\b/m,
++  // Python unittest failures
++  /^(?:FAIL|ERROR):\s+\S+\s+\([A-Za-z0-9_.]+\)$/m,
++  /^FAILED\s+\((?:failures|errors)=\d+/m,
 +];
 +
 +const COMPILER_ERROR_PATTERNS: readonly RegExp[] = [
@@ -2717,10 +2777,10 @@ index 00000000..6f939fd0
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/smart-cli.ts b/apps/app/src/app/lib/markdown-export/smart-cli.ts
 new file mode 100644
-index 00000000..c320f686
+index 0000000..f68f221
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/smart-cli.ts
-@@ -0,0 +1,528 @@
+@@ -0,0 +1,605 @@
 +import { normalizeComparableFilePath } from "./canonicalize";
 +import { shortSha256, utf8ByteLength } from "./hash-and-bytes";
 +import { fenceMarkdownCode, isPlainObject } from "./structured-compact";
@@ -2744,6 +2804,8 @@ index 00000000..c320f686
 +  /^\s*[✓✔]\s+\S.*$/,
 +  // Cargo test: `test module::my_test ... ok`
 +  /^test\s+\S+\s+\.\.\.\s+ok$/,
++  // Python unittest verbose: `test_foo (pkg.mod.TestClass.test_foo) ... ok`
++  /^[A-Za-z_][A-Za-z0-9_]*\s+\([A-Za-z0-9_.]+\)\s+\.\.\.\s+ok$/,
 +  // Pytest verbose: `tests/test_api.py::test_login PASSED [ 25%]`
 +  /^\S+::\S+\s+PASSED(?:\s+\[\s*\d+%\])?$/,
 +  // Go test verbose: `--- PASS: TestSomething (0.01s)`
@@ -2929,9 +2991,51 @@ index 00000000..c320f686
 +    const compacted: string[] = [];
 +    let i = 0;
 +    while (i < workingLines.length) {
-+      const match = /^([^:\r\n]+):\d+:/.exec(workingLines[i]!);
++      // Variant 1: OpenCode native Grep block (`<file>:` followed by `  Line N: ...`)
++      const currentLine = workingLines[i]!;
++      const isEngineGrepFileHeader =
++        currentLine.endsWith(":") &&
++        !currentLine.startsWith(" ") &&
++        i + 1 < workingLines.length &&
++        /^\s{2,}Line \d+:/.test(workingLines[i + 1]!);
++
++      if (isEngineGrepFileHeader) {
++        const fileKey = currentLine.slice(0, -1);
++        compacted.push(currentLine);
++        i += 1;
++        const matchLines: string[] = [];
++        while (i < workingLines.length) {
++          const cand = workingLines[i]!;
++          if (/^\s{2,}Line \d+:/.test(cand)) {
++            matchLines.push(cand);
++            i += 1;
++            continue;
++          }
++          if (
++            cand === "" &&
++            i + 1 < workingLines.length &&
++            /^\s{2,}Line \d+:/.test(workingLines[i + 1]!)
++          ) {
++            i += 1;
++            continue;
++          }
++          break;
++        }
++        if (matchLines.length > 8) {
++          for (let k = 0; k < 5; k += 1) {
++            compacted.push(matchLines[k]!);
++          }
++          compacted.push(`  [... +${matchLines.length - 5} more matches in ${fileKey} ...]`);
++        } else {
++          compacted.push(...matchLines);
++        }
++        continue;
++      }
++
++      // Variant 2: ripgrep / grep -n (`file:line:text`)
++      const match = /^([^:\r\n]+):\d+:/.exec(currentLine);
 +      if (!match) {
-+        compacted.push(workingLines[i]!);
++        compacted.push(currentLine);
 +        i += 1;
 +        continue;
 +      }
@@ -3005,12 +3109,16 @@ index 00000000..c320f686
 +}): { output: string; compacted: boolean; savedBytes: number } {
 +  const { tool, rawOutput, safety, workspaceRoot } = params;
 +
-+  // Never alter PEM/credentials, SQL migrations, canonical Read bodies, or structured JSON via lossy CLI filters
++  const lowerTool = tool.part.tool.trim().toLowerCase();
++
++  // Never alter PEM/credentials, SQL migrations, Read file bodies, unified git diffs, or structured JSON via lossy CLI filters
 +  if (
++    lowerTool === "read" ||
 +    tool.canonicalRead !== null ||
 +    tool.parsedOutputJson !== undefined ||
 +    safety.reasons.includes("credentials_or_pem") ||
-+    safety.reasons.includes("sql_migration")
++    safety.reasons.includes("sql_migration") ||
++    /^diff --git a\/\S+\s+b\/\S+$/m.test(rawOutput)
 +  ) {
 +    return { output: rawOutput, compacted: false, savedBytes: 0 };
 +  }
@@ -3027,12 +3135,13 @@ index 00000000..c320f686
 +    candidate = compactSearchOutput(tool.part.tool, candidate, workspaceRoot);
 +    candidate = collapseConsecutiveIdenticalLines(candidate);
 +
++    const isStructuredSearchTool = lowerTool === "grep" || lowerTool === "glob";
++    const lineThreshold = isStructuredSearchTool ? 260 : CLI_HEAD_TAIL_LINE_THRESHOLD;
++    const byteThreshold = isStructuredSearchTool ? 24_000 : CLI_HEAD_TAIL_BYTE_THRESHOLD;
++
 +    const candidateLines = candidate.split("\n");
 +    const candidateBytes = utf8ByteLength(candidate);
-+    if (
-+      candidateLines.length > CLI_HEAD_TAIL_LINE_THRESHOLD &&
-+      candidateBytes > CLI_HEAD_TAIL_BYTE_THRESHOLD
-+    ) {
++    if (candidateLines.length > lineThreshold && candidateBytes > byteThreshold) {
 +      const omitted = candidateLines.length - CLI_KEEP_HEAD_LINES - CLI_KEEP_TAIL_LINES;
 +      if (omitted >= 20) {
 +        const head = candidateLines.slice(0, CLI_KEEP_HEAD_LINES).join("\n");
@@ -3057,6 +3166,8 @@ index 00000000..c320f686
 +  mutatedPaths: ReadonlySet<string>;
 +  /** Latest completed CanonicalReadFile tool call per comparablePath in document order. */
 +  latestReadByPath: ReadonlyMap<string, CanonicalToolPartIR>;
++  /** All completed CanonicalReadFile tool calls per comparablePath in document order. */
++  readsByPath: ReadonlyMap<string, readonly CanonicalToolPartIR[]>;
 +};
 +
 +function extractPathsFromPatchText(patchText: string): string[] {
@@ -3119,6 +3230,7 @@ index 00000000..c320f686
 +export function buildBranchStubIndex(root: CanonicalSessionNodeIR): BranchStubIndex {
 +  const mutatedPaths = new Set<string>();
 +  const latestReadByPath = new Map<string, CanonicalToolPartIR>();
++  const readsByPath = new Map<string, CanonicalToolPartIR[]>();
 +
 +  const walk = (node: CanonicalSessionNodeIR) => {
 +    const workspaceRoot = node.session.directory?.trim() ?? "";
@@ -3143,7 +3255,14 @@ index 00000000..c320f686
 +        }
 +
 +        if (part.canonicalRead && part.canonicalRead.comparablePath) {
-+          latestReadByPath.set(part.canonicalRead.comparablePath, part);
++          const key = part.canonicalRead.comparablePath;
++          latestReadByPath.set(key, part);
++          const list = readsByPath.get(key);
++          if (list) {
++            list.push(part);
++          } else {
++            readsByPath.set(key, [part]);
++          }
 +        }
 +
 +        if (part.subagent) {
@@ -3154,7 +3273,7 @@ index 00000000..c320f686
 +  };
 +
 +  walk(root);
-+  return { mutatedPaths, latestReadByPath };
++  return { mutatedPaths, latestReadByPath, readsByPath };
 +}
 +
 +function sanitizeInlineCode(value: string): string {
@@ -3187,17 +3306,35 @@ index 00000000..c320f686
 +  if (tool.canonicalRead !== null) {
 +    const read = tool.canonicalRead;
 +    if (!read.comparablePath) return null;
-+    const latestForPath = stubIndex.latestReadByPath.get(read.comparablePath);
-+    const isSupersededByLaterRead =
-+      Boolean(latestForPath) && latestForPath!.callRefId !== tool.callRefId;
++    const readsForPath = stubIndex.readsByPath.get(read.comparablePath) ?? [];
++    const selfIdx = readsForPath.findIndex((item) => item.callRefId === tool.callRefId);
++    let supersedingRead: CanonicalToolPartIR | null = null;
++    if (selfIdx >= 0) {
++      for (let j = readsForPath.length - 1; j > selfIdx; j -= 1) {
++        const candidate = readsForPath[j]!;
++        const candRead = candidate.canonicalRead;
++        if (!candRead) continue;
++        const coversRange =
++          candRead.firstLine <= read.firstLine && candRead.lastLine >= read.lastLine;
++        const bothFullFileFromTop =
++          read.firstLine === 1 &&
++          !read.truncated &&
++          candRead.firstLine === 1 &&
++          !candRead.truncated;
++        if (coversRange || bothFullFileFromTop) {
++          supersedingRead = candidate;
++          break;
++        }
++      }
++    }
 +    const pathLabel = sanitizeInlineCode(read.displayPath || read.comparablePath);
 +
 +    if (
-+      isSupersededByLaterRead &&
++      supersedingRead &&
 +      rawBaselineBytes >= MIN_SUPERSEDED_READ_BYTES &&
 +      read.lines.length >= MIN_SUPERSEDED_READ_LINES
 +    ) {
-+      const stub = `> [Stubbed superseded Read of \`${pathLabel}\` (${formatReadShortRange(read)}) · \`sha256:${shortSha256(read.cleanBodySha256)}\` — latest snapshot in ${latestForPath!.turnLabel}]`;
++      const stub = `> [Stubbed superseded Read of \`${pathLabel}\` (${formatReadShortRange(read)}) · \`sha256:${shortSha256(read.cleanBodySha256)}\` — latest snapshot in ${supersedingRead.turnLabel}]`;
 +      const saved = rawBaselineBytes - utf8ByteLength(stub);
 +      if (saved >= MIN_STUB_NET_WIN_BYTES) {
 +        return { markdownBlock: stub, savedBytes: saved };
@@ -3251,7 +3388,7 @@ index 00000000..c320f686
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/structured-compact.ts b/apps/app/src/app/lib/markdown-export/structured-compact.ts
 new file mode 100644
-index 00000000..e8155f76
+index 0000000..e8155f7
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/structured-compact.ts
 @@ -0,0 +1,281 @@
@@ -3538,7 +3675,7 @@ index 00000000..e8155f76
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/types.ts b/apps/app/src/app/lib/markdown-export/types.ts
 new file mode 100644
-index 00000000..84baa761
+index 0000000..84baa76
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/types.ts
 @@ -0,0 +1,216 @@
@@ -3760,7 +3897,7 @@ index 00000000..84baa761
 +};
 diff --git a/apps/app/src/app/lib/session-markdown-export.ts b/apps/app/src/app/lib/session-markdown-export.ts
 new file mode 100644
-index 00000000..19a71d44
+index 0000000..19a71d4
 --- /dev/null
 +++ b/apps/app/src/app/lib/session-markdown-export.ts
 @@ -0,0 +1,253 @@
@@ -4018,7 +4155,7 @@ index 00000000..19a71d44
 +  return found;
 +}
 diff --git a/apps/app/src/i18n/locales/en.ts b/apps/app/src/i18n/locales/en.ts
-index 588f94b6..4771e35e 100644
+index 588f94b..4771e35 100644
 --- a/apps/app/src/i18n/locales/en.ts
 +++ b/apps/app/src/i18n/locales/en.ts
 @@ -1241,6 +1241,12 @@ export default {
@@ -4060,7 +4197,7 @@ index 588f94b6..4771e35e 100644
 +  "session.export_confirm": "Export .md",
  } as const;
 diff --git a/apps/app/src/i18n/locales/ru.ts b/apps/app/src/i18n/locales/ru.ts
-index 2269df41..49c1064e 100644
+index 2269df4..49c1064 100644
 --- a/apps/app/src/i18n/locales/ru.ts
 +++ b/apps/app/src/i18n/locales/ru.ts
 @@ -1287,4 +1287,30 @@ export default {
@@ -4095,7 +4232,7 @@ index 2269df41..49c1064e 100644
 +  "session.export_confirm": "Скачать .md",
  } as const;
 diff --git a/apps/app/src/i18n/locales/zh.ts b/apps/app/src/i18n/locales/zh.ts
-index e3010078..f2a96d89 100644
+index e301007..f2a96d8 100644
 --- a/apps/app/src/i18n/locales/zh.ts
 +++ b/apps/app/src/i18n/locales/zh.ts
 @@ -1247,6 +1247,12 @@ export default {
@@ -4138,7 +4275,7 @@ index e3010078..f2a96d89 100644
  } as const;
 diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown-modal.tsx b/apps/app/src/react-app/domains/session/commands/export-session-markdown-modal.tsx
 new file mode 100644
-index 00000000..c9a267f8
+index 0000000..c9a267f
 --- /dev/null
 +++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown-modal.tsx
 @@ -0,0 +1,340 @@
@@ -4484,7 +4621,7 @@ index 00000000..c9a267f8
 +}
 diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown-store.ts b/apps/app/src/react-app/domains/session/commands/export-session-markdown-store.ts
 new file mode 100644
-index 00000000..929da545
+index 0000000..929da54
 --- /dev/null
 +++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown-store.ts
 @@ -0,0 +1,29 @@
@@ -4519,7 +4656,7 @@ index 00000000..929da545
 +}
 diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
 new file mode 100644
-index 00000000..516da88c
+index 0000000..516da88
 --- /dev/null
 +++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
 @@ -0,0 +1,360 @@
@@ -4884,7 +5021,7 @@ index 00000000..516da88c
 +  return { exporting, exportMarkdown: runExport };
 +}
 diff --git a/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx b/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx
-index cfeec865..a1daaa46 100644
+index cfeec86..a1daaa4 100644
 --- a/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx
 +++ b/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx
 @@ -1,6 +1,6 @@
@@ -4957,7 +5094,7 @@ index cfeec865..a1daaa46 100644
        <StatusDialog {...props} />
        <ChangesPanel
 diff --git a/apps/app/src/react-app/domains/session/commands/session-commands-store.ts b/apps/app/src/react-app/domains/session/commands/session-commands-store.ts
-index f14c4de9..f1d020b8 100644
+index f14c4de..f1d020b 100644
 --- a/apps/app/src/react-app/domains/session/commands/session-commands-store.ts
 +++ b/apps/app/src/react-app/domains/session/commands/session-commands-store.ts
 @@ -11,12 +11,14 @@ export type SessionCommandBridge = {
@@ -4977,7 +5114,7 @@ index f14c4de9..f1d020b8 100644
  
  type SessionCommandsStore = {
 diff --git a/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx b/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx
-index ae0b7594..71489401 100644
+index ae0b759..7148940 100644
 --- a/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx
 +++ b/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx
 @@ -23,6 +23,7 @@ export type SidebarContextValue = {
@@ -4989,7 +5126,7 @@ index ae0b7594..71489401 100644
    onOpenCreateGroupModal?: (workspaceId: string) => void;
    onOpenRenameWorkspace: (workspaceId: string) => void;
 diff --git a/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx b/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
-index 21785ad1..f93fb355 100644
+index 21785ad..f93fb35 100644
 --- a/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
 +++ b/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
 @@ -10,6 +10,7 @@ import {
@@ -5043,7 +5180,7 @@ index 21785ad1..f93fb355 100644
      onOpenCreateGroupModal: props.onOpenCreateGroupModal,
      onOpenRenameWorkspace: props.onOpenRenameWorkspace,
 diff --git a/apps/app/src/react-app/shell/session-route.tsx b/apps/app/src/react-app/shell/session-route.tsx
-index 0a8f1b5c..a5de271d 100644
+index 0a8f1b5..a5de271 100644
 --- a/apps/app/src/react-app/shell/session-route.tsx
 +++ b/apps/app/src/react-app/shell/session-route.tsx
 @@ -27,6 +27,8 @@ import { isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
@@ -5130,7 +5267,7 @@ index 0a8f1b5c..a5de271d 100644
        options={pickerOptions}
 diff --git a/apps/app/tests/export-session-markdown-modal.test.tsx b/apps/app/tests/export-session-markdown-modal.test.tsx
 new file mode 100644
-index 00000000..218c7208
+index 0000000..218c720
 --- /dev/null
 +++ b/apps/app/tests/export-session-markdown-modal.test.tsx
 @@ -0,0 +1,421 @@
@@ -5557,7 +5694,7 @@ index 00000000..218c7208
 +});
 diff --git a/apps/app/tests/markdown-export-e2e.test.ts b/apps/app/tests/markdown-export-e2e.test.ts
 new file mode 100644
-index 00000000..27c8c5a2
+index 0000000..27c8c5a
 --- /dev/null
 +++ b/apps/app/tests/markdown-export-e2e.test.ts
 @@ -0,0 +1,522 @@
@@ -6085,10 +6222,10 @@ index 00000000..27c8c5a2
 +});
 diff --git a/apps/app/tests/markdown-export-lossless.test.ts b/apps/app/tests/markdown-export-lossless.test.ts
 new file mode 100644
-index 00000000..188e4043
+index 0000000..2ecb771
 --- /dev/null
 +++ b/apps/app/tests/markdown-export-lossless.test.ts
-@@ -0,0 +1,581 @@
+@@ -0,0 +1,595 @@
 +import { describe, expect, test } from "bun:test";
 +import type { AssistantMessage, Part, Session, UserMessage } from "@opencode-ai/sdk/v2/client";
 +
@@ -6249,6 +6386,20 @@ index 00000000..188e4043
 +    expect(v1).not.toBeNull();
 +    expect(v1!.comparablePath).toBe("src/server.ts");
 +    expect(v1!.cleanBodySha256).toBe(v2!.cleanBodySha256);
++
++    // Engine2 `Read file <path>, lines <start>-<end>` + `[Output truncated. Continue reading with offset: N]`
++    const engine2Numbered = sampleLines.map((line, idx) => `${idx + 1}: ${line}`).join("\n");
++    const engine2Truncated = parseCanonicalReadEnvelope({
++      toolName: "read",
++      rawOutput: `Read file /workspace/omnirush-gui/src/server.ts, lines 1-${sampleLines.length}\n${engine2Numbered}\n[Output truncated. Continue reading with offset: ${sampleLines.length + 1}]`,
++      input: { filePath: "/workspace/omnirush-gui/src/server.ts" },
++      workspaceRoot: "/workspace/omnirush-gui",
++    });
++    expect(engine2Truncated).not.toBeNull();
++    expect(engine2Truncated!.comparablePath).toBe("src/server.ts");
++    expect(engine2Truncated!.cleanBodySha256).toBe(v2!.cleanBodySha256);
++    expect(engine2Truncated!.truncated).toBe(true);
++    expect(engine2Truncated!.footerKind).toBe("more_lines");
 +
 +    // Directory listings must NOT be misclassified as file bodies
 +    const dirEnvelope = `<path>/workspace/src</path>\n<type>directory</type>\n<entries>\nserver.ts\n(1 entries)\n</entries>`;
@@ -6672,10 +6823,10 @@ index 00000000..188e4043
 +});
 diff --git a/apps/app/tests/markdown-export-smart-stubs.test.ts b/apps/app/tests/markdown-export-smart-stubs.test.ts
 new file mode 100644
-index 00000000..655c3a54
+index 0000000..cd93fdb
 --- /dev/null
 +++ b/apps/app/tests/markdown-export-smart-stubs.test.ts
-@@ -0,0 +1,528 @@
+@@ -0,0 +1,536 @@
 +import { describe, expect, test } from "bun:test";
 +import type { AssistantMessage, Part, Session, UserMessage } from "@opencode-ai/sdk/v2/client";
 +
@@ -6767,14 +6918,22 @@ index 00000000..655c3a54
 +      "Received: 200",
 +      "      at <anonymous> (/workspace/omnirush-gui/tests/auth.test.ts:88:14)",
 +      ...Array.from({ length: 12 }, (_, idx) => `  ✓ vitest suite > check #${idx + 1} (2 ms)`),
++      "Running python unittest:",
++      ...Array.from(
++        { length: 8 },
++        (_, idx) => `test_case_${idx + 1} (test_iss.IssIntakeTests.test_case_${idx + 1}) ... ok`,
++      ),
++      "FAIL: test_crossed_quote (test_iss.IssIntakeTests.test_crossed_quote)",
 +      " 24 pass",
 +      " 1 fail",
 +    ].join("\n");
 +
 +    const collapsed = collapsePassingTestRuns(mixedSuite);
-+    expect(collapsed.collapsedLines).toBe(36);
++    expect(collapsed.collapsedLines).toBe(44);
 +    expect(collapsed.text).toContain("[... collapsed 24 passing test lines ...]");
 +    expect(collapsed.text).toContain("[... collapsed 12 passing test lines ...]");
++    expect(collapsed.text).toContain("[... collapsed 8 passing test lines ...]");
++    expect(collapsed.text).toContain("FAIL: test_crossed_quote (test_iss.IssIntakeTests.test_crossed_quote)");
 +    expect(collapsed.text).toContain("(fail) auth > rejects expired token [3.10ms]");
 +    expect(collapsed.text).toContain("Expected: 401");
 +    expect(collapsed.text).toContain("Received: 200");
@@ -7206,7 +7365,7 @@ index 00000000..655c3a54
 +});
 diff --git a/apps/app/tests/session-markdown-export.test.ts b/apps/app/tests/session-markdown-export.test.ts
 new file mode 100644
-index 00000000..2fb18868
+index 0000000..2fb1886
 --- /dev/null
 +++ b/apps/app/tests/session-markdown-export.test.ts
 @@ -0,0 +1,542 @@
@@ -7754,7 +7913,7 @@ index 00000000..2fb18868
 +});
 diff --git a/docs/session-markdown-export.md b/docs/session-markdown-export.md
 new file mode 100644
-index 00000000..35f2d653
+index 0000000..35f2d65
 --- /dev/null
 +++ b/docs/session-markdown-export.md
 @@ -0,0 +1,84 @@
@@ -7843,7 +8002,7 @@ index 00000000..35f2d653
 +- OmniRush GUI feature request: [omnirush-ai/omnirush-gui#349](https://github.com/omnirush-ai/omnirush-gui/issues/349)
 +- Related OpenCode Desktop & CLI issues: [anomalyco/opencode#55542](https://github.com/anomalyco/opencode/issues/55542), [anomalyco/opencode#59904](https://github.com/anomalyco/opencode/issues/59904)
 diff --git a/packages/types/src/desktop-ipc.ts b/packages/types/src/desktop-ipc.ts
-index 63e0bed6..71c922c8 100644
+index 63e0bed..71c922c 100644
 --- a/packages/types/src/desktop-ipc.ts
 +++ b/packages/types/src/desktop-ipc.ts
 @@ -1127,7 +1127,17 @@ export type DesktopCommandMap = {

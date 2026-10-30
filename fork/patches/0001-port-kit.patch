@@ -1,6 +1,6 @@
 diff --git a/.github/workflows/fork-sync.yml b/.github/workflows/fork-sync.yml
 new file mode 100644
-index 00000000..5162bb6f
+index 0000000..5162bb6
 --- /dev/null
 +++ b/.github/workflows/fork-sync.yml
 @@ -0,0 +1,130 @@
@@ -136,7 +136,7 @@ index 00000000..5162bb6f
 +          fi
 diff --git a/fork/README.md b/fork/README.md
 new file mode 100644
-index 00000000..dcf45615
+index 0000000..dcf4561
 --- /dev/null
 +++ b/fork/README.md
 @@ -0,0 +1,127 @@
@@ -269,27 +269,27 @@ index 00000000..dcf45615
 +  the engine tarballs are pinned by sha256 in an upstream pre-release.
 diff --git a/fork/REPO b/fork/REPO
 new file mode 100644
-index 00000000..dfad7861
+index 0000000..dfad786
 --- /dev/null
 +++ b/fork/REPO
 @@ -0,0 +1 @@
 +vernikr/omnirush-gui
 diff --git a/fork/UPSTREAM_BASE b/fork/UPSTREAM_BASE
 new file mode 100644
-index 00000000..b2de6e62
+index 0000000..b2de6e6
 --- /dev/null
 +++ b/fork/UPSTREAM_BASE
 @@ -0,0 +1 @@
 +e5b7b0bf76bd362f31661c6a3b5f76bfcde5dc8d
 diff --git a/fork/patches/0002-merge-mac-update-manifests.patch b/fork/patches/0002-merge-mac-update-manifests.patch
 new file mode 100644
-index 00000000..04ec3b8e
+index 0000000..cd1b21c
 --- /dev/null
 +++ b/fork/patches/0002-merge-mac-update-manifests.patch
 @@ -0,0 +1,460 @@
 +diff --git a/scripts/release/merge-mac-update-manifests.mjs b/scripts/release/merge-mac-update-manifests.mjs
 +new file mode 100644
-+index 00000000..f261fd07
++index 0000000..f261fd0
 +--- /dev/null
 ++++ b/scripts/release/merge-mac-update-manifests.mjs
 +@@ -0,0 +1,261 @@
@@ -556,7 +556,7 @@ index 00000000..04ec3b8e
 ++}
 +diff --git a/scripts/release/merge-mac-update-manifests.test.mjs b/scripts/release/merge-mac-update-manifests.test.mjs
 +new file mode 100644
-+index 00000000..bf3c58ff
++index 0000000..bf3c58f
 +--- /dev/null
 ++++ b/scripts/release/merge-mac-update-manifests.test.mjs
 +@@ -0,0 +1,187 @@
@@ -749,12 +749,12 @@ index 00000000..04ec3b8e
 ++});
 diff --git a/fork/patches/0003-release-intel-macos-leg.patch b/fork/patches/0003-release-intel-macos-leg.patch
 new file mode 100644
-index 00000000..382fd810
+index 0000000..4e55fe5
 --- /dev/null
 +++ b/fork/patches/0003-release-intel-macos-leg.patch
 @@ -0,0 +1,170 @@
 +diff --git a/.github/workflows/release-desktop.yml b/.github/workflows/release-desktop.yml
-+index 6d56d49f..d24e86c3 100644
++index 6d56d49..d24e86c 100644
 +--- a/.github/workflows/release-desktop.yml
 ++++ b/.github/workflows/release-desktop.yml
 +@@ -106,42 +106,27 @@ jobs:
@@ -925,12 +925,12 @@ index 00000000..382fd810
 +               body="$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/$manifest?attempt=$attempt" || true)"
 diff --git a/fork/patches/0004-releases-from-this-fork.patch b/fork/patches/0004-releases-from-this-fork.patch
 new file mode 100644
-index 00000000..f9258f60
+index 0000000..705bb03
 --- /dev/null
 +++ b/fork/patches/0004-releases-from-this-fork.patch
 @@ -0,0 +1,1075 @@
 +diff --git a/apps/desktop/electron/main.mjs b/apps/desktop/electron/main.mjs
-+index 5d7dab44..64523caf 100644
++index 5d7dab4..64523ca 100644
 +--- a/apps/desktop/electron/main.mjs
 ++++ b/apps/desktop/electron/main.mjs
 +@@ -25,6 +25,7 @@ import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./run
@@ -1014,7 +1014,7 @@ index 00000000..f9258f60
 +   watchWindowForPlacements(mainWindow);
 + 
 +diff --git a/apps/desktop/electron/preload.mjs b/apps/desktop/electron/preload.mjs
-+index 1b5c303e..4a88edf8 100644
++index 1b5c303..4a88edf 100644
 +--- a/apps/desktop/electron/preload.mjs
 ++++ b/apps/desktop/electron/preload.mjs
 +@@ -1,4 +1,4 @@
@@ -1126,7 +1126,7 @@ index 00000000..f9258f60
 +   document.addEventListener("DOMContentLoaded", installMenuOverlayDismissListeners, { once: true });
 + }
 +diff --git a/apps/desktop/electron/recovery.mjs b/apps/desktop/electron/recovery.mjs
-+index 3b7906a8..ed094f1a 100644
++index 3b7906a..ed094f1 100644
 +--- a/apps/desktop/electron/recovery.mjs
 ++++ b/apps/desktop/electron/recovery.mjs
 +@@ -103,7 +103,7 @@ function validRecoveryArtifactIdentity(artifact) {
@@ -1153,7 +1153,7 @@ index 00000000..f9258f60
 +     const artifact = {
 +diff --git a/apps/desktop/electron/save-file.mjs b/apps/desktop/electron/save-file.mjs
 +new file mode 100644
-+index 00000000..75714387
++index 0000000..7571438
 +--- /dev/null
 ++++ b/apps/desktop/electron/save-file.mjs
 +@@ -0,0 +1,241 @@
@@ -1400,7 +1400,7 @@ index 00000000..f9258f60
 ++}
 +diff --git a/apps/desktop/electron/save-file.test.mjs b/apps/desktop/electron/save-file.test.mjs
 +new file mode 100644
-+index 00000000..6ccebd88
++index 0000000..6ccebd8
 +--- /dev/null
 ++++ b/apps/desktop/electron/save-file.test.mjs
 +@@ -0,0 +1,160 @@
@@ -1565,7 +1565,7 @@ index 00000000..f9258f60
 ++  }
 ++});
 +diff --git a/apps/desktop/electron/updater.mjs b/apps/desktop/electron/updater.mjs
-+index 6cf82ab0..9c16f053 100644
++index 6cf82ab..9c16f05 100644
 +--- a/apps/desktop/electron/updater.mjs
 ++++ b/apps/desktop/electron/updater.mjs
 +@@ -67,7 +67,7 @@ function resolveAppVersion(app) {
@@ -1605,7 +1605,7 @@ index 00000000..f9258f60
 +       if (!response.ok) return null;
 +       return selectRecoveryArtifact(parseRecoveryManifest(await response.text()), {
 +diff --git a/apps/desktop/electron/updater.test.mjs b/apps/desktop/electron/updater.test.mjs
-+index 1f033f89..915a4447 100644
++index 1f033f8..915a444 100644
 +--- a/apps/desktop/electron/updater.test.mjs
 ++++ b/apps/desktop/electron/updater.test.mjs
 +@@ -34,7 +34,7 @@ import {
@@ -1727,7 +1727,7 @@ index 00000000..f9258f60
 + 
 +diff --git a/apps/desktop/electron/window-zoom.mjs b/apps/desktop/electron/window-zoom.mjs
 +new file mode 100644
-+index 00000000..606a062d
++index 0000000..606a062
 +--- /dev/null
 ++++ b/apps/desktop/electron/window-zoom.mjs
 +@@ -0,0 +1,124 @@
@@ -1857,7 +1857,7 @@ index 00000000..f9258f60
 ++}
 +diff --git a/apps/desktop/electron/window-zoom.test.mjs b/apps/desktop/electron/window-zoom.test.mjs
 +new file mode 100644
-+index 00000000..0168e6a4
++index 0000000..0168e6a
 +--- /dev/null
 ++++ b/apps/desktop/electron/window-zoom.test.mjs
 +@@ -0,0 +1,143 @@
@@ -2006,12 +2006,12 @@ index 00000000..f9258f60
 ++});
 diff --git a/fork/patches/0005-docs-intel-macos.patch b/fork/patches/0005-docs-intel-macos.patch
 new file mode 100644
-index 00000000..5b6142a1
+index 0000000..14deccc
 --- /dev/null
 +++ b/fork/patches/0005-docs-intel-macos.patch
 @@ -0,0 +1,425 @@
 +diff --git a/README.md b/README.md
-+index 76ee16e9..6418af69 100644
++index 76ee16e..6418af6 100644
 +--- a/README.md
 ++++ b/README.md
 +@@ -11,22 +11,20 @@
@@ -2096,7 +2096,7 @@ index 00000000..5b6142a1
 + ## Updating
 + 
 +diff --git a/RELEASING.md b/RELEASING.md
-+index 714bd1c8..33f7853b 100644
++index 714bd1c..33f7853 100644
 +--- a/RELEASING.md
 ++++ b/RELEASING.md
 +@@ -44,3 +44,28 @@ A run is safe to repeat. An image or WSL asset that already exists with the same
@@ -2130,7 +2130,7 @@ index 00000000..5b6142a1
 ++on; no workflow change is needed.
 +diff --git a/docs/intel-mac-plan.md b/docs/intel-mac-plan.md
 +new file mode 100644
-+index 00000000..f51d7931
++index 0000000..f51d793
 +--- /dev/null
 ++++ b/docs/intel-mac-plan.md
 +@@ -0,0 +1,251 @@
@@ -2386,7 +2386,7 @@ index 00000000..5b6142a1
 ++3. Уточнить про **подпись**: собираем неподписанные сборки (быстро, но Gatekeeper + self-install) или у тебя есть Apple Developer ID для подписи/нотаризации?
 ++4. Уточнить **какую macOS** стоит на твоём Intel Mac (определяет, можно ли переходить на Electron 44+).
 +diff --git a/docs/updates.md b/docs/updates.md
-+index 4e7ddba2..ee8a529e 100644
++index 4e7ddba..ee8a529 100644
 +--- a/docs/updates.md
 ++++ b/docs/updates.md
 +@@ -18,20 +18,30 @@ Failures are shown verbatim on the page, minus the `Error invoking remote method
@@ -2437,12 +2437,12 @@ index 00000000..5b6142a1
 + Once releases are signed with a Developer ID (and notarized), the same code path detects the signature and uses the normal Squirrel in-place install and restart. Windows and Linux installs are in place regardless of signing.
 diff --git a/fork/patches/0006-thinking-stream-render-cost.patch b/fork/patches/0006-thinking-stream-render-cost.patch
 new file mode 100644
-index 00000000..e4415789
+index 0000000..45ea520
 --- /dev/null
 +++ b/fork/patches/0006-thinking-stream-render-cost.patch
 @@ -0,0 +1,455 @@
 +diff --git a/apps/app/src/components/chat/reasoning-block.tsx b/apps/app/src/components/chat/reasoning-block.tsx
-+index fd4ddec8..ab0391c5 100644
++index fd4ddec..ab0391c 100644
 +--- a/apps/app/src/components/chat/reasoning-block.tsx
 ++++ b/apps/app/src/components/chat/reasoning-block.tsx
 +@@ -23,7 +23,7 @@ type ReasoningBlockProps = {
@@ -2479,7 +2479,7 @@ index 00000000..e4415789
 +     </Collapsible>
 +   )
 +diff --git a/apps/app/src/components/markdown/markdown-primitive.ts b/apps/app/src/components/markdown/markdown-primitive.ts
-+index 00858afa..d07f1528 100644
++index 00858af..d07f152 100644
 +--- a/apps/app/src/components/markdown/markdown-primitive.ts
 ++++ b/apps/app/src/components/markdown/markdown-primitive.ts
 +@@ -13,7 +13,7 @@ import {
@@ -2534,7 +2534,7 @@ index 00000000..e4415789
 + 
 +     return `<a href="${safe}" data-omnirush-link-href="${originalHref}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-[var(--omnirush-link,var(--indigo-10))] no-underline transition-colors hover:text-[var(--omnirush-link-hover,var(--indigo-8))]">${faviconHtml}${text}</a>`;
 +diff --git a/apps/app/src/components/markdown/markdown.tsx b/apps/app/src/components/markdown/markdown.tsx
-+index 51ebcf97..2dbdabee 100644
++index 51ebcf9..2dbdabe 100644
 +--- a/apps/app/src/components/markdown/markdown.tsx
 ++++ b/apps/app/src/components/markdown/markdown.tsx
 +@@ -25,6 +25,7 @@ import {
@@ -2580,7 +2580,7 @@ index 00000000..e4415789
 + 
 +diff --git a/apps/app/src/components/markdown/use-streaming-render-pace.ts b/apps/app/src/components/markdown/use-streaming-render-pace.ts
 +new file mode 100644
-+index 00000000..295b8352
++index 0000000..295b835
 +--- /dev/null
 ++++ b/apps/app/src/components/markdown/use-streaming-render-pace.ts
 +@@ -0,0 +1,83 @@
@@ -2668,7 +2668,7 @@ index 00000000..e4415789
 ++  return paced ? published : text;
 ++}
 +diff --git a/apps/app/src/react-app/domains/session/status/session-progress.ts b/apps/app/src/react-app/domains/session/status/session-progress.ts
-+index aac67914..0502af03 100644
++index aac6791..0502af0 100644
 +--- a/apps/app/src/react-app/domains/session/status/session-progress.ts
 ++++ b/apps/app/src/react-app/domains/session/status/session-progress.ts
 +@@ -54,6 +54,27 @@ function partFingerprint(part: UIMessage["parts"][number], value: () => unknown)
@@ -2710,7 +2710,7 @@ index 00000000..e4415789
 +         parts[key] = partFingerprint(part, () => [part.state, part.input,
 +diff --git a/docs/intel-mac-performance.md b/docs/intel-mac-performance.md
 +new file mode 100644
-+index 00000000..357dc5b5
++index 0000000..357dc5b
 +--- /dev/null
 ++++ b/docs/intel-mac-performance.md
 +@@ -0,0 +1,116 @@
@@ -2831,7 +2831,7 @@ index 00000000..e4415789
 ++   9223–9227) shows `Recalculate Style`, `Layout`, `marked` lexer frames and the
 ++   GPU process' `Compositing` rows.
 +diff --git a/evals/specs/streamed-markdown-answer.e2e.test.ts b/evals/specs/streamed-markdown-answer.e2e.test.ts
-+index 74c644bb..93d53bfd 100644
++index 74c644b..93d53bf 100644
 +--- a/evals/specs/streamed-markdown-answer.e2e.test.ts
 ++++ b/evals/specs/streamed-markdown-answer.e2e.test.ts
 +@@ -21,6 +21,7 @@ const blockSentinels = [
@@ -2898,12 +2898,12 @@ index 00000000..e4415789
 +   });
 diff --git a/fork/patches/0007-mac-pane-blur-on-intel.patch b/fork/patches/0007-mac-pane-blur-on-intel.patch
 new file mode 100644
-index 00000000..d632dd79
+index 0000000..9386386
 --- /dev/null
 +++ b/fork/patches/0007-mac-pane-blur-on-intel.patch
 @@ -0,0 +1,118 @@
 +diff --git a/apps/app/src/app/index.css b/apps/app/src/app/index.css
-+index f304d6ee..cdaf6bb2 100644
++index f304d6e..cdaf6bb 100644
 +--- a/apps/app/src/app/index.css
 ++++ b/apps/app/src/app/index.css
 +@@ -236,6 +236,11 @@ body {
@@ -2965,7 +2965,7 @@ index 00000000..d632dd79
 +    illuminating left-to-right like a subtle running light. Used for boot,
 +    "awaiting first token", and any idle-but-alive hint. */
 +diff --git a/apps/app/src/react-app/domains/session/chat/session-page.tsx b/apps/app/src/react-app/domains/session/chat/session-page.tsx
-+index 66b1eb5c..588aa847 100644
++index 66b1eb5..588aa84 100644
 +--- a/apps/app/src/react-app/domains/session/chat/session-page.tsx
 ++++ b/apps/app/src/react-app/domains/session/chat/session-page.tsx
 +@@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
@@ -3022,12 +3022,12 @@ index 00000000..d632dd79
 +             setCreateGroupWorkspaceId(workspaceId);
 diff --git a/fork/patches/0008-surface-markdown-dark-theme.patch b/fork/patches/0008-surface-markdown-dark-theme.patch
 new file mode 100644
-index 00000000..577242b9
+index 0000000..5f7e8f4
 --- /dev/null
 +++ b/fork/patches/0008-surface-markdown-dark-theme.patch
 @@ -0,0 +1,21 @@
 +diff --git a/apps/app/tests/markdown-code-block.test.ts b/apps/app/tests/markdown-code-block.test.ts
-+index 3bbfb64c..323e09ac 100644
++index 3bbfb64..323e09a 100644
 +--- a/apps/app/tests/markdown-code-block.test.ts
 ++++ b/apps/app/tests/markdown-code-block.test.ts
 +@@ -71,14 +71,14 @@ describe("markdown code blocks", () => {
@@ -3049,13 +3049,13 @@ index 00000000..577242b9
 + });
 diff --git a/fork/patches/0009-editor-scroll-find-select-all.patch b/fork/patches/0009-editor-scroll-find-select-all.patch
 new file mode 100644
-index 00000000..84f61046
+index 0000000..84c1219
 --- /dev/null
 +++ b/fork/patches/0009-editor-scroll-find-select-all.patch
 @@ -0,0 +1,712 @@
 +diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts b/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts
 +new file mode 100644
-+index 00000000..09fcd43b
++index 0000000..09fcd43
 +--- /dev/null
 ++++ b/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts
 +@@ -0,0 +1,94 @@
@@ -3155,7 +3155,7 @@ index 00000000..84f61046
 ++}
 +diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.css b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.css
 +new file mode 100644
-+index 00000000..75204d3d
++index 0000000..75204d3
 +--- /dev/null
 ++++ b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.css
 +@@ -0,0 +1,9 @@
@@ -3169,7 +3169,7 @@ index 00000000..84f61046
 ++  color: inherit;
 ++}
 +diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
-+index 738adbc6..66dfb729 100644
++index 738adbc..66dfb72 100644
 +--- a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
 ++++ b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
 +@@ -1,7 +1,7 @@
@@ -3366,7 +3366,7 @@ index 00000000..84f61046
 +           <PreviewLoading />
 +         ) : isError ? (
 +diff --git a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
-+index 76a2ff62..f9b718ea 100644
++index 76a2ff6..f9b718e 100644
 +--- a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
 +@@ -747,10 +747,20 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
@@ -3411,7 +3411,7 @@ index 00000000..84f61046
 + 
 +   const panelRoundedClass =
 +diff --git a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-+index 54262b60..b8948313 100644
++index 54262b6..b894831 100644
 +--- a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
 +@@ -31,6 +31,7 @@ import {
@@ -3540,7 +3540,7 @@ index 00000000..84f61046
 +         <ImperativeHandlePlugin editorRef={ref} />
 +       </div>
 +diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-+index e6a4472e..ff55a2d8 100644
++index e6a4472..ff55a2d 100644
 +--- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 +@@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
@@ -3631,7 +3631,7 @@ index 00000000..84f61046
 +     if (resolveFindOwnerSessionId() === props.sessionId) {
 +diff --git a/apps/app/tests/artifact-find.test.ts b/apps/app/tests/artifact-find.test.ts
 +new file mode 100644
-+index 00000000..445a2521
++index 0000000..445a252
 +--- /dev/null
 ++++ b/apps/app/tests/artifact-find.test.ts
 +@@ -0,0 +1,52 @@
@@ -3688,7 +3688,7 @@ index 00000000..84f61046
 ++  expect(matches[0]?.toString()).toBe("Keep searching");
 ++});
 +diff --git a/apps/app/tests/composer-focus-continuity.test.tsx b/apps/app/tests/composer-focus-continuity.test.tsx
-+index f11d5510..0fe166ef 100644
++index f11d551..0fe166e 100644
 +--- a/apps/app/tests/composer-focus-continuity.test.tsx
 ++++ b/apps/app/tests/composer-focus-continuity.test.tsx
 +@@ -492,6 +492,18 @@ test("composer focus and optimistic sends preserve drafts through snapshots and
@@ -3711,7 +3711,7 @@ index 00000000..84f61046
 +     expect(creations).toBe(2);
 +     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
 +diff --git a/evals/specs/artifact-code-browser.e2e.test.ts b/evals/specs/artifact-code-browser.e2e.test.ts
-+index 7227108b..55f52a8c 100644
++index 7227108..55f52a8 100644
 +--- a/evals/specs/artifact-code-browser.e2e.test.ts
 ++++ b/evals/specs/artifact-code-browser.e2e.test.ts
 +@@ -8,6 +8,14 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
@@ -3730,7 +3730,7 @@ index 00000000..84f61046
 +     await user.type({ placeholder: "Search files" }, "omnirush-artifact-proof.ts");
 +     await user.press("Tab");
 +diff --git a/evals/specs/attachment-upload-loading-state.e2e.test.ts b/evals/specs/attachment-upload-loading-state.e2e.test.ts
-+index a864814f..89fb6790 100644
++index a864814..89fb679 100644
 +--- a/evals/specs/attachment-upload-loading-state.e2e.test.ts
 ++++ b/evals/specs/attachment-upload-loading-state.e2e.test.ts
 +@@ -67,6 +67,31 @@ test(`attaching an image in ${entryPoint} retains the draft until the upload is
@@ -3767,12 +3767,12 @@ index 00000000..84f61046
 +       const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
 diff --git a/fork/patches/0010-upstream-compatibility.patch b/fork/patches/0010-upstream-compatibility.patch
 new file mode 100644
-index 00000000..23fbfcfe
+index 0000000..9db0c61
 --- /dev/null
 +++ b/fork/patches/0010-upstream-compatibility.patch
 @@ -0,0 +1,31 @@
 +diff --git a/AGENTS.md b/AGENTS.md
-+index 82a42408..0add8d71 100644
++index 82a4240..0add8d7 100644
 +--- a/AGENTS.md
 ++++ b/AGENTS.md
 +@@ -82,3 +82,9 @@ frontend updates, reset and teardown.
@@ -3787,7 +3787,7 @@ index 00000000..23fbfcfe
 ++Fork difference registry: `FORK_DIFFS.md`. Keep updated.
 +diff --git a/FORK_DIFFS.md b/FORK_DIFFS.md
 +new file mode 100644
-+index 00000000..5cdc5283
++index 0000000..5cdc528
 +--- /dev/null
 ++++ b/FORK_DIFFS.md
 +@@ -0,0 +1,11 @@
@@ -3804,12 +3804,12 @@ index 00000000..23fbfcfe
 ++- Full session/branch Markdown (`.md`) export — including model reasoning, tool call inputs/outputs/errors, and nested sub-agent transcripts — via the session header, sidebar menu, Command Palette, and `/export [filename]` ([omnirush-ai/omnirush-gui#349](https://github.com/omnirush-ai/omnirush-gui/issues/349)).
 diff --git a/fork/patches/0011-github-favicon-theme.patch b/fork/patches/0011-github-favicon-theme.patch
 new file mode 100644
-index 00000000..cd8d6f44
+index 0000000..040c348
 --- /dev/null
 +++ b/fork/patches/0011-github-favicon-theme.patch
 @@ -0,0 +1,140 @@
 +diff --git a/apps/app/src/lib/favicon.ts b/apps/app/src/lib/favicon.ts
-+index d4876fa8..b34a6a80 100644
++index d4876fa..b34a6a8 100644
 +--- a/apps/app/src/lib/favicon.ts
 ++++ b/apps/app/src/lib/favicon.ts
 +@@ -1,14 +1,106 @@
@@ -3922,7 +3922,7 @@ index 00000000..cd8d6f44
 ++}
 +diff --git a/apps/app/tests/favicon.test.ts b/apps/app/tests/favicon.test.ts
 +new file mode 100644
-+index 00000000..523a29e1
++index 0000000..523a29e
 +--- /dev/null
 ++++ b/apps/app/tests/favicon.test.ts
 +@@ -0,0 +1,22 @@
@@ -3950,12 +3950,12 @@ index 00000000..cd8d6f44
 ++});
 diff --git a/fork/patches/0012-desktop-startup-zoom-restore.patch b/fork/patches/0012-desktop-startup-zoom-restore.patch
 new file mode 100644
-index 00000000..7a51461d
+index 0000000..a269309
 --- /dev/null
 +++ b/fork/patches/0012-desktop-startup-zoom-restore.patch
 @@ -0,0 +1,350 @@
 +diff --git a/apps/app/src/app/lib/desktop.ts b/apps/app/src/app/lib/desktop.ts
-+index 526c92f2..f345acf0 100644
++index 526c92f..f345acf 100644
 +--- a/apps/app/src/app/lib/desktop.ts
 ++++ b/apps/app/src/app/lib/desktop.ts
 +@@ -196,6 +196,10 @@ declare global {
@@ -4000,7 +4000,7 @@ index 00000000..7a51461d
 + 
 + export async function subscribeDesktopDeepLinks(
 +diff --git a/apps/app/src/react-app/shell/font-zoom.ts b/apps/app/src/react-app/shell/font-zoom.ts
-+index 8461a421..fa39dbaf 100644
++index 8461a42..fa39dba 100644
 +--- a/apps/app/src/react-app/shell/font-zoom.ts
 ++++ b/apps/app/src/react-app/shell/font-zoom.ts
 +@@ -9,71 +9,125 @@ import {
@@ -4193,7 +4193,7 @@ index 00000000..7a51461d
 + }
 +diff --git a/apps/app/tests/font-zoom.test.ts b/apps/app/tests/font-zoom.test.ts
 +new file mode 100644
-+index 00000000..02c0c1fb
++index 0000000..02c0c1f
 +--- /dev/null
 ++++ b/apps/app/tests/font-zoom.test.ts
 +@@ -0,0 +1,107 @@
@@ -4306,16 +4306,16 @@ index 00000000..7a51461d
 ++});
 diff --git a/fork/patches/0013-session-markdown-export.patch b/fork/patches/0013-session-markdown-export.patch
 new file mode 100644
-index 00000000..49b5ee74
+index 0000000..f03d9cd
 --- /dev/null
 +++ b/fork/patches/0013-session-markdown-export.patch
-@@ -0,0 +1,7867 @@
+@@ -0,0 +1,8026 @@
 +diff --git a/apps/app/src/app/lib/markdown-export/canonicalize.ts b/apps/app/src/app/lib/markdown-export/canonicalize.ts
 +new file mode 100644
-+index 00000000..83df48ab
++index 0000000..0dbc837
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/markdown-export/canonicalize.ts
-+@@ -0,0 +1,769 @@
++@@ -0,0 +1,814 @@
 ++import type {
 ++  AssistantMessage,
 ++  FilePart,
@@ -4424,6 +4424,9 @@ index 00000000..49b5ee74
 ++  /^\(Showing lines (\d+)-(\d+) of (\d+)\. Use offset=(\d+) to continue\.\)$/;
 ++const MORE_LINES_V1_PATTERN =
 ++  /^\(File has more lines\. Use 'offset' parameter to read beyond line (\d+)\)$/;
+++const ENGINE2_TRUNCATED_PATTERN =
+++  /^\[Output truncated\. Continue reading with offset: (\d+)\]$/;
+++const ENGINE2_READ_HEADER_PATTERN = /^Read file (.+), lines (\d+)-(\d+)$/;
 ++
 ++const V2_LINE_PATTERN = /^(\d+): ?(.*)$/;
 ++const V1_LINE_PATTERN = /^0*(\d+)\| ?(.*)$/;
@@ -4552,6 +4555,13 @@ index 00000000..49b5ee74
 ++      continue;
 ++    }
 ++
+++    const engine2TruncatedMatch = ENGINE2_TRUNCATED_PATTERN.exec(rawLine);
+++    if (engine2TruncatedMatch) {
+++      footerKind = "more_lines";
+++      truncated = true;
+++      continue;
+++    }
+++
 ++    return null;
 ++  }
 ++
@@ -4644,6 +4654,41 @@ index 00000000..49b5ee74
 ++      truncated: bodyResult.truncated,
 ++      footerKind: bodyResult.footerKind,
 ++    };
+++  }
+++
+++  // Variant C: OpenCode Engine2 `Read file <path>, lines <start>-<end>\n1: ...`
+++  const newlineIdx = normalized.indexOf("\n");
+++  if (newlineIdx > 0) {
+++    const firstLineText = normalized.slice(0, newlineIdx);
+++    const hdrMatch = ENGINE2_READ_HEADER_PATTERN.exec(firstLineText);
+++    if (hdrMatch) {
+++      const headerPath = (hdrMatch[1] ?? "").trim();
+++      const expectedFirst = Number(hdrMatch[2]);
+++      const expectedLast = Number(hdrMatch[3]);
+++      const bodyResult = parseNumberedBody(normalized.slice(newlineIdx + 1), V2_LINE_PATTERN);
+++      if (
+++        bodyResult &&
+++        bodyResult.firstLine === expectedFirst &&
+++        bodyResult.lastLine === expectedLast
+++      ) {
+++        const displayPath = headerPath || extractInputFilePath(input);
+++        const cleanBody = bodyResult.lines.join("\n");
+++        return {
+++          envelopeVersion: "v2",
+++          displayPath,
+++          comparablePath: normalizeComparableFilePath(displayPath, workspaceRoot),
+++          fenceLanguage: inferFenceLanguageFromPath(displayPath),
+++          lines: bodyResult.lines,
+++          cleanBody,
+++          cleanBodySha256: sha256Hex(cleanBody),
+++          firstLine: bodyResult.firstLine,
+++          lastLine: bodyResult.lastLine,
+++          totalLines: bodyResult.totalLines,
+++          truncated: bodyResult.truncated,
+++          footerKind: bodyResult.footerKind,
+++        };
+++      }
+++    }
 ++  }
 ++
 ++  return null;
@@ -5087,7 +5132,7 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/app/lib/markdown-export/file-delta.ts b/apps/app/src/app/lib/markdown-export/file-delta.ts
 +new file mode 100644
-+index 00000000..a8c3d0b2
++index 0000000..a8c3d0b
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/markdown-export/file-delta.ts
 +@@ -0,0 +1,288 @@
@@ -5381,7 +5426,7 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/app/lib/markdown-export/hash-and-bytes.ts b/apps/app/src/app/lib/markdown-export/hash-and-bytes.ts
 +new file mode 100644
-+index 00000000..c19e6e64
++index 0000000..c19e6e6
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/markdown-export/hash-and-bytes.ts
 +@@ -0,0 +1,145 @@
@@ -5532,7 +5577,7 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/app/lib/markdown-export/lossless-expander.ts b/apps/app/src/app/lib/markdown-export/lossless-expander.ts
 +new file mode 100644
-+index 00000000..22a5d75e
++index 0000000..22a5d75
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/markdown-export/lossless-expander.ts
 +@@ -0,0 +1,329 @@
@@ -5867,10 +5912,10 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/app/lib/markdown-export/render-markdown.ts b/apps/app/src/app/lib/markdown-export/render-markdown.ts
 +new file mode 100644
-+index 00000000..5521f74a
++index 0000000..eddf40f
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/markdown-export/render-markdown.ts
-+@@ -0,0 +1,1015 @@
++@@ -0,0 +1,1025 @@
 ++import type { Todo } from "@opencode-ai/sdk/v2/client";
 ++
 ++import { createCanonicalTranscriptIRWithoutBaseline } from "./canonicalize";
@@ -6342,7 +6387,7 @@ index 00000000..49b5ee74
 ++        }
 ++      }
 ++
-++      // Pass E (Read): Emit canonical stripped Read block when smaller than raw OpenCode XML envelope
+++      // Pass E (Read): Emit canonical stripped Read block when smaller than raw OpenCode envelope
 ++      if (canonicalInlineBytes < rawBaselineBytes) {
 ++        stats.canonicalReadCount += 1;
 ++        stats.savedBytesByStructured += rawBaselineBytes - canonicalInlineBytes;
@@ -6366,6 +6411,16 @@ index 00000000..49b5ee74
 ++        }
 ++        continue;
 ++      }
+++
+++      plans.set(tool.callRefId, {
+++        inputBlock,
+++        outputPlan: {
+++          kind: "raw",
+++          fencedBlock: rawBaselineBlock,
+++        },
+++        outputSourceSha256: tool.outputSha256,
+++      });
+++      continue;
 ++    }
 ++
 ++    // Branch 2: General tool output (Bash, Grep, Glob, JSON/MCP, directory Read, error live output, etc.)
@@ -6888,10 +6943,10 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/app/lib/markdown-export/safety-router.ts b/apps/app/src/app/lib/markdown-export/safety-router.ts
 +new file mode 100644
-+index 00000000..6f939fd0
++index 0000000..6a3f376
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/markdown-export/safety-router.ts
-+@@ -0,0 +1,135 @@
++@@ -0,0 +1,140 @@
 ++import { isPlainObject } from "./structured-compact";
 ++import type {
 ++  CanonicalToolPartIR,
@@ -6922,9 +6977,14 @@ index 00000000..49b5ee74
 ++  /^panic:\s+\S/m,
 ++  /^goroutine \d+ \[running\]:/m,
 ++  /^fatal error:\s+\S/m,
-++  // Unhandled JS/TS/runtime errors & package manager errors
+++  // Unhandled JS/TS/runtime errors, Git fatal errors, timeouts & package manager errors
 ++  /^(?:Uncaught\s+)?(?:TypeError|ReferenceError|SyntaxError|RangeError|URIError|EvalError|AssertionError|AggregateError|FATAL ERROR):\s+\S/m,
 ++  /^(?:npm ERR!|ERR_PNPM_[A-Z0-9_]+|Segmentation fault|Bus error)\b/m,
+++  /^fatal:\s+\S/m,
+++  /^(?:Command exceeded timeout of \d+\s*ms|Timed out before completion)\b/m,
+++  // Python unittest failures
+++  /^(?:FAIL|ERROR):\s+\S+\s+\([A-Za-z0-9_.]+\)$/m,
+++  /^FAILED\s+\((?:failures|errors)=\d+/m,
 ++];
 ++
 ++const COMPILER_ERROR_PATTERNS: readonly RegExp[] = [
@@ -7029,10 +7089,10 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/app/lib/markdown-export/smart-cli.ts b/apps/app/src/app/lib/markdown-export/smart-cli.ts
 +new file mode 100644
-+index 00000000..c320f686
++index 0000000..f68f221
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/markdown-export/smart-cli.ts
-+@@ -0,0 +1,528 @@
++@@ -0,0 +1,605 @@
 ++import { normalizeComparableFilePath } from "./canonicalize";
 ++import { shortSha256, utf8ByteLength } from "./hash-and-bytes";
 ++import { fenceMarkdownCode, isPlainObject } from "./structured-compact";
@@ -7056,6 +7116,8 @@ index 00000000..49b5ee74
 ++  /^\s*[✓✔]\s+\S.*$/,
 ++  // Cargo test: `test module::my_test ... ok`
 ++  /^test\s+\S+\s+\.\.\.\s+ok$/,
+++  // Python unittest verbose: `test_foo (pkg.mod.TestClass.test_foo) ... ok`
+++  /^[A-Za-z_][A-Za-z0-9_]*\s+\([A-Za-z0-9_.]+\)\s+\.\.\.\s+ok$/,
 ++  // Pytest verbose: `tests/test_api.py::test_login PASSED [ 25%]`
 ++  /^\S+::\S+\s+PASSED(?:\s+\[\s*\d+%\])?$/,
 ++  // Go test verbose: `--- PASS: TestSomething (0.01s)`
@@ -7241,9 +7303,51 @@ index 00000000..49b5ee74
 ++    const compacted: string[] = [];
 ++    let i = 0;
 ++    while (i < workingLines.length) {
-++      const match = /^([^:\r\n]+):\d+:/.exec(workingLines[i]!);
+++      // Variant 1: OpenCode native Grep block (`<file>:` followed by `  Line N: ...`)
+++      const currentLine = workingLines[i]!;
+++      const isEngineGrepFileHeader =
+++        currentLine.endsWith(":") &&
+++        !currentLine.startsWith(" ") &&
+++        i + 1 < workingLines.length &&
+++        /^\s{2,}Line \d+:/.test(workingLines[i + 1]!);
+++
+++      if (isEngineGrepFileHeader) {
+++        const fileKey = currentLine.slice(0, -1);
+++        compacted.push(currentLine);
+++        i += 1;
+++        const matchLines: string[] = [];
+++        while (i < workingLines.length) {
+++          const cand = workingLines[i]!;
+++          if (/^\s{2,}Line \d+:/.test(cand)) {
+++            matchLines.push(cand);
+++            i += 1;
+++            continue;
+++          }
+++          if (
+++            cand === "" &&
+++            i + 1 < workingLines.length &&
+++            /^\s{2,}Line \d+:/.test(workingLines[i + 1]!)
+++          ) {
+++            i += 1;
+++            continue;
+++          }
+++          break;
+++        }
+++        if (matchLines.length > 8) {
+++          for (let k = 0; k < 5; k += 1) {
+++            compacted.push(matchLines[k]!);
+++          }
+++          compacted.push(`  [... +${matchLines.length - 5} more matches in ${fileKey} ...]`);
+++        } else {
+++          compacted.push(...matchLines);
+++        }
+++        continue;
+++      }
+++
+++      // Variant 2: ripgrep / grep -n (`file:line:text`)
+++      const match = /^([^:\r\n]+):\d+:/.exec(currentLine);
 ++      if (!match) {
-++        compacted.push(workingLines[i]!);
+++        compacted.push(currentLine);
 ++        i += 1;
 ++        continue;
 ++      }
@@ -7317,12 +7421,16 @@ index 00000000..49b5ee74
 ++}): { output: string; compacted: boolean; savedBytes: number } {
 ++  const { tool, rawOutput, safety, workspaceRoot } = params;
 ++
-++  // Never alter PEM/credentials, SQL migrations, canonical Read bodies, or structured JSON via lossy CLI filters
+++  const lowerTool = tool.part.tool.trim().toLowerCase();
+++
+++  // Never alter PEM/credentials, SQL migrations, Read file bodies, unified git diffs, or structured JSON via lossy CLI filters
 ++  if (
+++    lowerTool === "read" ||
 ++    tool.canonicalRead !== null ||
 ++    tool.parsedOutputJson !== undefined ||
 ++    safety.reasons.includes("credentials_or_pem") ||
-++    safety.reasons.includes("sql_migration")
+++    safety.reasons.includes("sql_migration") ||
+++    /^diff --git a\/\S+\s+b\/\S+$/m.test(rawOutput)
 ++  ) {
 ++    return { output: rawOutput, compacted: false, savedBytes: 0 };
 ++  }
@@ -7339,12 +7447,13 @@ index 00000000..49b5ee74
 ++    candidate = compactSearchOutput(tool.part.tool, candidate, workspaceRoot);
 ++    candidate = collapseConsecutiveIdenticalLines(candidate);
 ++
+++    const isStructuredSearchTool = lowerTool === "grep" || lowerTool === "glob";
+++    const lineThreshold = isStructuredSearchTool ? 260 : CLI_HEAD_TAIL_LINE_THRESHOLD;
+++    const byteThreshold = isStructuredSearchTool ? 24_000 : CLI_HEAD_TAIL_BYTE_THRESHOLD;
+++
 ++    const candidateLines = candidate.split("\n");
 ++    const candidateBytes = utf8ByteLength(candidate);
-++    if (
-++      candidateLines.length > CLI_HEAD_TAIL_LINE_THRESHOLD &&
-++      candidateBytes > CLI_HEAD_TAIL_BYTE_THRESHOLD
-++    ) {
+++    if (candidateLines.length > lineThreshold && candidateBytes > byteThreshold) {
 ++      const omitted = candidateLines.length - CLI_KEEP_HEAD_LINES - CLI_KEEP_TAIL_LINES;
 ++      if (omitted >= 20) {
 ++        const head = candidateLines.slice(0, CLI_KEEP_HEAD_LINES).join("\n");
@@ -7369,6 +7478,8 @@ index 00000000..49b5ee74
 ++  mutatedPaths: ReadonlySet<string>;
 ++  /** Latest completed CanonicalReadFile tool call per comparablePath in document order. */
 ++  latestReadByPath: ReadonlyMap<string, CanonicalToolPartIR>;
+++  /** All completed CanonicalReadFile tool calls per comparablePath in document order. */
+++  readsByPath: ReadonlyMap<string, readonly CanonicalToolPartIR[]>;
 ++};
 ++
 ++function extractPathsFromPatchText(patchText: string): string[] {
@@ -7431,6 +7542,7 @@ index 00000000..49b5ee74
 ++export function buildBranchStubIndex(root: CanonicalSessionNodeIR): BranchStubIndex {
 ++  const mutatedPaths = new Set<string>();
 ++  const latestReadByPath = new Map<string, CanonicalToolPartIR>();
+++  const readsByPath = new Map<string, CanonicalToolPartIR[]>();
 ++
 ++  const walk = (node: CanonicalSessionNodeIR) => {
 ++    const workspaceRoot = node.session.directory?.trim() ?? "";
@@ -7455,7 +7567,14 @@ index 00000000..49b5ee74
 ++        }
 ++
 ++        if (part.canonicalRead && part.canonicalRead.comparablePath) {
-++          latestReadByPath.set(part.canonicalRead.comparablePath, part);
+++          const key = part.canonicalRead.comparablePath;
+++          latestReadByPath.set(key, part);
+++          const list = readsByPath.get(key);
+++          if (list) {
+++            list.push(part);
+++          } else {
+++            readsByPath.set(key, [part]);
+++          }
 ++        }
 ++
 ++        if (part.subagent) {
@@ -7466,7 +7585,7 @@ index 00000000..49b5ee74
 ++  };
 ++
 ++  walk(root);
-++  return { mutatedPaths, latestReadByPath };
+++  return { mutatedPaths, latestReadByPath, readsByPath };
 ++}
 ++
 ++function sanitizeInlineCode(value: string): string {
@@ -7499,17 +7618,35 @@ index 00000000..49b5ee74
 ++  if (tool.canonicalRead !== null) {
 ++    const read = tool.canonicalRead;
 ++    if (!read.comparablePath) return null;
-++    const latestForPath = stubIndex.latestReadByPath.get(read.comparablePath);
-++    const isSupersededByLaterRead =
-++      Boolean(latestForPath) && latestForPath!.callRefId !== tool.callRefId;
+++    const readsForPath = stubIndex.readsByPath.get(read.comparablePath) ?? [];
+++    const selfIdx = readsForPath.findIndex((item) => item.callRefId === tool.callRefId);
+++    let supersedingRead: CanonicalToolPartIR | null = null;
+++    if (selfIdx >= 0) {
+++      for (let j = readsForPath.length - 1; j > selfIdx; j -= 1) {
+++        const candidate = readsForPath[j]!;
+++        const candRead = candidate.canonicalRead;
+++        if (!candRead) continue;
+++        const coversRange =
+++          candRead.firstLine <= read.firstLine && candRead.lastLine >= read.lastLine;
+++        const bothFullFileFromTop =
+++          read.firstLine === 1 &&
+++          !read.truncated &&
+++          candRead.firstLine === 1 &&
+++          !candRead.truncated;
+++        if (coversRange || bothFullFileFromTop) {
+++          supersedingRead = candidate;
+++          break;
+++        }
+++      }
+++    }
 ++    const pathLabel = sanitizeInlineCode(read.displayPath || read.comparablePath);
 ++
 ++    if (
-++      isSupersededByLaterRead &&
+++      supersedingRead &&
 ++      rawBaselineBytes >= MIN_SUPERSEDED_READ_BYTES &&
 ++      read.lines.length >= MIN_SUPERSEDED_READ_LINES
 ++    ) {
-++      const stub = `> [Stubbed superseded Read of \`${pathLabel}\` (${formatReadShortRange(read)}) · \`sha256:${shortSha256(read.cleanBodySha256)}\` — latest snapshot in ${latestForPath!.turnLabel}]`;
+++      const stub = `> [Stubbed superseded Read of \`${pathLabel}\` (${formatReadShortRange(read)}) · \`sha256:${shortSha256(read.cleanBodySha256)}\` — latest snapshot in ${supersedingRead.turnLabel}]`;
 ++      const saved = rawBaselineBytes - utf8ByteLength(stub);
 ++      if (saved >= MIN_STUB_NET_WIN_BYTES) {
 ++        return { markdownBlock: stub, savedBytes: saved };
@@ -7563,7 +7700,7 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/app/lib/markdown-export/structured-compact.ts b/apps/app/src/app/lib/markdown-export/structured-compact.ts
 +new file mode 100644
-+index 00000000..e8155f76
++index 0000000..e8155f7
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/markdown-export/structured-compact.ts
 +@@ -0,0 +1,281 @@
@@ -7850,7 +7987,7 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/app/lib/markdown-export/types.ts b/apps/app/src/app/lib/markdown-export/types.ts
 +new file mode 100644
-+index 00000000..84baa761
++index 0000000..84baa76
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/markdown-export/types.ts
 +@@ -0,0 +1,216 @@
@@ -8072,7 +8209,7 @@ index 00000000..49b5ee74
 ++};
 +diff --git a/apps/app/src/app/lib/session-markdown-export.ts b/apps/app/src/app/lib/session-markdown-export.ts
 +new file mode 100644
-+index 00000000..19a71d44
++index 0000000..19a71d4
 +--- /dev/null
 ++++ b/apps/app/src/app/lib/session-markdown-export.ts
 +@@ -0,0 +1,253 @@
@@ -8330,7 +8467,7 @@ index 00000000..49b5ee74
 ++  return found;
 ++}
 +diff --git a/apps/app/src/i18n/locales/en.ts b/apps/app/src/i18n/locales/en.ts
-+index 588f94b6..4771e35e 100644
++index 588f94b..4771e35 100644
 +--- a/apps/app/src/i18n/locales/en.ts
 ++++ b/apps/app/src/i18n/locales/en.ts
 +@@ -1241,6 +1241,12 @@ export default {
@@ -8372,7 +8509,7 @@ index 00000000..49b5ee74
 ++  "session.export_confirm": "Export .md",
 + } as const;
 +diff --git a/apps/app/src/i18n/locales/ru.ts b/apps/app/src/i18n/locales/ru.ts
-+index 2269df41..49c1064e 100644
++index 2269df4..49c1064 100644
 +--- a/apps/app/src/i18n/locales/ru.ts
 ++++ b/apps/app/src/i18n/locales/ru.ts
 +@@ -1287,4 +1287,30 @@ export default {
@@ -8407,7 +8544,7 @@ index 00000000..49b5ee74
 ++  "session.export_confirm": "Скачать .md",
 + } as const;
 +diff --git a/apps/app/src/i18n/locales/zh.ts b/apps/app/src/i18n/locales/zh.ts
-+index e3010078..f2a96d89 100644
++index e301007..f2a96d8 100644
 +--- a/apps/app/src/i18n/locales/zh.ts
 ++++ b/apps/app/src/i18n/locales/zh.ts
 +@@ -1247,6 +1247,12 @@ export default {
@@ -8450,7 +8587,7 @@ index 00000000..49b5ee74
 + } as const;
 +diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown-modal.tsx b/apps/app/src/react-app/domains/session/commands/export-session-markdown-modal.tsx
 +new file mode 100644
-+index 00000000..c9a267f8
++index 0000000..c9a267f
 +--- /dev/null
 ++++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown-modal.tsx
 +@@ -0,0 +1,340 @@
@@ -8796,7 +8933,7 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown-store.ts b/apps/app/src/react-app/domains/session/commands/export-session-markdown-store.ts
 +new file mode 100644
-+index 00000000..929da545
++index 0000000..929da54
 +--- /dev/null
 ++++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown-store.ts
 +@@ -0,0 +1,29 @@
@@ -8831,7 +8968,7 @@ index 00000000..49b5ee74
 ++}
 +diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
 +new file mode 100644
-+index 00000000..516da88c
++index 0000000..516da88
 +--- /dev/null
 ++++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
 +@@ -0,0 +1,360 @@
@@ -9196,7 +9333,7 @@ index 00000000..49b5ee74
 ++  return { exporting, exportMarkdown: runExport };
 ++}
 +diff --git a/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx b/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx
-+index cfeec865..a1daaa46 100644
++index cfeec86..a1daaa4 100644
 +--- a/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx
 ++++ b/apps/app/src/react-app/domains/session/commands/session-command-controls.tsx
 +@@ -1,6 +1,6 @@
@@ -9269,7 +9406,7 @@ index 00000000..49b5ee74
 +       <StatusDialog {...props} />
 +       <ChangesPanel
 +diff --git a/apps/app/src/react-app/domains/session/commands/session-commands-store.ts b/apps/app/src/react-app/domains/session/commands/session-commands-store.ts
-+index f14c4de9..f1d020b8 100644
++index f14c4de..f1d020b 100644
 +--- a/apps/app/src/react-app/domains/session/commands/session-commands-store.ts
 ++++ b/apps/app/src/react-app/domains/session/commands/session-commands-store.ts
 +@@ -11,12 +11,14 @@ export type SessionCommandBridge = {
@@ -9289,7 +9426,7 @@ index 00000000..49b5ee74
 + 
 + type SessionCommandsStore = {
 +diff --git a/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx b/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx
-+index ae0b7594..71489401 100644
++index ae0b759..7148940 100644
 +--- a/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx
 ++++ b/apps/app/src/react-app/domains/session/sidebar/app-sidebar-provider.tsx
 +@@ -23,6 +23,7 @@ export type SidebarContextValue = {
@@ -9301,7 +9438,7 @@ index 00000000..49b5ee74
 +   onOpenCreateGroupModal?: (workspaceId: string) => void;
 +   onOpenRenameWorkspace: (workspaceId: string) => void;
 +diff --git a/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx b/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
-+index 21785ad1..f93fb355 100644
++index 21785ad..f93fb35 100644
 +--- a/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
 ++++ b/apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx
 +@@ -10,6 +10,7 @@ import {
@@ -9355,7 +9492,7 @@ index 00000000..49b5ee74
 +     onOpenCreateGroupModal: props.onOpenCreateGroupModal,
 +     onOpenRenameWorkspace: props.onOpenRenameWorkspace,
 +diff --git a/apps/app/src/react-app/shell/session-route.tsx b/apps/app/src/react-app/shell/session-route.tsx
-+index 0a8f1b5c..a5de271d 100644
++index 0a8f1b5..a5de271 100644
 +--- a/apps/app/src/react-app/shell/session-route.tsx
 ++++ b/apps/app/src/react-app/shell/session-route.tsx
 +@@ -27,6 +27,8 @@ import { isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
@@ -9442,7 +9579,7 @@ index 00000000..49b5ee74
 +       options={pickerOptions}
 +diff --git a/apps/app/tests/export-session-markdown-modal.test.tsx b/apps/app/tests/export-session-markdown-modal.test.tsx
 +new file mode 100644
-+index 00000000..218c7208
++index 0000000..218c720
 +--- /dev/null
 ++++ b/apps/app/tests/export-session-markdown-modal.test.tsx
 +@@ -0,0 +1,421 @@
@@ -9869,7 +10006,7 @@ index 00000000..49b5ee74
 ++});
 +diff --git a/apps/app/tests/markdown-export-e2e.test.ts b/apps/app/tests/markdown-export-e2e.test.ts
 +new file mode 100644
-+index 00000000..27c8c5a2
++index 0000000..27c8c5a
 +--- /dev/null
 ++++ b/apps/app/tests/markdown-export-e2e.test.ts
 +@@ -0,0 +1,522 @@
@@ -10397,10 +10534,10 @@ index 00000000..49b5ee74
 ++});
 +diff --git a/apps/app/tests/markdown-export-lossless.test.ts b/apps/app/tests/markdown-export-lossless.test.ts
 +new file mode 100644
-+index 00000000..188e4043
++index 0000000..2ecb771
 +--- /dev/null
 ++++ b/apps/app/tests/markdown-export-lossless.test.ts
-+@@ -0,0 +1,581 @@
++@@ -0,0 +1,595 @@
 ++import { describe, expect, test } from "bun:test";
 ++import type { AssistantMessage, Part, Session, UserMessage } from "@opencode-ai/sdk/v2/client";
 ++
@@ -10561,6 +10698,20 @@ index 00000000..49b5ee74
 ++    expect(v1).not.toBeNull();
 ++    expect(v1!.comparablePath).toBe("src/server.ts");
 ++    expect(v1!.cleanBodySha256).toBe(v2!.cleanBodySha256);
+++
+++    // Engine2 `Read file <path>, lines <start>-<end>` + `[Output truncated. Continue reading with offset: N]`
+++    const engine2Numbered = sampleLines.map((line, idx) => `${idx + 1}: ${line}`).join("\n");
+++    const engine2Truncated = parseCanonicalReadEnvelope({
+++      toolName: "read",
+++      rawOutput: `Read file /workspace/omnirush-gui/src/server.ts, lines 1-${sampleLines.length}\n${engine2Numbered}\n[Output truncated. Continue reading with offset: ${sampleLines.length + 1}]`,
+++      input: { filePath: "/workspace/omnirush-gui/src/server.ts" },
+++      workspaceRoot: "/workspace/omnirush-gui",
+++    });
+++    expect(engine2Truncated).not.toBeNull();
+++    expect(engine2Truncated!.comparablePath).toBe("src/server.ts");
+++    expect(engine2Truncated!.cleanBodySha256).toBe(v2!.cleanBodySha256);
+++    expect(engine2Truncated!.truncated).toBe(true);
+++    expect(engine2Truncated!.footerKind).toBe("more_lines");
 ++
 ++    // Directory listings must NOT be misclassified as file bodies
 ++    const dirEnvelope = `<path>/workspace/src</path>\n<type>directory</type>\n<entries>\nserver.ts\n(1 entries)\n</entries>`;
@@ -10984,10 +11135,10 @@ index 00000000..49b5ee74
 ++});
 +diff --git a/apps/app/tests/markdown-export-smart-stubs.test.ts b/apps/app/tests/markdown-export-smart-stubs.test.ts
 +new file mode 100644
-+index 00000000..655c3a54
++index 0000000..cd93fdb
 +--- /dev/null
 ++++ b/apps/app/tests/markdown-export-smart-stubs.test.ts
-+@@ -0,0 +1,528 @@
++@@ -0,0 +1,536 @@
 ++import { describe, expect, test } from "bun:test";
 ++import type { AssistantMessage, Part, Session, UserMessage } from "@opencode-ai/sdk/v2/client";
 ++
@@ -11079,14 +11230,22 @@ index 00000000..49b5ee74
 ++      "Received: 200",
 ++      "      at <anonymous> (/workspace/omnirush-gui/tests/auth.test.ts:88:14)",
 ++      ...Array.from({ length: 12 }, (_, idx) => `  ✓ vitest suite > check #${idx + 1} (2 ms)`),
+++      "Running python unittest:",
+++      ...Array.from(
+++        { length: 8 },
+++        (_, idx) => `test_case_${idx + 1} (test_iss.IssIntakeTests.test_case_${idx + 1}) ... ok`,
+++      ),
+++      "FAIL: test_crossed_quote (test_iss.IssIntakeTests.test_crossed_quote)",
 ++      " 24 pass",
 ++      " 1 fail",
 ++    ].join("\n");
 ++
 ++    const collapsed = collapsePassingTestRuns(mixedSuite);
-++    expect(collapsed.collapsedLines).toBe(36);
+++    expect(collapsed.collapsedLines).toBe(44);
 ++    expect(collapsed.text).toContain("[... collapsed 24 passing test lines ...]");
 ++    expect(collapsed.text).toContain("[... collapsed 12 passing test lines ...]");
+++    expect(collapsed.text).toContain("[... collapsed 8 passing test lines ...]");
+++    expect(collapsed.text).toContain("FAIL: test_crossed_quote (test_iss.IssIntakeTests.test_crossed_quote)");
 ++    expect(collapsed.text).toContain("(fail) auth > rejects expired token [3.10ms]");
 ++    expect(collapsed.text).toContain("Expected: 401");
 ++    expect(collapsed.text).toContain("Received: 200");
@@ -11518,7 +11677,7 @@ index 00000000..49b5ee74
 ++});
 +diff --git a/apps/app/tests/session-markdown-export.test.ts b/apps/app/tests/session-markdown-export.test.ts
 +new file mode 100644
-+index 00000000..2fb18868
++index 0000000..2fb1886
 +--- /dev/null
 ++++ b/apps/app/tests/session-markdown-export.test.ts
 +@@ -0,0 +1,542 @@
@@ -12066,7 +12225,7 @@ index 00000000..49b5ee74
 ++});
 +diff --git a/docs/session-markdown-export.md b/docs/session-markdown-export.md
 +new file mode 100644
-+index 00000000..35f2d653
++index 0000000..35f2d65
 +--- /dev/null
 ++++ b/docs/session-markdown-export.md
 +@@ -0,0 +1,84 @@
@@ -12155,7 +12314,7 @@ index 00000000..49b5ee74
 ++- OmniRush GUI feature request: [omnirush-ai/omnirush-gui#349](https://github.com/omnirush-ai/omnirush-gui/issues/349)
 ++- Related OpenCode Desktop & CLI issues: [anomalyco/opencode#55542](https://github.com/anomalyco/opencode/issues/55542), [anomalyco/opencode#59904](https://github.com/anomalyco/opencode/issues/59904)
 +diff --git a/packages/types/src/desktop-ipc.ts b/packages/types/src/desktop-ipc.ts
-+index 63e0bed6..71c922c8 100644
++index 63e0bed..71c922c 100644
 +--- a/packages/types/src/desktop-ipc.ts
 ++++ b/packages/types/src/desktop-ipc.ts
 +@@ -1127,7 +1127,17 @@ export type DesktopCommandMap = {
@@ -12179,7 +12338,7 @@ index 00000000..49b5ee74
 + 
 diff --git a/fork/scripts/lib/git.mjs b/fork/scripts/lib/git.mjs
 new file mode 100644
-index 00000000..df604348
+index 0000000..df60434
 --- /dev/null
 +++ b/fork/scripts/lib/git.mjs
 @@ -0,0 +1,49 @@
@@ -12234,7 +12393,7 @@ index 00000000..df604348
 +}
 diff --git a/fork/scripts/lib/patch-groups.mjs b/fork/scripts/lib/patch-groups.mjs
 new file mode 100644
-index 00000000..8f199678
+index 0000000..8f19967
 --- /dev/null
 +++ b/fork/scripts/lib/patch-groups.mjs
 @@ -0,0 +1,167 @@
@@ -12407,7 +12566,7 @@ index 00000000..8f199678
 +export const UNTOUCHED_PATHS = ["apps/desktop/scripts/engine-release.json"];
 diff --git a/fork/scripts/next-version.mjs b/fork/scripts/next-version.mjs
 new file mode 100644
-index 00000000..d7868c3f
+index 0000000..d7868c3
 --- /dev/null
 +++ b/fork/scripts/next-version.mjs
 @@ -0,0 +1,76 @@
@@ -12489,7 +12648,7 @@ index 00000000..d7868c3f
 +if (process.argv[1] && process.argv[1].endsWith("next-version.mjs")) main();
 diff --git a/fork/scripts/refresh-patches.mjs b/fork/scripts/refresh-patches.mjs
 new file mode 100644
-index 00000000..65379822
+index 0000000..6537982
 --- /dev/null
 +++ b/fork/scripts/refresh-patches.mjs
 @@ -0,0 +1,85 @@
@@ -12580,7 +12739,7 @@ index 00000000..65379822
 +if (process.argv[1] && process.argv[1].endsWith("refresh-patches.mjs")) main();
 diff --git a/fork/scripts/sync-upstream.mjs b/fork/scripts/sync-upstream.mjs
 new file mode 100644
-index 00000000..a8808d08
+index 0000000..a8808d0
 --- /dev/null
 +++ b/fork/scripts/sync-upstream.mjs
 @@ -0,0 +1,199 @@
@@ -12785,7 +12944,7 @@ index 00000000..a8808d08
 +}
 diff --git a/fork/scripts/verify-port.mjs b/fork/scripts/verify-port.mjs
 new file mode 100644
-index 00000000..f561a37c
+index 0000000..f561a37
 --- /dev/null
 +++ b/fork/scripts/verify-port.mjs
 @@ -0,0 +1,179 @@
@@ -12970,7 +13129,7 @@ index 00000000..f561a37c
 +if (process.argv[1] && process.argv[1].endsWith("verify-port.mjs")) main();
 diff --git a/fork/tests/next-version.test.mjs b/fork/tests/next-version.test.mjs
 new file mode 100644
-index 00000000..0b2af3a4
+index 0000000..0b2af3a
 --- /dev/null
 +++ b/fork/tests/next-version.test.mjs
 @@ -0,0 +1,26 @@
@@ -13002,7 +13161,7 @@ index 00000000..0b2af3a4
 +});
 diff --git a/fork/tests/sync-upstream.test.mjs b/fork/tests/sync-upstream.test.mjs
 new file mode 100644
-index 00000000..a6813978
+index 0000000..a681397
 --- /dev/null
 +++ b/fork/tests/sync-upstream.test.mjs
 @@ -0,0 +1,24 @@
@@ -13032,7 +13191,7 @@ index 00000000..a6813978
 +});
 diff --git a/fork/tests/verify-port.test.mjs b/fork/tests/verify-port.test.mjs
 new file mode 100644
-index 00000000..f94e73cf
+index 0000000..f94e73c
 --- /dev/null
 +++ b/fork/tests/verify-port.test.mjs
 @@ -0,0 +1,115 @@

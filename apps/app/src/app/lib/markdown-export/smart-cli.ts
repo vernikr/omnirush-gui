@@ -21,6 +21,8 @@ const PASSING_TEST_LINE_PATTERNS: readonly RegExp[] = [
   /^\s*[✓✔]\s+\S.*$/,
   // Cargo test: `test module::my_test ... ok`
   /^test\s+\S+\s+\.\.\.\s+ok$/,
+  // Python unittest verbose: `test_foo (pkg.mod.TestClass.test_foo) ... ok`
+  /^[A-Za-z_][A-Za-z0-9_]*\s+\([A-Za-z0-9_.]+\)\s+\.\.\.\s+ok$/,
   // Pytest verbose: `tests/test_api.py::test_login PASSED [ 25%]`
   /^\S+::\S+\s+PASSED(?:\s+\[\s*\d+%\])?$/,
   // Go test verbose: `--- PASS: TestSomething (0.01s)`
@@ -206,9 +208,51 @@ export function compactSearchOutput(
     const compacted: string[] = [];
     let i = 0;
     while (i < workingLines.length) {
-      const match = /^([^:\r\n]+):\d+:/.exec(workingLines[i]!);
+      // Variant 1: OpenCode native Grep block (`<file>:` followed by `  Line N: ...`)
+      const currentLine = workingLines[i]!;
+      const isEngineGrepFileHeader =
+        currentLine.endsWith(":") &&
+        !currentLine.startsWith(" ") &&
+        i + 1 < workingLines.length &&
+        /^\s{2,}Line \d+:/.test(workingLines[i + 1]!);
+
+      if (isEngineGrepFileHeader) {
+        const fileKey = currentLine.slice(0, -1);
+        compacted.push(currentLine);
+        i += 1;
+        const matchLines: string[] = [];
+        while (i < workingLines.length) {
+          const cand = workingLines[i]!;
+          if (/^\s{2,}Line \d+:/.test(cand)) {
+            matchLines.push(cand);
+            i += 1;
+            continue;
+          }
+          if (
+            cand === "" &&
+            i + 1 < workingLines.length &&
+            /^\s{2,}Line \d+:/.test(workingLines[i + 1]!)
+          ) {
+            i += 1;
+            continue;
+          }
+          break;
+        }
+        if (matchLines.length > 8) {
+          for (let k = 0; k < 5; k += 1) {
+            compacted.push(matchLines[k]!);
+          }
+          compacted.push(`  [... +${matchLines.length - 5} more matches in ${fileKey} ...]`);
+        } else {
+          compacted.push(...matchLines);
+        }
+        continue;
+      }
+
+      // Variant 2: ripgrep / grep -n (`file:line:text`)
+      const match = /^([^:\r\n]+):\d+:/.exec(currentLine);
       if (!match) {
-        compacted.push(workingLines[i]!);
+        compacted.push(currentLine);
         i += 1;
         continue;
       }
@@ -282,12 +326,16 @@ export function applySmartCliTransform(params: {
 }): { output: string; compacted: boolean; savedBytes: number } {
   const { tool, rawOutput, safety, workspaceRoot } = params;
 
-  // Never alter PEM/credentials, SQL migrations, canonical Read bodies, or structured JSON via lossy CLI filters
+  const lowerTool = tool.part.tool.trim().toLowerCase();
+
+  // Never alter PEM/credentials, SQL migrations, Read file bodies, unified git diffs, or structured JSON via lossy CLI filters
   if (
+    lowerTool === "read" ||
     tool.canonicalRead !== null ||
     tool.parsedOutputJson !== undefined ||
     safety.reasons.includes("credentials_or_pem") ||
-    safety.reasons.includes("sql_migration")
+    safety.reasons.includes("sql_migration") ||
+    /^diff --git a\/\S+\s+b\/\S+$/m.test(rawOutput)
   ) {
     return { output: rawOutput, compacted: false, savedBytes: 0 };
   }
@@ -304,12 +352,13 @@ export function applySmartCliTransform(params: {
     candidate = compactSearchOutput(tool.part.tool, candidate, workspaceRoot);
     candidate = collapseConsecutiveIdenticalLines(candidate);
 
+    const isStructuredSearchTool = lowerTool === "grep" || lowerTool === "glob";
+    const lineThreshold = isStructuredSearchTool ? 260 : CLI_HEAD_TAIL_LINE_THRESHOLD;
+    const byteThreshold = isStructuredSearchTool ? 24_000 : CLI_HEAD_TAIL_BYTE_THRESHOLD;
+
     const candidateLines = candidate.split("\n");
     const candidateBytes = utf8ByteLength(candidate);
-    if (
-      candidateLines.length > CLI_HEAD_TAIL_LINE_THRESHOLD &&
-      candidateBytes > CLI_HEAD_TAIL_BYTE_THRESHOLD
-    ) {
+    if (candidateLines.length > lineThreshold && candidateBytes > byteThreshold) {
       const omitted = candidateLines.length - CLI_KEEP_HEAD_LINES - CLI_KEEP_TAIL_LINES;
       if (omitted >= 20) {
         const head = candidateLines.slice(0, CLI_KEEP_HEAD_LINES).join("\n");
@@ -334,6 +383,8 @@ export type BranchStubIndex = {
   mutatedPaths: ReadonlySet<string>;
   /** Latest completed CanonicalReadFile tool call per comparablePath in document order. */
   latestReadByPath: ReadonlyMap<string, CanonicalToolPartIR>;
+  /** All completed CanonicalReadFile tool calls per comparablePath in document order. */
+  readsByPath: ReadonlyMap<string, readonly CanonicalToolPartIR[]>;
 };
 
 function extractPathsFromPatchText(patchText: string): string[] {
@@ -396,6 +447,7 @@ function extractMutatedInputPaths(
 export function buildBranchStubIndex(root: CanonicalSessionNodeIR): BranchStubIndex {
   const mutatedPaths = new Set<string>();
   const latestReadByPath = new Map<string, CanonicalToolPartIR>();
+  const readsByPath = new Map<string, CanonicalToolPartIR[]>();
 
   const walk = (node: CanonicalSessionNodeIR) => {
     const workspaceRoot = node.session.directory?.trim() ?? "";
@@ -420,7 +472,14 @@ export function buildBranchStubIndex(root: CanonicalSessionNodeIR): BranchStubIn
         }
 
         if (part.canonicalRead && part.canonicalRead.comparablePath) {
-          latestReadByPath.set(part.canonicalRead.comparablePath, part);
+          const key = part.canonicalRead.comparablePath;
+          latestReadByPath.set(key, part);
+          const list = readsByPath.get(key);
+          if (list) {
+            list.push(part);
+          } else {
+            readsByPath.set(key, [part]);
+          }
         }
 
         if (part.subagent) {
@@ -431,7 +490,7 @@ export function buildBranchStubIndex(root: CanonicalSessionNodeIR): BranchStubIn
   };
 
   walk(root);
-  return { mutatedPaths, latestReadByPath };
+  return { mutatedPaths, latestReadByPath, readsByPath };
 }
 
 function sanitizeInlineCode(value: string): string {
@@ -464,17 +523,35 @@ export function tryBuildCompactStub(params: {
   if (tool.canonicalRead !== null) {
     const read = tool.canonicalRead;
     if (!read.comparablePath) return null;
-    const latestForPath = stubIndex.latestReadByPath.get(read.comparablePath);
-    const isSupersededByLaterRead =
-      Boolean(latestForPath) && latestForPath!.callRefId !== tool.callRefId;
+    const readsForPath = stubIndex.readsByPath.get(read.comparablePath) ?? [];
+    const selfIdx = readsForPath.findIndex((item) => item.callRefId === tool.callRefId);
+    let supersedingRead: CanonicalToolPartIR | null = null;
+    if (selfIdx >= 0) {
+      for (let j = readsForPath.length - 1; j > selfIdx; j -= 1) {
+        const candidate = readsForPath[j]!;
+        const candRead = candidate.canonicalRead;
+        if (!candRead) continue;
+        const coversRange =
+          candRead.firstLine <= read.firstLine && candRead.lastLine >= read.lastLine;
+        const bothFullFileFromTop =
+          read.firstLine === 1 &&
+          !read.truncated &&
+          candRead.firstLine === 1 &&
+          !candRead.truncated;
+        if (coversRange || bothFullFileFromTop) {
+          supersedingRead = candidate;
+          break;
+        }
+      }
+    }
     const pathLabel = sanitizeInlineCode(read.displayPath || read.comparablePath);
 
     if (
-      isSupersededByLaterRead &&
+      supersedingRead &&
       rawBaselineBytes >= MIN_SUPERSEDED_READ_BYTES &&
       read.lines.length >= MIN_SUPERSEDED_READ_LINES
     ) {
-      const stub = `> [Stubbed superseded Read of \`${pathLabel}\` (${formatReadShortRange(read)}) · \`sha256:${shortSha256(read.cleanBodySha256)}\` — latest snapshot in ${latestForPath!.turnLabel}]`;
+      const stub = `> [Stubbed superseded Read of \`${pathLabel}\` (${formatReadShortRange(read)}) · \`sha256:${shortSha256(read.cleanBodySha256)}\` — latest snapshot in ${supersedingRead.turnLabel}]`;
       const saved = rawBaselineBytes - utf8ByteLength(stub);
       if (saved >= MIN_STUB_NET_WIN_BYTES) {
         return { markdownBlock: stub, savedBytes: saved };

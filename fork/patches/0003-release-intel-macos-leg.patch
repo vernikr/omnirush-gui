@@ -1,5 +1,5 @@
 diff --git a/.github/workflows/release-desktop.yml b/.github/workflows/release-desktop.yml
-index 6d56d49f..d24e86c3 100644
+index 6d56d49..d24e86c 100644
 --- a/.github/workflows/release-desktop.yml
 +++ b/.github/workflows/release-desktop.yml
 @@ -106,42 +106,27 @@ jobs:

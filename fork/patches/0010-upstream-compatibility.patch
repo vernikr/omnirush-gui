@@ -1,5 +1,5 @@
 diff --git a/AGENTS.md b/AGENTS.md
-index 82a42408..0add8d71 100644
+index 82a4240..0add8d7 100644
 --- a/AGENTS.md
 +++ b/AGENTS.md
 @@ -82,3 +82,9 @@ frontend updates, reset and teardown.
@@ -14,7 +14,7 @@ index 82a42408..0add8d71 100644
 +Fork difference registry: `FORK_DIFFS.md`. Keep updated.
 diff --git a/FORK_DIFFS.md b/FORK_DIFFS.md
 new file mode 100644
-index 00000000..5cdc5283
+index 0000000..5cdc528
 --- /dev/null
 +++ b/FORK_DIFFS.md
 @@ -0,0 +1,11 @@

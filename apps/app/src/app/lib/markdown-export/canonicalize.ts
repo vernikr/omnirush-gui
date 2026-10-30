@@ -106,6 +106,9 @@ const PARTIAL_FILE_PATTERN =
   /^\(Showing lines (\d+)-(\d+) of (\d+)\. Use offset=(\d+) to continue\.\)$/;
 const MORE_LINES_V1_PATTERN =
   /^\(File has more lines\. Use 'offset' parameter to read beyond line (\d+)\)$/;
+const ENGINE2_TRUNCATED_PATTERN =
+  /^\[Output truncated\. Continue reading with offset: (\d+)\]$/;
+const ENGINE2_READ_HEADER_PATTERN = /^Read file (.+), lines (\d+)-(\d+)$/;
 
 const V2_LINE_PATTERN = /^(\d+): ?(.*)$/;
 const V1_LINE_PATTERN = /^0*(\d+)\| ?(.*)$/;
@@ -234,6 +237,13 @@ function parseNumberedBody(
       continue;
     }
 
+    const engine2TruncatedMatch = ENGINE2_TRUNCATED_PATTERN.exec(rawLine);
+    if (engine2TruncatedMatch) {
+      footerKind = "more_lines";
+      truncated = true;
+      continue;
+    }
+
     return null;
   }
 
@@ -326,6 +336,41 @@ export function parseCanonicalReadEnvelope(params: {
       truncated: bodyResult.truncated,
       footerKind: bodyResult.footerKind,
     };
+  }
+
+  // Variant C: OpenCode Engine2 `Read file <path>, lines <start>-<end>\n1: ...`
+  const newlineIdx = normalized.indexOf("\n");
+  if (newlineIdx > 0) {
+    const firstLineText = normalized.slice(0, newlineIdx);
+    const hdrMatch = ENGINE2_READ_HEADER_PATTERN.exec(firstLineText);
+    if (hdrMatch) {
+      const headerPath = (hdrMatch[1] ?? "").trim();
+      const expectedFirst = Number(hdrMatch[2]);
+      const expectedLast = Number(hdrMatch[3]);
+      const bodyResult = parseNumberedBody(normalized.slice(newlineIdx + 1), V2_LINE_PATTERN);
+      if (
+        bodyResult &&
+        bodyResult.firstLine === expectedFirst &&
+        bodyResult.lastLine === expectedLast
+      ) {
+        const displayPath = headerPath || extractInputFilePath(input);
+        const cleanBody = bodyResult.lines.join("\n");
+        return {
+          envelopeVersion: "v2",
+          displayPath,
+          comparablePath: normalizeComparableFilePath(displayPath, workspaceRoot),
+          fenceLanguage: inferFenceLanguageFromPath(displayPath),
+          lines: bodyResult.lines,
+          cleanBody,
+          cleanBodySha256: sha256Hex(cleanBody),
+          firstLine: bodyResult.firstLine,
+          lastLine: bodyResult.lastLine,
+          totalLines: bodyResult.totalLines,
+          truncated: bodyResult.truncated,
+          footerKind: bodyResult.footerKind,
+        };
+      }
+    }
   }
 
   return null;

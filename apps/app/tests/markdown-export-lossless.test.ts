@@ -159,6 +159,20 @@ describe("markdown-export Stage 1 lossless engine", () => {
     expect(v1!.comparablePath).toBe("src/server.ts");
     expect(v1!.cleanBodySha256).toBe(v2!.cleanBodySha256);
 
+    // Engine2 `Read file <path>, lines <start>-<end>` + `[Output truncated. Continue reading with offset: N]`
+    const engine2Numbered = sampleLines.map((line, idx) => `${idx + 1}: ${line}`).join("\n");
+    const engine2Truncated = parseCanonicalReadEnvelope({
+      toolName: "read",
+      rawOutput: `Read file /workspace/omnirush-gui/src/server.ts, lines 1-${sampleLines.length}\n${engine2Numbered}\n[Output truncated. Continue reading with offset: ${sampleLines.length + 1}]`,
+      input: { filePath: "/workspace/omnirush-gui/src/server.ts" },
+      workspaceRoot: "/workspace/omnirush-gui",
+    });
+    expect(engine2Truncated).not.toBeNull();
+    expect(engine2Truncated!.comparablePath).toBe("src/server.ts");
+    expect(engine2Truncated!.cleanBodySha256).toBe(v2!.cleanBodySha256);
+    expect(engine2Truncated!.truncated).toBe(true);
+    expect(engine2Truncated!.footerKind).toBe("more_lines");
+
     // Directory listings must NOT be misclassified as file bodies
     const dirEnvelope = `<path>/workspace/src</path>\n<type>directory</type>\n<entries>\nserver.ts\n(1 entries)\n</entries>`;
     expect(

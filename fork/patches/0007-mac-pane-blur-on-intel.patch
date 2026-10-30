@@ -1,5 +1,5 @@
 diff --git a/apps/app/src/app/index.css b/apps/app/src/app/index.css
-index f304d6ee..cdaf6bb2 100644
+index f304d6e..cdaf6bb 100644
 --- a/apps/app/src/app/index.css
 +++ b/apps/app/src/app/index.css
 @@ -236,6 +236,11 @@ body {
@@ -61,7 +61,7 @@ index f304d6ee..cdaf6bb2 100644
     illuminating left-to-right like a subtle running light. Used for boot,
     "awaiting first token", and any idle-but-alive hint. */
 diff --git a/apps/app/src/react-app/domains/session/chat/session-page.tsx b/apps/app/src/react-app/domains/session/chat/session-page.tsx
-index 66b1eb5c..588aa847 100644
+index 66b1eb5..588aa84 100644
 --- a/apps/app/src/react-app/domains/session/chat/session-page.tsx
 +++ b/apps/app/src/react-app/domains/session/chat/session-page.tsx
 @@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro

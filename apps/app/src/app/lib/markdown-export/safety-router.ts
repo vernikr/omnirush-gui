@@ -28,9 +28,14 @@ const STACK_TRACE_PATTERNS: readonly RegExp[] = [
   /^panic:\s+\S/m,
   /^goroutine \d+ \[running\]:/m,
   /^fatal error:\s+\S/m,
-  // Unhandled JS/TS/runtime errors & package manager errors
+  // Unhandled JS/TS/runtime errors, Git fatal errors, timeouts & package manager errors
   /^(?:Uncaught\s+)?(?:TypeError|ReferenceError|SyntaxError|RangeError|URIError|EvalError|AssertionError|AggregateError|FATAL ERROR):\s+\S/m,
   /^(?:npm ERR!|ERR_PNPM_[A-Z0-9_]+|Segmentation fault|Bus error)\b/m,
+  /^fatal:\s+\S/m,
+  /^(?:Command exceeded timeout of \d+\s*ms|Timed out before completion)\b/m,
+  // Python unittest failures
+  /^(?:FAIL|ERROR):\s+\S+\s+\([A-Za-z0-9_.]+\)$/m,
+  /^FAILED\s+\((?:failures|errors)=\d+/m,
 ];
 
 const COMPILER_ERROR_PATTERNS: readonly RegExp[] = [
