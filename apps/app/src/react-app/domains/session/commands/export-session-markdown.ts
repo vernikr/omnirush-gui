@@ -60,15 +60,22 @@ export function formatExportByteSize(bytes: number): string {
   return `${(safe / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+/**
+ * Format an estimated token count strictly in thousands (`k`) so users can
+ * directly compare session size against LLM context windows (`128k`, `200k`, `1,000k`).
+ */
 export function formatEstimatedTokenCount(tokens: number): string {
   const safe = Math.max(0, Math.round(tokens));
-  if (safe < 1000) {
-    return String(safe);
+  if (safe === 0) {
+    return "0k";
   }
-  if (safe < 1_000_000) {
+  if (safe < 100) {
+    return "0.1k";
+  }
+  if (safe < 99_950) {
     return `${(safe / 1000).toFixed(1)}k`;
   }
-  return `${(safe / 1_000_000).toFixed(2)}M`;
+  return `${Math.round(safe / 1000).toLocaleString("en-US")}k`;
 }
 
 function shortenSavedPathForToast(savedPath: string, workspaceRoot?: string): string {

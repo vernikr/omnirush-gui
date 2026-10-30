@@ -283,7 +283,10 @@ export function ExportSessionMarkdownModal() {
                 <div className="text-xs font-medium text-foreground">
                   {t("session.export_size_label")}
                 </div>
-                <div className="text-[11.5px] text-muted-foreground tabular-nums">
+                <div
+                  className="text-[11.5px] text-muted-foreground tabular-nums"
+                  data-testid="export-markdown-live-tokens"
+                >
                   {t("session.export_size_tokens", {
                     tokens: formatEstimatedTokenCount(preview.estimatedTokens),
                   })}

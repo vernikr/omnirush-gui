@@ -2,7 +2,7 @@ import type { Todo } from "@opencode-ai/sdk/v2/client";
 
 import { createCanonicalTranscriptIRWithoutBaseline } from "./canonicalize";
 import { computeLosslessFileDelta } from "./file-delta";
-import { sha256Hex, shortSha256, utf8ByteLength } from "./hash-and-bytes";
+import { estimateTokenCount, sha256Hex, shortSha256, utf8ByteLength } from "./hash-and-bytes";
 import { classifyToolSafety } from "./safety-router";
 import {
   applySmartCliTransform,
@@ -1011,7 +1011,7 @@ export function renderTranscriptFromIR(
 
   const savedBytes = Math.max(0, ir.baselineBytes - utf8Bytes);
   const savedRatio = ir.baselineBytes > 0 ? savedBytes / ir.baselineBytes : 0;
-  const estimatedTokens = Math.ceil(utf8Bytes / 4);
+  const estimatedTokens = estimateTokenCount(rendered.markdown);
 
   return {
     markdown: rendered.markdown,

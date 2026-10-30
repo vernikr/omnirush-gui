@@ -7,6 +7,7 @@ import {
   computeLosslessFileDelta,
   decodeLosslessToon,
   DEFAULT_EXPORT_MARKDOWN_OPTIONS,
+  estimateTokenCount,
   expandLosslessMarkdown,
   formatSessionAsMarkdown,
   parseCanonicalReadEnvelope,
@@ -123,6 +124,18 @@ describe("markdown-export Stage 1 lossless engine", () => {
       ).join("");
       expect(sha256Hex(sample)).toBe(expectedHex);
     }
+
+    expect(estimateTokenCount("")).toBe(0);
+    // Cyrillic prose should not be inflated by 2-byte UTF-8 encoding (`bytes / 4` = 42 vs realistic ~31)
+    const ruProse =
+      "Аудит проекта moex-spread-lab и подробный план дальнейшей разработки конвейера валидации данных.";
+    const ruTokens = estimateTokenCount(ruProse);
+    expect(ruTokens).toBeGreaterThanOrEqual(24);
+    expect(ruTokens).toBeLessThan(Math.ceil(utf8ByteLength(ruProse) / 4));
+
+    // Hex hashes split at letter/digit boundaries like BPE (`~24–28` tokens, not `40 / 4 = 10`)
+    const gitSha = "e5b7b0bf76bd362f31661c6a3b5f76bfcde5dc8d";
+    expect(estimateTokenCount(gitSha)).toBeGreaterThanOrEqual(20);
   });
 
   test("strictly canonicalizes OpenCode v1 and v2 Read file envelopes while rejecting directories and malformed lines", () => {

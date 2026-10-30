@@ -143,3 +143,255 @@ export function sha256Hex(input: string | Uint8Array): string {
 export function shortSha256(fullHex: string): string {
   return fullHex.slice(0, 12);
 }
+
+function isAsciiAlpha(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+}
+
+function isAsciiUpper(code: number): boolean {
+  return code >= 65 && code <= 90;
+}
+
+function isAsciiLower(code: number): boolean {
+  return code >= 97 && code <= 122;
+}
+
+function isAsciiDigit(code: number): boolean {
+  return code >= 48 && code <= 57;
+}
+
+function isCyrillic(code: number): boolean {
+  return code >= 0x0400 && code <= 0x052f;
+}
+
+function isCjk(code: number): boolean {
+  return (
+    (code >= 0x3040 && code <= 0x9fff) ||
+    (code >= 0xac00 && code <= 0xd7af) ||
+    (code >= 0xf900 && code <= 0xfaff)
+  );
+}
+
+function isExtendedAlpha(code: number): boolean {
+  return (
+    (code >= 0x00c0 && code <= 0x02af) ||
+    (code >= 0x0370 && code <= 0x03ff) ||
+    (code >= 0x0530 && code <= 0x07ff) ||
+    (code >= 0x1e00 && code <= 0x1eff)
+  );
+}
+
+function scoreAsciiSubword(length: number): number {
+  if (length <= 7) return 1;
+  return Math.ceil(length / 4.5);
+}
+
+function isTwoCharOperator(c1: number, c2: number): boolean {
+  if (c2 === 61) {
+    return c1 === 61 || c1 === 33 || c1 === 60 || c1 === 62 || c1 === 43 || c1 === 45;
+  }
+  if (c1 === 45 && c2 === 62) return true; // ->
+  if (c1 === 61 && c2 === 62) return true; // =>
+  if (c1 === 38 && c2 === 38) return true; // &&
+  if (c1 === 124 && c2 === 124) return true; // ||
+  if (c1 === 58 && c2 === 58) return true; // ::
+  if (c1 === 47 && (c2 === 47 || c2 === 42 || c2 === 62)) return true; // // /* />
+  if (c1 === 42 && c2 === 47) return true; // */
+  if (c1 === 60 && c2 === 47) return true; // </
+  if (c1 === 34 && (c2 === 58 || c2 === 44)) return true; // ": ",
+  if (c1 === 40 && (c2 === 41 || c2 === 123)) return true; // () ({
+  if (c1 === 125 && c2 === 41) return true; // })
+  if (c1 === 91 && c2 === 93) return true; // []
+  if (c1 === 123 && c2 === 125) return true; // {}
+  return false;
+}
+
+/**
+ * Fast, zero-allocation, BPE-calibrated lexical tokenizer (`O(N)` single pass).
+ *
+ * Mirrors modern LLM pre-tokenization (`o200k_base` / `cl100k_base` / Claude):
+ * - Single leading spaces attach to the following word or punctuation token.
+ * - Leading indentation runs merge up to 8 columns per token; newlines merge in pairs.
+ * - ASCII identifiers split on camelCase / PascalCase boundaries and letter/digit transitions
+ *   (so hex hashes, paths, and snake_case tokenize realistically).
+ * - Digits group into 1–3 digit chunks (`\p{N}{1,3}`).
+ * - Cyrillic, extended Latin/Greek, CJK, and astral emoji use script-specific subword densities
+ *   rather than inflating multi-byte UTF-8 prose.
+ */
+export function estimateTokenCount(text: string): number {
+  const len = text.length;
+  if (len === 0) return 0;
+
+  let tokens = 0;
+  let i = 0;
+  let atLineStart = true;
+
+  while (i < len) {
+    const c = text.charCodeAt(i);
+
+    if (c === 10 || c === 13) {
+      let nlCount = 0;
+      while (i < len) {
+        const ch = text.charCodeAt(i);
+        if (ch === 10) {
+          nlCount += 1;
+          i += 1;
+        } else if (ch === 13) {
+          nlCount += 1;
+          i += 1;
+          if (i < len && text.charCodeAt(i) === 10) {
+            i += 1;
+          }
+        } else {
+          break;
+        }
+      }
+      tokens += Math.ceil(nlCount / 2);
+      atLineStart = true;
+      continue;
+    }
+
+    if (c === 32 || c === 9) {
+      let cols = 0;
+      while (i < len) {
+        const ch = text.charCodeAt(i);
+        if (ch === 32) {
+          cols += 1;
+          i += 1;
+        } else if (ch === 9) {
+          cols += 2;
+          i += 1;
+        } else {
+          break;
+        }
+      }
+      const atEol = i >= len || text.charCodeAt(i) === 10 || text.charCodeAt(i) === 13;
+      if (atLineStart && cols >= 2) {
+        tokens += Math.ceil(cols / 8);
+      } else if (atEol) {
+        tokens += Math.ceil(cols / 4);
+      } else if (cols > 1) {
+        tokens += Math.ceil((cols - 1) / 4);
+      }
+      atLineStart = false;
+      continue;
+    }
+
+    atLineStart = false;
+
+    if (isAsciiAlpha(c)) {
+      let subStart = i;
+      i += 1;
+      while (i < len && isAsciiAlpha(text.charCodeAt(i))) {
+        const prev = text.charCodeAt(i - 1);
+        const curr = text.charCodeAt(i);
+        if (isAsciiLower(prev) && isAsciiUpper(curr)) {
+          tokens += scoreAsciiSubword(i - subStart);
+          subStart = i;
+        } else if (
+          i - subStart >= 2 &&
+          isAsciiUpper(prev) &&
+          isAsciiUpper(curr) &&
+          i + 1 < len &&
+          isAsciiLower(text.charCodeAt(i + 1))
+        ) {
+          tokens += scoreAsciiSubword(i - subStart);
+          subStart = i;
+        }
+        i += 1;
+      }
+      tokens += scoreAsciiSubword(i - subStart);
+      continue;
+    }
+
+    if (isAsciiDigit(c)) {
+      const start = i;
+      i += 1;
+      while (i < len && isAsciiDigit(text.charCodeAt(i))) {
+        i += 1;
+      }
+      tokens += Math.ceil((i - start) / 3);
+      continue;
+    }
+
+    if (isCyrillic(c)) {
+      const start = i;
+      i += 1;
+      while (i < len && isCyrillic(text.charCodeAt(i))) {
+        i += 1;
+      }
+      const wordLen = i - start;
+      tokens += wordLen <= 3 ? 1 : Math.ceil(wordLen / 3.4);
+      continue;
+    }
+
+    if (isCjk(c)) {
+      const start = i;
+      i += 1;
+      while (i < len && isCjk(text.charCodeAt(i))) {
+        i += 1;
+      }
+      tokens += Math.ceil((i - start) * 1.15);
+      continue;
+    }
+
+    if (isExtendedAlpha(c)) {
+      const start = i;
+      i += 1;
+      while (i < len && isExtendedAlpha(text.charCodeAt(i))) {
+        i += 1;
+      }
+      const wordLen = i - start;
+      tokens += wordLen <= 4 ? 1 : Math.ceil(wordLen / 3.8);
+      continue;
+    }
+
+    if (c >= 0xd800 && c <= 0xdbff && i + 1 < len) {
+      const low = text.charCodeAt(i + 1);
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        tokens += 2;
+        i += 2;
+        continue;
+      }
+    }
+
+    if (c === 39 && i + 1 < len && isAsciiLower(text.charCodeAt(i + 1))) {
+      const n1 = text.charCodeAt(i + 1);
+      const n2 = i + 2 < len ? text.charCodeAt(i + 2) : 0;
+      if ((n1 === 114 && n2 === 101) || (n1 === 118 && n2 === 101) || (n1 === 108 && n2 === 108)) {
+        if (i + 3 >= len || !isAsciiAlpha(text.charCodeAt(i + 3))) {
+          tokens += 1;
+          i += 3;
+          continue;
+        }
+      } else if (n1 === 115 || n1 === 116 || n1 === 100 || n1 === 109) {
+        if (i + 2 >= len || !isAsciiAlpha(text.charCodeAt(i + 2))) {
+          tokens += 1;
+          i += 2;
+          continue;
+        }
+      }
+    }
+
+    if (i + 1 < len && text.charCodeAt(i + 1) === c) {
+      const start = i;
+      i += 2;
+      while (i < len && text.charCodeAt(i) === c) {
+        i += 1;
+      }
+      tokens += Math.ceil((i - start) / 4);
+      continue;
+    }
+
+    if (i + 1 < len && isTwoCharOperator(c, text.charCodeAt(i + 1))) {
+      tokens += 1;
+      i += 2;
+      continue;
+    }
+
+    tokens += 1;
+    i += 1;
+  }
+
+  return tokens;
+}

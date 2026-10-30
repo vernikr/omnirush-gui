@@ -8,7 +8,7 @@ import {
   parseCanonicalReadEnvelope,
 } from "./markdown-export/canonicalize";
 import { applyLosslessFileDelta, computeLosslessFileDelta } from "./markdown-export/file-delta";
-import { sha256Hex, shortSha256, utf8ByteLength } from "./markdown-export/hash-and-bytes";
+import { estimateTokenCount, sha256Hex, shortSha256, utf8ByteLength } from "./markdown-export/hash-and-bytes";
 import { expandLosslessMarkdown, verifyLosslessRoundTrip } from "./markdown-export/lossless-expander";
 import { buildCanonicalTranscriptIR, renderTranscriptFromIR } from "./markdown-export/render-markdown";
 import { classifyToolSafety } from "./markdown-export/safety-router";
@@ -61,6 +61,7 @@ export {
   computeLosslessFileDelta,
   decodeLosslessToon,
   DEFAULT_EXPORT_MARKDOWN_OPTIONS,
+  estimateTokenCount,
   expandLosslessMarkdown,
   fenceMarkdownCode,
   filterVisibleBranchMessages,

@@ -213,9 +213,12 @@ describe("ExportSessionMarkdownModal (Stage 3)", () => {
     expect(formatExportByteSize(146_227)).toBe("142.8 KB");
     expect(formatExportByteSize(1_572_864)).toBe("1.50 MB");
 
-    expect(formatEstimatedTokenCount(420)).toBe("420");
+    expect(formatEstimatedTokenCount(0)).toBe("0k");
+    expect(formatEstimatedTokenCount(45)).toBe("0.1k");
+    expect(formatEstimatedTokenCount(420)).toBe("0.4k");
     expect(formatEstimatedTokenCount(12_460)).toBe("12.5k");
-    expect(formatEstimatedTokenCount(1_250_000)).toBe("1.25M");
+    expect(formatEstimatedTokenCount(353_939)).toBe("354k");
+    expect(formatEstimatedTokenCount(1_250_000)).toBe("1,250k");
   });
 
   test("opens with all 3 checkboxes enabled + lossless default, updates live file size on every toggle, has no filename/copy controls, and exports selected variant", async () => {
@@ -224,7 +227,7 @@ describe("ExportSessionMarkdownModal (Stage 3)", () => {
     const { ExportSessionMarkdownModal } = await import(
       "../src/react-app/domains/session/commands/export-session-markdown-modal"
     );
-    const { formatExportByteSize } = await import(
+    const { formatEstimatedTokenCount, formatExportByteSize } = await import(
       "../src/react-app/domains/session/commands/export-session-markdown"
     );
     const { closeExportMarkdownModal, openExportMarkdownModal, useExportSessionMarkdownStore } =
@@ -315,8 +318,14 @@ describe("ExportSessionMarkdownModal (Stage 3)", () => {
 
       const readSizeText = () =>
         document.querySelector('[data-testid="export-markdown-live-size"]')?.textContent?.trim();
+      const readTokensText = () =>
+        document.querySelector('[data-testid="export-markdown-live-tokens"]')?.textContent?.trim();
 
       expect(readSizeText()).toBe(formatExportByteSize(expectedLossless.utf8Bytes));
+      expect(readTokensText()).toContain(
+        formatEstimatedTokenCount(expectedLossless.estimatedTokens),
+      );
+      expect(readTokensText()).toContain("k");
       expect(
         document.querySelector('[data-testid="export-markdown-live-savings"]')?.textContent,
       ).toContain(formatExportByteSize(expectedRaw.utf8Bytes));

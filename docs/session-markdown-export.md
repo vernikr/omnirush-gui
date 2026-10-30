@@ -26,7 +26,7 @@ Every time the export modal opens, all three content controls default to **enabl
    - **Smart** — `Lossless` plus CLI/test/search noise compaction with strict error preservation.
    - **Compact stubs** — `Smart` plus stubbing of superseded and unmodified exploratory file reads.
 
-While the modal is open, the full unwindowed branch + sub-agent tree is parsed once into a `CanonicalTranscriptIR`. Toggling any checkbox or switching compression modes recomputes the exact UTF-8 byte count, token estimate (`~N tokens`), and percentage saved against the raw uncompressed baseline synchronously in milliseconds.
+While the modal is open, the full unwindowed branch + sub-agent tree is parsed once into a `CanonicalTranscriptIR`. Toggling any checkbox or switching compression modes recomputes the exact UTF-8 byte count, BPE-calibrated lexical token estimate in thousands (`~Xk tokens`), and percentage saved against the raw uncompressed baseline synchronously in milliseconds.
 
 ## Deterministic compression modes
 
