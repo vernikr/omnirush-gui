@@ -11,6 +11,15 @@ import { applyLosslessFileDelta, computeLosslessFileDelta } from "./markdown-exp
 import { sha256Hex, shortSha256, utf8ByteLength } from "./markdown-export/hash-and-bytes";
 import { expandLosslessMarkdown, verifyLosslessRoundTrip } from "./markdown-export/lossless-expander";
 import { buildCanonicalTranscriptIR, renderTranscriptFromIR } from "./markdown-export/render-markdown";
+import { classifyToolSafety } from "./markdown-export/safety-router";
+import {
+  applySmartCliTransform,
+  buildBranchStubIndex,
+  collapsePassingTestRuns,
+  compactSearchOutput,
+  stripAnsiAndProgressNoise,
+  tryBuildCompactStub,
+} from "./markdown-export/smart-cli";
 import {
   decodeLosslessToon,
   fenceMarkdownCode,
@@ -37,11 +46,18 @@ import {
   type ParsedExportSlashCommand,
   type ReadFooterKind,
   type RelativeExportPathValidation,
+  type SafetyBypassReason,
+  type ToolSafetyDecision,
 } from "./markdown-export/types";
 
 export {
   applyLosslessFileDelta,
+  applySmartCliTransform,
+  buildBranchStubIndex,
   buildCanonicalTranscriptIR,
+  classifyToolSafety,
+  collapsePassingTestRuns,
+  compactSearchOutput,
   computeLosslessFileDelta,
   decodeLosslessToon,
   DEFAULT_EXPORT_MARKDOWN_OPTIONS,
@@ -55,6 +71,8 @@ export {
   renderTranscriptFromIR,
   sha256Hex,
   shortSha256,
+  stripAnsiAndProgressNoise,
+  tryBuildCompactStub,
   tryEncodeLosslessToon,
   tryFormatCompactJsonInput,
   utf8ByteLength,
@@ -79,6 +97,8 @@ export type {
   ParsedExportSlashCommand,
   ReadFooterKind,
   RelativeExportPathValidation,
+  SafetyBypassReason,
+  ToolSafetyDecision,
 };
 
 const MAX_SLUG_UTF8_BYTES = 64;

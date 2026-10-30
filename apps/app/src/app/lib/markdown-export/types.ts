@@ -160,6 +160,23 @@ export type CanonicalTranscriptIR = {
   baselineBytes: number;
 };
 
+export type SafetyBypassReason =
+  | "tool_error_status"
+  | "nonzero_exit_code"
+  | "stack_trace_or_exception"
+  | "compiler_diagnostic_error"
+  | "credentials_or_pem"
+  | "sql_migration"
+  | "mutating_tool";
+
+export type ToolSafetyDecision = {
+  /** When true, lossy Smart truncation/grouping and Stubs mode must not drop lines from this tool call. */
+  bypassLossy: boolean;
+  /** True when the tool mutates workspace or todo state. */
+  isMutatingTool: boolean;
+  reasons: SafetyBypassReason[];
+};
+
 export type CompressionStats = {
   exactDedupCount: number;
   rangeRefCount: number;
@@ -167,11 +184,16 @@ export type CompressionStats = {
   canonicalReadCount: number;
   compactJsonCount: number;
   toonTableCount: number;
+  smartCompactedCount: number;
+  stubbedCount: number;
+  safetyBypassCount: number;
   anchorCount: number;
   savedBytesByDedup: number;
   savedBytesByRange: number;
   savedBytesByDelta: number;
   savedBytesByStructured: number;
+  savedBytesBySmart: number;
+  savedBytesByStubs: number;
 };
 
 export type ExportRenderResult = {

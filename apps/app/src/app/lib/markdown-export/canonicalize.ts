@@ -531,8 +531,13 @@ export function buildCanonicalSessionNode(params: {
             rawOutputCandidate = extractLiveMetadataOutput(state.metadata);
           }
 
+          // Preserve bare `\r` inside `normalizedOutput` (only normalizing CRLF -> LF) so
+          // Stage 2 Smart mode can accurately resolve carriage-return progress overwrites;
+          // Lossless/raw fenceMarkdownCode normalizes any remaining bare `\r` to `\n`.
           const normalizedOutput =
-            rawOutputCandidate !== null ? normalizeNewlines(rawOutputCandidate).trimEnd() : null;
+            rawOutputCandidate !== null
+              ? rawOutputCandidate.replace(/\r\n/g, "\n").trimEnd()
+              : null;
           const nonEmptyOutput =
             normalizedOutput !== null && normalizedOutput.length > 0 ? normalizedOutput : null;
 

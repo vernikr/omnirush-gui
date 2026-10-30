@@ -3,6 +3,12 @@ import type { Todo } from "@opencode-ai/sdk/v2/client";
 import { createCanonicalTranscriptIRWithoutBaseline } from "./canonicalize";
 import { computeLosslessFileDelta } from "./file-delta";
 import { sha256Hex, shortSha256, utf8ByteLength } from "./hash-and-bytes";
+import { classifyToolSafety } from "./safety-router";
+import {
+  applySmartCliTransform,
+  buildBranchStubIndex,
+  tryBuildCompactStub,
+} from "./smart-cli";
 import {
   fenceMarkdownCode,
   normalizeNewlines,
@@ -14,6 +20,7 @@ import type {
   CanonicalSessionNodeIR,
   CanonicalToolPartIR,
   CanonicalTranscriptIR,
+  CompressionMode,
   CompressionStats,
   ExportableSessionTree,
   ExportMarkdownOptions,
@@ -43,6 +50,10 @@ type ToolOutputPlan =
       sha256: string;
     }
   | {
+      kind: "stub";
+      markdownBlock: string;
+    }
+  | {
       kind: "exact_ref";
       targetCallRefId: string;
       markdownBlock: string;
@@ -64,7 +75,7 @@ type ToolRenderPlan = {
   outputSourceSha256: string | null;
 };
 
-type LosslessPassState = {
+type CompressionPassState = {
   plans: Map<string, ToolRenderPlan>;
   referencedCallIds: Set<string>;
   stats: CompressionStats;
@@ -78,11 +89,16 @@ function emptyStats(): CompressionStats {
     canonicalReadCount: 0,
     compactJsonCount: 0,
     toonTableCount: 0,
+    smartCompactedCount: 0,
+    stubbedCount: 0,
+    safetyBypassCount: 0,
     anchorCount: 0,
     savedBytesByDedup: 0,
     savedBytesByRange: 0,
     savedBytesByDelta: 0,
     savedBytesByStructured: 0,
+    savedBytesBySmart: 0,
+    savedBytesByStubs: 0,
   };
 }
 
@@ -144,17 +160,25 @@ function renderCanonicalReadUnanchored(read: CanonicalReadFile): string {
 }
 
 function anchorOverheadBytes(callRefId: string, isRead: boolean): number {
-  // `<a id="export-ref-c001"></a>\n\n` plus sha256 tag on source caption
   const anchorTag = `<a id="export-ref-${callRefId}"></a>\n\n`;
   const captionExtra = isRead ? " · `sha256:000000000000`" : "_Output (`sha256:000000000000`):_\n\n";
   return utf8ByteLength(anchorTag) + utf8ByteLength(captionExtra);
 }
 
-function collectToolsInDocumentOrder(node: CanonicalSessionNodeIR, out: CanonicalToolPartIR[]): void {
+type ToolWithWorkspace = {
+  tool: CanonicalToolPartIR;
+  workspaceRoot: string;
+};
+
+function collectToolsInDocumentOrder(
+  node: CanonicalSessionNodeIR,
+  out: ToolWithWorkspace[],
+): void {
+  const workspaceRoot = node.session.directory?.trim() ?? "";
   for (const message of node.messages) {
     for (const part of message.parts) {
       if (part.kind !== "tool") continue;
-      out.push(part);
+      out.push({ tool: part, workspaceRoot });
       if (part.subagent) {
         collectToolsInDocumentOrder(part.subagent.node, out);
       }
@@ -171,7 +195,6 @@ function findContainedLineSlice(
   const targetLen = target.lines.length;
   if (targetLen === 0 || targetLen > sourceLines.length) return null;
 
-  // O(1) expected index check when line numbers align on the same file
   if (samePath && target.firstLine >= sourceFirstLine) {
     const directIdx = target.firstLine - sourceFirstLine;
     if (directIdx + targetLen <= sourceLines.length) {
@@ -204,9 +227,16 @@ function findContainedLineSlice(
   return null;
 }
 
-function buildLosslessPlans(root: CanonicalSessionNodeIR): LosslessPassState {
-  const tools: CanonicalToolPartIR[] = [];
-  collectToolsInDocumentOrder(root, tools);
+function buildCompressionPlans(
+  root: CanonicalSessionNodeIR,
+  mode: Exclude<CompressionMode, "off">,
+): CompressionPassState {
+  const entries: ToolWithWorkspace[] = [];
+  collectToolsInDocumentOrder(root, entries);
+
+  const enableSmart = mode === "smart" || mode === "stubs";
+  const enableStubs = mode === "stubs";
+  const stubIndex = enableStubs ? buildBranchStubIndex(root) : null;
 
   const plans = new Map<string, ToolRenderPlan>();
   const referencedCallIds = new Set<string>();
@@ -216,7 +246,12 @@ function buildLosslessPlans(root: CanonicalSessionNodeIR): LosslessPassState {
   const firstByOutputHash = new Map<string, CanonicalToolPartIR>();
   const inlineReadSnapshots: CanonicalToolPartIR[] = [];
 
-  for (const tool of tools) {
+  for (const { tool, workspaceRoot } of entries) {
+    const safety = enableSmart ? classifyToolSafety(tool) : null;
+    if (safety && safety.bypassLossy && !safety.isMutatingTool) {
+      stats.safetyBypassCount += 1;
+    }
+
     let inputBlock: string | null = null;
     if (tool.hasInput && tool.prettyInputJson !== null) {
       if (tool.compactInputJson !== null) {
@@ -248,6 +283,30 @@ function buildLosslessPlans(root: CanonicalSessionNodeIR): LosslessPassState {
 
     const rawBaselineBlock = renderRawToolOutputBlock(tool);
     const rawBaselineBytes = utf8ByteLength(rawBaselineBlock);
+
+    // Stage 2 ("stubs" mode): Stub superseded or purely exploratory unedited inspection outputs
+    // (unless an identical non-stubbed block was already emitted earlier, in which case exact dedup is just as small).
+    if (enableStubs && stubIndex && safety) {
+      const stubCandidate = tryBuildCompactStub({
+        tool,
+        safety,
+        stubIndex,
+        rawBaselineBytes,
+      });
+      if (stubCandidate) {
+        stats.stubbedCount += 1;
+        stats.savedBytesByStubs += stubCandidate.savedBytes;
+        plans.set(tool.callRefId, {
+          inputBlock,
+          outputPlan: {
+            kind: "stub",
+            markdownBlock: stubCandidate.markdownBlock,
+          },
+          outputSourceSha256: null,
+        });
+        continue;
+      }
+    }
 
     // Branch 1: Canonical OpenCode `Read` file envelope
     if (tool.canonicalRead !== null) {
@@ -437,15 +496,41 @@ function buildLosslessPlans(root: CanonicalSessionNodeIR): LosslessPassState {
     }
 
     // Branch 2: General tool output (Bash, Grep, Glob, JSON/MCP, directory Read, error live output, etc.)
-    if (tool.outputSha256 !== null) {
-      const exactMatch = firstByOutputHash.get(tool.outputSha256);
+    const smartTransform =
+      enableSmart && safety
+        ? applySmartCliTransform({
+            tool,
+            rawOutput: tool.normalizedOutput,
+            safety,
+            workspaceRoot,
+          })
+        : { output: tool.normalizedOutput, compacted: false, savedBytes: 0 };
+
+    const effectiveOutput = smartTransform.output;
+    const effectiveSha256 = smartTransform.compacted
+      ? sha256Hex(effectiveOutput)
+      : tool.outputSha256;
+    const effectiveBytes = smartTransform.compacted
+      ? utf8ByteLength(effectiveOutput)
+      : tool.outputBytes;
+    const effectiveLineCount = smartTransform.compacted
+      ? effectiveOutput.split("\n").length
+      : tool.outputLineCount;
+
+    const effectiveFencedBytes = smartTransform.compacted
+      ? utf8ByteLength(fenceMarkdownCode(effectiveOutput))
+      : rawBaselineBytes;
+
+    if (effectiveSha256 !== null) {
+      const exactMatch = firstByOutputHash.get(effectiveSha256);
       if (exactMatch) {
-        const refBlock = `> [↩ Identical output to ${exactMatch.turnLabel} · ${sanitizeInlineLinkCode(exactMatch.displayName)} (${tool.outputLineCount} lines, ${tool.outputBytes.toLocaleString("en-US")} B) · \`sha256:${shortSha256(tool.outputSha256)}\`](#export-ref-${exactMatch.callRefId})`;
+        const refBlock = `> [↩ Identical output to ${exactMatch.turnLabel} · ${sanitizeInlineLinkCode(exactMatch.displayName)} (${effectiveLineCount} lines, ${effectiveBytes.toLocaleString("en-US")} B) · \`sha256:${shortSha256(effectiveSha256)}\`](#export-ref-${exactMatch.callRefId})`;
         const extraAnchor = referencedCallIds.has(exactMatch.callRefId)
           ? 0
           : anchorOverheadBytes(exactMatch.callRefId, false);
         const totalCost = utf8ByteLength(refBlock) + extraAnchor;
-        if (rawBaselineBytes - totalCost >= MIN_DEDUP_NET_WIN_BYTES) {
+        const comparisonBaseline = Math.min(rawBaselineBytes, effectiveFencedBytes);
+        if (comparisonBaseline - totalCost >= MIN_DEDUP_NET_WIN_BYTES) {
           referencedCallIds.add(exactMatch.callRefId);
           stats.exactDedupCount += 1;
           stats.savedBytesByDedup += rawBaselineBytes - totalCost;
@@ -456,13 +541,31 @@ function buildLosslessPlans(root: CanonicalSessionNodeIR): LosslessPassState {
               targetCallRefId: exactMatch.callRefId,
               markdownBlock: refBlock,
             },
-            outputSourceSha256: tool.outputSha256,
+            outputSourceSha256: effectiveSha256,
           });
           continue;
         }
       }
 
-      firstByOutputHash.set(tool.outputSha256, tool);
+      firstByOutputHash.set(effectiveSha256, tool);
+
+      if (smartTransform.compacted) {
+        const smartFenced = fenceMarkdownCode(effectiveOutput);
+        const netSaved = rawBaselineBytes - utf8ByteLength(smartFenced);
+        if (netSaved > 0) {
+          stats.smartCompactedCount += 1;
+          stats.savedBytesBySmart += netSaved;
+          plans.set(tool.callRefId, {
+            inputBlock,
+            outputPlan: {
+              kind: "raw",
+              fencedBlock: smartFenced,
+            },
+            outputSourceSha256: effectiveSha256,
+          });
+          continue;
+        }
+      }
 
       // Pass E (Tabular JSON): Try strictly lossless TOON-JSON v1 encoding on uniform JSON object arrays
       if (tool.parsedOutputJson !== undefined && tool.prettyOutputJson !== null) {
@@ -478,7 +581,7 @@ function buildLosslessPlans(root: CanonicalSessionNodeIR): LosslessPassState {
               outputPlan: {
                 kind: "toon_table",
                 fencedBlock: toonFenced,
-                sha256: tool.outputSha256,
+                sha256: tool.outputSha256!,
               },
               outputSourceSha256: tool.outputSha256,
             });
@@ -528,12 +631,14 @@ function formatIsoTimestamp(epochMs: number | undefined): string | null {
 function renderToolFromIR(
   tool: CanonicalToolPartIR,
   options: ExportMarkdownOptions,
-  lossless: LosslessPassState | null,
+  compressionState: CompressionPassState | null,
 ): string {
   const header = `**🛠 ${tool.displayName}**${tool.stateTitle}${tool.statusSuffix}`;
   const blocks: string[] = [];
-  const plan = lossless ? lossless.plans.get(tool.callRefId) : undefined;
-  const isAnchored = Boolean(lossless && lossless.referencedCallIds.has(tool.callRefId));
+  const plan = compressionState ? compressionState.plans.get(tool.callRefId) : undefined;
+  const isAnchored = Boolean(
+    compressionState && compressionState.referencedCallIds.has(tool.callRefId),
+  );
 
   if (plan) {
     if (plan.inputBlock !== null) {
@@ -569,6 +674,10 @@ function renderToolFromIR(
           blocks.push(`_Output (\`sha256:${shortSha256(plan.outputSourceSha256)}\`):_`);
         }
         blocks.push(out.fencedBlock);
+        break;
+      }
+      case "stub": {
+        blocks.push(out.markdownBlock);
         break;
       }
       case "exact_ref":
@@ -609,7 +718,7 @@ function renderToolFromIR(
   }
 
   const subHeading = headingHashes(tool.subagent.headingDepth);
-  const subBody = renderSessionNodeMessages(tool.subagent.node, options, lossless);
+  const subBody = renderSessionNodeMessages(tool.subagent.node, options, compressionState);
   const subSection = subBody.markdown
     ? `${subHeading} ⤷ Subagent: ${tool.subagent.label}\n\n${subBody.markdown}\n\n${subHeading} ⤶ End subagent`
     : `${subHeading} ⤷ Subagent: ${tool.subagent.label}\n\n_(no recorded subagent turns)_\n\n${subHeading} ⤶ End subagent`;
@@ -620,7 +729,7 @@ function renderToolFromIR(
 function renderMessageBlocks(
   message: CanonicalMessageIR,
   options: ExportMarkdownOptions,
-  lossless: LosslessPassState | null,
+  compressionState: CompressionPassState | null,
 ): string[] {
   const blocks: string[] = [];
 
@@ -641,7 +750,7 @@ function renderMessageBlocks(
       }
       case "tool": {
         if (!options.includeToolCalls) break;
-        blocks.push(renderToolFromIR(part, options, lossless));
+        blocks.push(renderToolFromIR(part, options, compressionState));
         break;
       }
       case "subtask": {
@@ -683,13 +792,13 @@ function renderMessageBlocks(
 function renderSessionNodeMessages(
   node: CanonicalSessionNodeIR,
   options: ExportMarkdownOptions,
-  lossless: LosslessPassState | null,
+  compressionState: CompressionPassState | null,
 ): { markdown: string; renderedTurnCount: number } {
   const turnHeading = headingHashes(node.headingDepth);
   const renderedTurns: string[] = [];
 
   for (const message of node.messages) {
-    const blocks = renderMessageBlocks(message, options, lossless);
+    const blocks = renderMessageBlocks(message, options, compressionState);
     if (blocks.length === 0) continue;
 
     const roleTitle = message.info.role === "user" ? "User" : "Assistant";
@@ -750,11 +859,12 @@ function renderMarkdownInternal(
   ir: Omit<CanonicalTranscriptIR, "baselineBytes">,
   options: ExportMarkdownOptions,
 ): { markdown: string; stats: CompressionStats } {
-  const useLossless = options.includeToolCalls && options.compression !== "off";
-  const lossless = useLossless ? buildLosslessPlans(ir.root) : null;
-  const stats = lossless ? lossless.stats : emptyStats();
+  const activeMode = options.includeToolCalls ? options.compression : "off";
+  const compressionState =
+    activeMode !== "off" ? buildCompressionPlans(ir.root, activeMode) : null;
+  const stats = compressionState ? compressionState.stats : emptyStats();
 
-  const bodyResult = renderSessionNodeMessages(ir.root, options, lossless);
+  const bodyResult = renderSessionNodeMessages(ir.root, options, compressionState);
   const rawTitle = ir.root.session.title?.trim() ?? "";
   const title = rawTitle ? normalizeNewlines(rawTitle).replace(/\n+/g, " ") : "OmniRush conversation";
 
@@ -800,16 +910,20 @@ function renderMarkdownInternal(
     stats.savedBytesByDedup +
     stats.savedBytesByRange +
     stats.savedBytesByDelta +
-    stats.savedBytesByStructured;
+    stats.savedBytesByStructured +
+    stats.savedBytesBySmart +
+    stats.savedBytesByStubs;
 
-  if (useLossless && totalGrossSaved >= 128) {
+  if (activeMode !== "off" && totalGrossSaved >= 128) {
     const summaryParts: string[] = [];
     if (stats.exactDedupCount > 0) summaryParts.push(`${stats.exactDedupCount} deduplicated`);
     if (stats.rangeRefCount > 0) summaryParts.push(`${stats.rangeRefCount} range refs`);
     if (stats.deltaCount > 0) summaryParts.push(`${stats.deltaCount} deltas`);
     if (stats.toonTableCount > 0) summaryParts.push(`${stats.toonTableCount} TOON tables`);
+    if (stats.smartCompactedCount > 0) summaryParts.push(`${stats.smartCompactedCount} CLI compacted`);
+    if (stats.stubbedCount > 0) summaryParts.push(`${stats.stubbedCount} stubbed`);
     const detailSuffix = summaryParts.length > 0 ? ` (${summaryParts.join(", ")})` : "";
-    metadataBullets.push(`- **Compression:** \`${options.compression}\`${detailSuffix}`);
+    metadataBullets.push(`- **Compression:** \`${activeMode}\`${detailSuffix}`);
   }
 
   const headerLines = [
@@ -869,8 +983,8 @@ export function renderTranscriptFromIR(
   let rendered = renderMarkdownInternal(ir, options);
   let utf8Bytes = utf8ByteLength(rendered.markdown);
 
-  // Strict document-level monotonicity guard: lossless compression of the full
-  // transcript must never produce a file larger than the raw baseline.
+  // Strict document-level monotonicity guard: compression of the full transcript
+  // must never produce a file larger than the raw baseline.
   if (
     options.includeToolCalls &&
     options.includeReasoning &&

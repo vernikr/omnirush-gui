@@ -151,6 +151,7 @@ export const PATCH_GROUPS = [
       "apps/app/src/i18n/locales/zh.ts",
       "apps/app/src/i18n/locales/ru.ts",
       "apps/app/tests/markdown-export-lossless.test.ts",
+      "apps/app/tests/markdown-export-smart-stubs.test.ts",
       "apps/app/tests/session-markdown-export.test.ts",
       "docs/session-markdown-export.md",
     ],

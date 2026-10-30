@@ -1,9 +1,9 @@
 diff --git a/apps/app/src/app/lib/markdown-export/canonicalize.ts b/apps/app/src/app/lib/markdown-export/canonicalize.ts
 new file mode 100644
-index 00000000..2b5a0732
+index 00000000..83df48ab
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/canonicalize.ts
-@@ -0,0 +1,764 @@
+@@ -0,0 +1,769 @@
 +import type {
 +  AssistantMessage,
 +  FilePart,
@@ -537,8 +537,13 @@ index 00000000..2b5a0732
 +            rawOutputCandidate = extractLiveMetadataOutput(state.metadata);
 +          }
 +
++          // Preserve bare `\r` inside `normalizedOutput` (only normalizing CRLF -> LF) so
++          // Stage 2 Smart mode can accurately resolve carriage-return progress overwrites;
++          // Lossless/raw fenceMarkdownCode normalizes any remaining bare `\r` to `\n`.
 +          const normalizedOutput =
-+            rawOutputCandidate !== null ? normalizeNewlines(rawOutputCandidate).trimEnd() : null;
++            rawOutputCandidate !== null
++              ? rawOutputCandidate.replace(/\r\n/g, "\n").trimEnd()
++              : null;
 +          const nonEmptyOutput =
 +            normalizedOutput !== null && normalizedOutput.length > 0 ? normalizedOutput : null;
 +
@@ -1550,15 +1555,21 @@ index 00000000..22a5d75e
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/render-markdown.ts b/apps/app/src/app/lib/markdown-export/render-markdown.ts
 new file mode 100644
-index 00000000..4579cad6
+index 00000000..cc4faecb
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/render-markdown.ts
-@@ -0,0 +1,897 @@
+@@ -0,0 +1,1011 @@
 +import type { Todo } from "@opencode-ai/sdk/v2/client";
 +
 +import { createCanonicalTranscriptIRWithoutBaseline } from "./canonicalize";
 +import { computeLosslessFileDelta } from "./file-delta";
 +import { sha256Hex, shortSha256, utf8ByteLength } from "./hash-and-bytes";
++import { classifyToolSafety } from "./safety-router";
++import {
++  applySmartCliTransform,
++  buildBranchStubIndex,
++  tryBuildCompactStub,
++} from "./smart-cli";
 +import {
 +  fenceMarkdownCode,
 +  normalizeNewlines,
@@ -1570,6 +1581,7 @@ index 00000000..4579cad6
 +  CanonicalSessionNodeIR,
 +  CanonicalToolPartIR,
 +  CanonicalTranscriptIR,
++  CompressionMode,
 +  CompressionStats,
 +  ExportableSessionTree,
 +  ExportMarkdownOptions,
@@ -1599,6 +1611,10 @@ index 00000000..4579cad6
 +      sha256: string;
 +    }
 +  | {
++      kind: "stub";
++      markdownBlock: string;
++    }
++  | {
 +      kind: "exact_ref";
 +      targetCallRefId: string;
 +      markdownBlock: string;
@@ -1620,7 +1636,7 @@ index 00000000..4579cad6
 +  outputSourceSha256: string | null;
 +};
 +
-+type LosslessPassState = {
++type CompressionPassState = {
 +  plans: Map<string, ToolRenderPlan>;
 +  referencedCallIds: Set<string>;
 +  stats: CompressionStats;
@@ -1634,11 +1650,16 @@ index 00000000..4579cad6
 +    canonicalReadCount: 0,
 +    compactJsonCount: 0,
 +    toonTableCount: 0,
++    smartCompactedCount: 0,
++    stubbedCount: 0,
++    safetyBypassCount: 0,
 +    anchorCount: 0,
 +    savedBytesByDedup: 0,
 +    savedBytesByRange: 0,
 +    savedBytesByDelta: 0,
 +    savedBytesByStructured: 0,
++    savedBytesBySmart: 0,
++    savedBytesByStubs: 0,
 +  };
 +}
 +
@@ -1700,17 +1721,25 @@ index 00000000..4579cad6
 +}
 +
 +function anchorOverheadBytes(callRefId: string, isRead: boolean): number {
-+  // `<a id="export-ref-c001"></a>\n\n` plus sha256 tag on source caption
 +  const anchorTag = `<a id="export-ref-${callRefId}"></a>\n\n`;
 +  const captionExtra = isRead ? " · `sha256:000000000000`" : "_Output (`sha256:000000000000`):_\n\n";
 +  return utf8ByteLength(anchorTag) + utf8ByteLength(captionExtra);
 +}
 +
-+function collectToolsInDocumentOrder(node: CanonicalSessionNodeIR, out: CanonicalToolPartIR[]): void {
++type ToolWithWorkspace = {
++  tool: CanonicalToolPartIR;
++  workspaceRoot: string;
++};
++
++function collectToolsInDocumentOrder(
++  node: CanonicalSessionNodeIR,
++  out: ToolWithWorkspace[],
++): void {
++  const workspaceRoot = node.session.directory?.trim() ?? "";
 +  for (const message of node.messages) {
 +    for (const part of message.parts) {
 +      if (part.kind !== "tool") continue;
-+      out.push(part);
++      out.push({ tool: part, workspaceRoot });
 +      if (part.subagent) {
 +        collectToolsInDocumentOrder(part.subagent.node, out);
 +      }
@@ -1727,7 +1756,6 @@ index 00000000..4579cad6
 +  const targetLen = target.lines.length;
 +  if (targetLen === 0 || targetLen > sourceLines.length) return null;
 +
-+  // O(1) expected index check when line numbers align on the same file
 +  if (samePath && target.firstLine >= sourceFirstLine) {
 +    const directIdx = target.firstLine - sourceFirstLine;
 +    if (directIdx + targetLen <= sourceLines.length) {
@@ -1760,9 +1788,16 @@ index 00000000..4579cad6
 +  return null;
 +}
 +
-+function buildLosslessPlans(root: CanonicalSessionNodeIR): LosslessPassState {
-+  const tools: CanonicalToolPartIR[] = [];
-+  collectToolsInDocumentOrder(root, tools);
++function buildCompressionPlans(
++  root: CanonicalSessionNodeIR,
++  mode: Exclude<CompressionMode, "off">,
++): CompressionPassState {
++  const entries: ToolWithWorkspace[] = [];
++  collectToolsInDocumentOrder(root, entries);
++
++  const enableSmart = mode === "smart" || mode === "stubs";
++  const enableStubs = mode === "stubs";
++  const stubIndex = enableStubs ? buildBranchStubIndex(root) : null;
 +
 +  const plans = new Map<string, ToolRenderPlan>();
 +  const referencedCallIds = new Set<string>();
@@ -1772,7 +1807,12 @@ index 00000000..4579cad6
 +  const firstByOutputHash = new Map<string, CanonicalToolPartIR>();
 +  const inlineReadSnapshots: CanonicalToolPartIR[] = [];
 +
-+  for (const tool of tools) {
++  for (const { tool, workspaceRoot } of entries) {
++    const safety = enableSmart ? classifyToolSafety(tool) : null;
++    if (safety && safety.bypassLossy && !safety.isMutatingTool) {
++      stats.safetyBypassCount += 1;
++    }
++
 +    let inputBlock: string | null = null;
 +    if (tool.hasInput && tool.prettyInputJson !== null) {
 +      if (tool.compactInputJson !== null) {
@@ -1804,6 +1844,30 @@ index 00000000..4579cad6
 +
 +    const rawBaselineBlock = renderRawToolOutputBlock(tool);
 +    const rawBaselineBytes = utf8ByteLength(rawBaselineBlock);
++
++    // Stage 2 ("stubs" mode): Stub superseded or purely exploratory unedited inspection outputs
++    // (unless an identical non-stubbed block was already emitted earlier, in which case exact dedup is just as small).
++    if (enableStubs && stubIndex && safety) {
++      const stubCandidate = tryBuildCompactStub({
++        tool,
++        safety,
++        stubIndex,
++        rawBaselineBytes,
++      });
++      if (stubCandidate) {
++        stats.stubbedCount += 1;
++        stats.savedBytesByStubs += stubCandidate.savedBytes;
++        plans.set(tool.callRefId, {
++          inputBlock,
++          outputPlan: {
++            kind: "stub",
++            markdownBlock: stubCandidate.markdownBlock,
++          },
++          outputSourceSha256: null,
++        });
++        continue;
++      }
++    }
 +
 +    // Branch 1: Canonical OpenCode `Read` file envelope
 +    if (tool.canonicalRead !== null) {
@@ -1993,15 +2057,41 @@ index 00000000..4579cad6
 +    }
 +
 +    // Branch 2: General tool output (Bash, Grep, Glob, JSON/MCP, directory Read, error live output, etc.)
-+    if (tool.outputSha256 !== null) {
-+      const exactMatch = firstByOutputHash.get(tool.outputSha256);
++    const smartTransform =
++      enableSmart && safety
++        ? applySmartCliTransform({
++            tool,
++            rawOutput: tool.normalizedOutput,
++            safety,
++            workspaceRoot,
++          })
++        : { output: tool.normalizedOutput, compacted: false, savedBytes: 0 };
++
++    const effectiveOutput = smartTransform.output;
++    const effectiveSha256 = smartTransform.compacted
++      ? sha256Hex(effectiveOutput)
++      : tool.outputSha256;
++    const effectiveBytes = smartTransform.compacted
++      ? utf8ByteLength(effectiveOutput)
++      : tool.outputBytes;
++    const effectiveLineCount = smartTransform.compacted
++      ? effectiveOutput.split("\n").length
++      : tool.outputLineCount;
++
++    const effectiveFencedBytes = smartTransform.compacted
++      ? utf8ByteLength(fenceMarkdownCode(effectiveOutput))
++      : rawBaselineBytes;
++
++    if (effectiveSha256 !== null) {
++      const exactMatch = firstByOutputHash.get(effectiveSha256);
 +      if (exactMatch) {
-+        const refBlock = `> [↩ Identical output to ${exactMatch.turnLabel} · ${sanitizeInlineLinkCode(exactMatch.displayName)} (${tool.outputLineCount} lines, ${tool.outputBytes.toLocaleString("en-US")} B) · \`sha256:${shortSha256(tool.outputSha256)}\`](#export-ref-${exactMatch.callRefId})`;
++        const refBlock = `> [↩ Identical output to ${exactMatch.turnLabel} · ${sanitizeInlineLinkCode(exactMatch.displayName)} (${effectiveLineCount} lines, ${effectiveBytes.toLocaleString("en-US")} B) · \`sha256:${shortSha256(effectiveSha256)}\`](#export-ref-${exactMatch.callRefId})`;
 +        const extraAnchor = referencedCallIds.has(exactMatch.callRefId)
 +          ? 0
 +          : anchorOverheadBytes(exactMatch.callRefId, false);
 +        const totalCost = utf8ByteLength(refBlock) + extraAnchor;
-+        if (rawBaselineBytes - totalCost >= MIN_DEDUP_NET_WIN_BYTES) {
++        const comparisonBaseline = Math.min(rawBaselineBytes, effectiveFencedBytes);
++        if (comparisonBaseline - totalCost >= MIN_DEDUP_NET_WIN_BYTES) {
 +          referencedCallIds.add(exactMatch.callRefId);
 +          stats.exactDedupCount += 1;
 +          stats.savedBytesByDedup += rawBaselineBytes - totalCost;
@@ -2012,13 +2102,31 @@ index 00000000..4579cad6
 +              targetCallRefId: exactMatch.callRefId,
 +              markdownBlock: refBlock,
 +            },
-+            outputSourceSha256: tool.outputSha256,
++            outputSourceSha256: effectiveSha256,
 +          });
 +          continue;
 +        }
 +      }
 +
-+      firstByOutputHash.set(tool.outputSha256, tool);
++      firstByOutputHash.set(effectiveSha256, tool);
++
++      if (smartTransform.compacted) {
++        const smartFenced = fenceMarkdownCode(effectiveOutput);
++        const netSaved = rawBaselineBytes - utf8ByteLength(smartFenced);
++        if (netSaved > 0) {
++          stats.smartCompactedCount += 1;
++          stats.savedBytesBySmart += netSaved;
++          plans.set(tool.callRefId, {
++            inputBlock,
++            outputPlan: {
++              kind: "raw",
++              fencedBlock: smartFenced,
++            },
++            outputSourceSha256: effectiveSha256,
++          });
++          continue;
++        }
++      }
 +
 +      // Pass E (Tabular JSON): Try strictly lossless TOON-JSON v1 encoding on uniform JSON object arrays
 +      if (tool.parsedOutputJson !== undefined && tool.prettyOutputJson !== null) {
@@ -2034,7 +2142,7 @@ index 00000000..4579cad6
 +              outputPlan: {
 +                kind: "toon_table",
 +                fencedBlock: toonFenced,
-+                sha256: tool.outputSha256,
++                sha256: tool.outputSha256!,
 +              },
 +              outputSourceSha256: tool.outputSha256,
 +            });
@@ -2084,12 +2192,14 @@ index 00000000..4579cad6
 +function renderToolFromIR(
 +  tool: CanonicalToolPartIR,
 +  options: ExportMarkdownOptions,
-+  lossless: LosslessPassState | null,
++  compressionState: CompressionPassState | null,
 +): string {
 +  const header = `**🛠 ${tool.displayName}**${tool.stateTitle}${tool.statusSuffix}`;
 +  const blocks: string[] = [];
-+  const plan = lossless ? lossless.plans.get(tool.callRefId) : undefined;
-+  const isAnchored = Boolean(lossless && lossless.referencedCallIds.has(tool.callRefId));
++  const plan = compressionState ? compressionState.plans.get(tool.callRefId) : undefined;
++  const isAnchored = Boolean(
++    compressionState && compressionState.referencedCallIds.has(tool.callRefId),
++  );
 +
 +  if (plan) {
 +    if (plan.inputBlock !== null) {
@@ -2125,6 +2235,10 @@ index 00000000..4579cad6
 +          blocks.push(`_Output (\`sha256:${shortSha256(plan.outputSourceSha256)}\`):_`);
 +        }
 +        blocks.push(out.fencedBlock);
++        break;
++      }
++      case "stub": {
++        blocks.push(out.markdownBlock);
 +        break;
 +      }
 +      case "exact_ref":
@@ -2165,7 +2279,7 @@ index 00000000..4579cad6
 +  }
 +
 +  const subHeading = headingHashes(tool.subagent.headingDepth);
-+  const subBody = renderSessionNodeMessages(tool.subagent.node, options, lossless);
++  const subBody = renderSessionNodeMessages(tool.subagent.node, options, compressionState);
 +  const subSection = subBody.markdown
 +    ? `${subHeading} ⤷ Subagent: ${tool.subagent.label}\n\n${subBody.markdown}\n\n${subHeading} ⤶ End subagent`
 +    : `${subHeading} ⤷ Subagent: ${tool.subagent.label}\n\n_(no recorded subagent turns)_\n\n${subHeading} ⤶ End subagent`;
@@ -2176,7 +2290,7 @@ index 00000000..4579cad6
 +function renderMessageBlocks(
 +  message: CanonicalMessageIR,
 +  options: ExportMarkdownOptions,
-+  lossless: LosslessPassState | null,
++  compressionState: CompressionPassState | null,
 +): string[] {
 +  const blocks: string[] = [];
 +
@@ -2197,7 +2311,7 @@ index 00000000..4579cad6
 +      }
 +      case "tool": {
 +        if (!options.includeToolCalls) break;
-+        blocks.push(renderToolFromIR(part, options, lossless));
++        blocks.push(renderToolFromIR(part, options, compressionState));
 +        break;
 +      }
 +      case "subtask": {
@@ -2239,13 +2353,13 @@ index 00000000..4579cad6
 +function renderSessionNodeMessages(
 +  node: CanonicalSessionNodeIR,
 +  options: ExportMarkdownOptions,
-+  lossless: LosslessPassState | null,
++  compressionState: CompressionPassState | null,
 +): { markdown: string; renderedTurnCount: number } {
 +  const turnHeading = headingHashes(node.headingDepth);
 +  const renderedTurns: string[] = [];
 +
 +  for (const message of node.messages) {
-+    const blocks = renderMessageBlocks(message, options, lossless);
++    const blocks = renderMessageBlocks(message, options, compressionState);
 +    if (blocks.length === 0) continue;
 +
 +    const roleTitle = message.info.role === "user" ? "User" : "Assistant";
@@ -2306,11 +2420,12 @@ index 00000000..4579cad6
 +  ir: Omit<CanonicalTranscriptIR, "baselineBytes">,
 +  options: ExportMarkdownOptions,
 +): { markdown: string; stats: CompressionStats } {
-+  const useLossless = options.includeToolCalls && options.compression !== "off";
-+  const lossless = useLossless ? buildLosslessPlans(ir.root) : null;
-+  const stats = lossless ? lossless.stats : emptyStats();
++  const activeMode = options.includeToolCalls ? options.compression : "off";
++  const compressionState =
++    activeMode !== "off" ? buildCompressionPlans(ir.root, activeMode) : null;
++  const stats = compressionState ? compressionState.stats : emptyStats();
 +
-+  const bodyResult = renderSessionNodeMessages(ir.root, options, lossless);
++  const bodyResult = renderSessionNodeMessages(ir.root, options, compressionState);
 +  const rawTitle = ir.root.session.title?.trim() ?? "";
 +  const title = rawTitle ? normalizeNewlines(rawTitle).replace(/\n+/g, " ") : "OmniRush conversation";
 +
@@ -2356,16 +2471,20 @@ index 00000000..4579cad6
 +    stats.savedBytesByDedup +
 +    stats.savedBytesByRange +
 +    stats.savedBytesByDelta +
-+    stats.savedBytesByStructured;
++    stats.savedBytesByStructured +
++    stats.savedBytesBySmart +
++    stats.savedBytesByStubs;
 +
-+  if (useLossless && totalGrossSaved >= 128) {
++  if (activeMode !== "off" && totalGrossSaved >= 128) {
 +    const summaryParts: string[] = [];
 +    if (stats.exactDedupCount > 0) summaryParts.push(`${stats.exactDedupCount} deduplicated`);
 +    if (stats.rangeRefCount > 0) summaryParts.push(`${stats.rangeRefCount} range refs`);
 +    if (stats.deltaCount > 0) summaryParts.push(`${stats.deltaCount} deltas`);
 +    if (stats.toonTableCount > 0) summaryParts.push(`${stats.toonTableCount} TOON tables`);
++    if (stats.smartCompactedCount > 0) summaryParts.push(`${stats.smartCompactedCount} CLI compacted`);
++    if (stats.stubbedCount > 0) summaryParts.push(`${stats.stubbedCount} stubbed`);
 +    const detailSuffix = summaryParts.length > 0 ? ` (${summaryParts.join(", ")})` : "";
-+    metadataBullets.push(`- **Compression:** \`${options.compression}\`${detailSuffix}`);
++    metadataBullets.push(`- **Compression:** \`${activeMode}\`${detailSuffix}`);
 +  }
 +
 +  const headerLines = [
@@ -2425,8 +2544,8 @@ index 00000000..4579cad6
 +  let rendered = renderMarkdownInternal(ir, options);
 +  let utf8Bytes = utf8ByteLength(rendered.markdown);
 +
-+  // Strict document-level monotonicity guard: lossless compression of the full
-+  // transcript must never produce a file larger than the raw baseline.
++  // Strict document-level monotonicity guard: compression of the full transcript
++  // must never produce a file larger than the raw baseline.
 +  if (
 +    options.includeToolCalls &&
 +    options.includeReasoning &&
@@ -2450,6 +2569,681 @@ index 00000000..4579cad6
 +    estimatedTokens,
 +    stats: rendered.stats,
 +  };
++}
+diff --git a/apps/app/src/app/lib/markdown-export/safety-router.ts b/apps/app/src/app/lib/markdown-export/safety-router.ts
+new file mode 100644
+index 00000000..6f939fd0
+--- /dev/null
++++ b/apps/app/src/app/lib/markdown-export/safety-router.ts
+@@ -0,0 +1,135 @@
++import { isPlainObject } from "./structured-compact";
++import type {
++  CanonicalToolPartIR,
++  SafetyBypassReason,
++  ToolSafetyDecision,
++} from "./types";
++
++const MUTATING_TOOLS = new Set([
++  "write",
++  "edit",
++  "multiedit",
++  "apply_patch",
++  "patch",
++  "todowrite",
++]);
++
++const NONZERO_EXIT_LINE_PATTERN =
++  /^(?:Exit status|Process exited with code|Exited with code|Command failed with exit code)\s+([1-9]\d*)\b/m;
++
++const STACK_TRACE_PATTERNS: readonly RegExp[] = [
++  // V8 / Node / Bun / browser stack frames
++  /^\s+at\s+(?:async\s+)?[^\r\n]{1,200}\([^()\r\n]{1,260}:\d+:\d+\)/m,
++  /^\s+at\s+(?:file:\/\/|\/|[A-Za-z]:\\)[^\s\r\n]{1,260}:\d+:\d+/m,
++  // Python traceback
++  /^Traceback \(most recent call last\):/m,
++  // Rust / Go panics & fatal errors
++  /^thread '[^'\r\n]+' panicked at /m,
++  /^panic:\s+\S/m,
++  /^goroutine \d+ \[running\]:/m,
++  /^fatal error:\s+\S/m,
++  // Unhandled JS/TS/runtime errors & package manager errors
++  /^(?:Uncaught\s+)?(?:TypeError|ReferenceError|SyntaxError|RangeError|URIError|EvalError|AssertionError|AggregateError|FATAL ERROR):\s+\S/m,
++  /^(?:npm ERR!|ERR_PNPM_[A-Z0-9_]+|Segmentation fault|Bus error)\b/m,
++];
++
++const COMPILER_ERROR_PATTERNS: readonly RegExp[] = [
++  // TypeScript compiler (`foo.ts(12,5): error TS2322:` or `foo.ts:12:5 - error TS2322:`)
++  /\(\d+,\d+\):\s+error TS\d{4,5}:/m,
++  /:\d+:\d+\s*-\s*error TS\d{4,5}:/m,
++  // Rust / GCC / Clang / Go compiler diagnostics
++  /^error\[E\d{4}\]:/m,
++  /^[^\s:\r\n]+:\d+:\d+:\s+(?:fatal\s+)?error:\s+\S/m,
++];
++
++const PEM_OR_SECRET_PATTERNS: readonly RegExp[] = [
++  /-----BEGIN [A-Z0-9 ]{3,48}-----/,
++  /^(?:export\s+)?[A-Z0-9_]*(?:PRIVATE_KEY|SECRET_KEY|CLIENT_SECRET|ACCESS_TOKEN|API_KEY|AUTH_TOKEN|PASSWORD)[A-Z0-9_]*\s*=\s*['"]?[A-Za-z0-9+/=_\-.]{8,}/m,
++];
++
++const SQL_MIGRATION_PATTERN =
++  /^\s*(?:CREATE\s+(?:TABLE|UNIQUE\s+INDEX|INDEX|VIEW|MATERIALIZED\s+VIEW|TYPE|FUNCTION|TRIGGER)|ALTER\s+TABLE|DROP\s+(?:TABLE|INDEX|VIEW|TYPE)|BEGIN\s+TRANSACTION)\b/im;
++
++function extractNumericExitCode(metadata: Record<string, unknown> | undefined): number | null {
++  if (!metadata) return null;
++  for (const key of ["exit", "exitCode", "code"]) {
++    const val = metadata[key];
++    if (typeof val === "number" && Number.isFinite(val)) {
++      return val;
++    }
++  }
++  return null;
++}
++
++/**
++ * Deterministic Safety Router protecting diagnostic errors, stack traces,
++ * non-zero exit statuses, credentials/PEM blocks, SQL migrations, and
++ * workspace-mutating tools from lossy truncation or stubbing in `"smart"` and
++ * `"stubs"` compression modes.
++ */
++export function classifyToolSafety(tool: CanonicalToolPartIR): ToolSafetyDecision {
++  const reasons: SafetyBypassReason[] = [];
++  const lowerTool = tool.part.tool.trim().toLowerCase();
++  const isMutatingTool = MUTATING_TOOLS.has(lowerTool);
++
++  if (isMutatingTool) {
++    reasons.push("mutating_tool");
++  }
++
++  const state = tool.part.state;
++  const codeModeFailed =
++    Boolean(tool.part.metadata && tool.part.metadata.omnirushV2CodeMode === true) &&
++    state.status === "completed" &&
++    Boolean(state.metadata && state.metadata.error === true);
++
++  if (state.status === "error" || tool.errorText !== null || codeModeFailed) {
++    reasons.push("tool_error_status");
++  }
++
++  const metadataRecord =
++    (state.status === "completed" || state.status === "running" || state.status === "error") &&
++    isPlainObject(state.metadata)
++      ? state.metadata
++      : undefined;
++  const exitCode = extractNumericExitCode(metadataRecord);
++  if (exitCode !== null && exitCode !== 0) {
++    reasons.push("nonzero_exit_code");
++  }
++
++  const textToInspect =
++    tool.canonicalRead !== null ? tool.canonicalRead.cleanBody : (tool.normalizedOutput ?? "");
++
++  if (textToInspect) {
++    if (
++      !reasons.includes("nonzero_exit_code") &&
++      tool.canonicalRead === null &&
++      NONZERO_EXIT_LINE_PATTERN.test(textToInspect)
++    ) {
++      reasons.push("nonzero_exit_code");
++    }
++
++    if (PEM_OR_SECRET_PATTERNS.some((re) => re.test(textToInspect))) {
++      reasons.push("credentials_or_pem");
++    }
++
++    if (SQL_MIGRATION_PATTERN.test(textToInspect)) {
++      reasons.push("sql_migration");
++    }
++
++    // Stack traces and compiler error lines are CLI/diagnostic signals (not static source files opened via Read)
++    if (tool.canonicalRead === null) {
++      if (STACK_TRACE_PATTERNS.some((re) => re.test(textToInspect))) {
++        reasons.push("stack_trace_or_exception");
++      }
++      if (COMPILER_ERROR_PATTERNS.some((re) => re.test(textToInspect))) {
++        reasons.push("compiler_diagnostic_error");
++      }
++    }
++  }
++
++  return {
++    bypassLossy: reasons.length > 0,
++    isMutatingTool,
++    reasons,
++  };
++}
+diff --git a/apps/app/src/app/lib/markdown-export/smart-cli.ts b/apps/app/src/app/lib/markdown-export/smart-cli.ts
+new file mode 100644
+index 00000000..c320f686
+--- /dev/null
++++ b/apps/app/src/app/lib/markdown-export/smart-cli.ts
+@@ -0,0 +1,528 @@
++import { normalizeComparableFilePath } from "./canonicalize";
++import { shortSha256, utf8ByteLength } from "./hash-and-bytes";
++import { fenceMarkdownCode, isPlainObject } from "./structured-compact";
++import type {
++  CanonicalReadFile,
++  CanonicalSessionNodeIR,
++  CanonicalToolPartIR,
++  ToolSafetyDecision,
++} from "./types";
++
++const ANSI_ESCAPE_PATTERN =
++  // eslint-disable-next-line no-control-regex
++  /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
++
++const BRAILLE_SPINNER_LINE = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏](?:\s.*)?$/;
++
++const PASSING_TEST_LINE_PATTERNS: readonly RegExp[] = [
++  // Bun test: `(pass) suite > test [1.23ms]`
++  /^\(pass\)\s+\S.*$/,
++  // Vitest / Jest / Mocha: ` ✓ suite > test (5 ms)` or ` ✔ test name`
++  /^\s*[✓✔]\s+\S.*$/,
++  // Cargo test: `test module::my_test ... ok`
++  /^test\s+\S+\s+\.\.\.\s+ok$/,
++  // Pytest verbose: `tests/test_api.py::test_login PASSED [ 25%]`
++  /^\S+::\S+\s+PASSED(?:\s+\[\s*\d+%\])?$/,
++  // Go test verbose: `--- PASS: TestSomething (0.01s)`
++  /^---\s+PASS:\s+\S+\s+\([0-9.]+s\)$/,
++  // Node test runner single-line TAP/spec without YAML failure block: `ok 1 - my test`
++  /^ok\s+\d+\s+-\s+\S.*$/,
++];
++
++const MIN_PASSING_RUN_TO_COLLAPSE = 6;
++const MIN_IDENTICAL_LOG_RUN = 4;
++const CLI_HEAD_TAIL_LINE_THRESHOLD = 110;
++const CLI_HEAD_TAIL_BYTE_THRESHOLD = 5500;
++const CLI_KEEP_HEAD_LINES = 45;
++const CLI_KEEP_TAIL_LINES = 35;
++const MIN_SMART_NET_WIN_BYTES = 48;
++
++const MIN_SUPERSEDED_READ_BYTES = 320;
++const MIN_SUPERSEDED_READ_LINES = 10;
++const MIN_EXPLORATORY_READ_BYTES = 800;
++const MIN_EXPLORATORY_READ_LINES = 25;
++const MIN_EXPLORATORY_TOOL_BYTES = 1000;
++const MIN_EXPLORATORY_TOOL_LINES = 25;
++const STUB_PREVIEW_LINES = 4;
++const MIN_STUB_NET_WIN_BYTES = 128;
++
++const EXPLORATORY_INSPECTION_TOOLS = new Set([
++  "glob",
++  "grep",
++  "list",
++  "ls",
++  "codesearch",
++  "websearch",
++  "webfetch",
++]);
++
++/**
++ * Strip terminal ANSI CSI/OSC sequences, resolve `\r` progress-bar overwrites
++ * on raw lines, and drop standalone braille spinner lines.
++ */
++export function stripAnsiAndProgressNoise(rawText: string): string {
++  const withoutOscAndCsi = rawText.replace(ANSI_ESCAPE_PATTERN, "");
++  const rawLines = withoutOscAndCsi.replace(/\r\n/g, "\n").split("\n");
++  const cleanedLines: string[] = [];
++
++  for (const rawLine of rawLines) {
++    let resolved = rawLine;
++    if (resolved.includes("\r")) {
++      // Trailing `\r` with nothing after it means the terminal cleared/reset the transient spinner line
++      if (resolved.endsWith("\r")) {
++        continue;
++      }
++      const segments = resolved.split("\r").filter((seg) => seg.length > 0);
++      resolved = segments.length > 0 ? segments[segments.length - 1]! : "";
++    }
++    if (resolved.length > 0 && BRAILLE_SPINNER_LINE.test(resolved.trimStart())) {
++      continue;
++    }
++    cleanedLines.push(resolved);
++  }
++
++  return cleanedLines.join("\n").trimEnd();
++}
++
++function isPassingTestLine(line: string): boolean {
++  return PASSING_TEST_LINE_PATTERNS.some((re) => re.test(line));
++}
++
++/**
++ * Collapse contiguous runs (`>= 6` lines) of strictly passing test lines across
++ * Bun, Vitest, Jest, Mocha, Pytest, Cargo, Go, and Node test runners while
++ * preserving 100% of failures, assertion diffs, stack traces, and summaries.
++ */
++export function collapsePassingTestRuns(text: string): {
++  text: string;
++  collapsedLines: number;
++} {
++  const lines = text.split("\n");
++  const out: string[] = [];
++  let collapsedLines = 0;
++
++  let i = 0;
++  while (i < lines.length) {
++    if (!isPassingTestLine(lines[i]!)) {
++      out.push(lines[i]!);
++      i += 1;
++      continue;
++    }
++
++    let end = i + 1;
++    while (end < lines.length && isPassingTestLine(lines[end]!)) {
++      end += 1;
++    }
++    const runLen = end - i;
++    if (runLen >= MIN_PASSING_RUN_TO_COLLAPSE) {
++      out.push(`[... collapsed ${runLen} passing test lines ...]`);
++      collapsedLines += runLen;
++    } else {
++      for (let k = i; k < end; k += 1) {
++        out.push(lines[k]!);
++      }
++    }
++    i = end;
++  }
++
++  return { text: out.join("\n"), collapsedLines };
++}
++
++function factorWorkspacePrefix(lines: readonly string[], workspaceRoot?: string): {
++  header: string | null;
++  lines: string[];
++} {
++  const root = (workspaceRoot ?? "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
++  if (!root || root.length < 6) {
++    return { header: null, lines: [...lines] };
++  }
++  const prefix = `${root}/`;
++  let matchCount = 0;
++  for (const line of lines) {
++    if (line.startsWith(prefix)) matchCount += 1;
++  }
++  if (matchCount < 4) {
++    return { header: null, lines: [...lines] };
++  }
++  return {
++    header: `[Base directory: ${prefix}]`,
++    lines: lines.map((line) => (line.startsWith(prefix) ? line.slice(prefix.length) : line)),
++  };
++}
++
++/**
++ * Compact noisy `glob` / `grep` / `list` outputs by factoring repetitive
++ * workspace root prefixes and collapsing per-directory / per-file match bursts.
++ */
++export function compactSearchOutput(
++  toolName: string,
++  text: string,
++  workspaceRoot?: string,
++): string {
++  const lowerTool = toolName.trim().toLowerCase();
++  if (lowerTool !== "glob" && lowerTool !== "grep" && lowerTool !== "list" && lowerTool !== "ls") {
++    return text;
++  }
++
++  const rawLines = text.split("\n");
++  const factored = factorWorkspacePrefix(rawLines, workspaceRoot);
++  let workingLines = factored.lines;
++
++  if (lowerTool === "glob" && workingLines.length >= 30) {
++    const compacted: string[] = [];
++    let i = 0;
++    while (i < workingLines.length) {
++      const line = workingLines[i]!.trim();
++      const slashIdx = line.lastIndexOf("/");
++      const dir = slashIdx > 0 ? line.slice(0, slashIdx) : "";
++      if (!dir) {
++        compacted.push(workingLines[i]!);
++        i += 1;
++        continue;
++      }
++      let end = i + 1;
++      while (end < workingLines.length) {
++        const candidate = workingLines[end]!.trim();
++        const candSlash = candidate.lastIndexOf("/");
++        const candDir = candSlash > 0 ? candidate.slice(0, candSlash) : "";
++        if (candDir !== dir) break;
++        end += 1;
++      }
++      const groupLen = end - i;
++      if (groupLen > 10) {
++        for (let k = i; k < i + 5; k += 1) {
++          compacted.push(workingLines[k]!);
++        }
++        compacted.push(`  [... +${groupLen - 5} more files in ${dir}/ ...]`);
++      } else {
++        for (let k = i; k < end; k += 1) {
++          compacted.push(workingLines[k]!);
++        }
++      }
++      i = end;
++    }
++    workingLines = compacted;
++  } else if (lowerTool === "grep" && workingLines.length >= 40) {
++    const compacted: string[] = [];
++    let i = 0;
++    while (i < workingLines.length) {
++      const match = /^([^:\r\n]+):\d+:/.exec(workingLines[i]!);
++      if (!match) {
++        compacted.push(workingLines[i]!);
++        i += 1;
++        continue;
++      }
++      const fileKey = match[1]!;
++      let end = i + 1;
++      while (end < workingLines.length) {
++        const nextMatch = /^([^:\r\n]+):\d+:/.exec(workingLines[end]!);
++        if (!nextMatch || nextMatch[1] !== fileKey) break;
++        end += 1;
++      }
++      const groupLen = end - i;
++      if (groupLen > 12) {
++        for (let k = i; k < i + 6; k += 1) {
++          compacted.push(workingLines[k]!);
++        }
++        compacted.push(`  [... +${groupLen - 6} more matches in ${fileKey} ...]`);
++      } else {
++        for (let k = i; k < end; k += 1) {
++          compacted.push(workingLines[k]!);
++        }
++      }
++      i = end;
++    }
++    workingLines = compacted;
++  }
++
++  return factored.header ? `${factored.header}\n${workingLines.join("\n")}` : workingLines.join("\n");
++}
++
++function collapseConsecutiveIdenticalLines(text: string): string {
++  const lines = text.split("\n");
++  const out: string[] = [];
++  let i = 0;
++  while (i < lines.length) {
++    const current = lines[i]!;
++    if (!current.trim()) {
++      out.push(current);
++      i += 1;
++      continue;
++    }
++    let end = i + 1;
++    while (end < lines.length && lines[end] === current) {
++      end += 1;
++    }
++    const count = end - i;
++    if (count >= MIN_IDENTICAL_LOG_RUN) {
++      out.push(current);
++      out.push(`[... previous line repeated ${count - 1} more times ...]`);
++    } else {
++      for (let k = i; k < end; k += 1) {
++        out.push(lines[k]!);
++      }
++    }
++    i = end;
++  }
++  return out.join("\n");
++}
++
++/**
++ * Apply deterministic `"smart"` CLI/search compaction to a non-Read, non-JSON
++ * tool output while respecting `SafetyRouter`.
++ *
++ * Returns `{ output, compacted }` where `compacted === true` only when the
++ * transformation passed the Net-Win Gate (`>= 48` UTF-8 bytes saved).
++ */
++export function applySmartCliTransform(params: {
++  tool: CanonicalToolPartIR;
++  rawOutput: string;
++  safety: ToolSafetyDecision;
++  workspaceRoot?: string;
++}): { output: string; compacted: boolean; savedBytes: number } {
++  const { tool, rawOutput, safety, workspaceRoot } = params;
++
++  // Never alter PEM/credentials, SQL migrations, canonical Read bodies, or structured JSON via lossy CLI filters
++  if (
++    tool.canonicalRead !== null ||
++    tool.parsedOutputJson !== undefined ||
++    safety.reasons.includes("credentials_or_pem") ||
++    safety.reasons.includes("sql_migration")
++  ) {
++    return { output: rawOutput, compacted: false, savedBytes: 0 };
++  }
++
++  // Passing test runs can be collapsed even when a test suite had 1 failure,
++  // because `collapsePassingTestRuns` only touches strictly passing lines and
++  // leaves every failed test, assertion diff, stack frame, and summary intact.
++  let candidate = stripAnsiAndProgressNoise(rawOutput);
++  candidate = collapsePassingTestRuns(candidate).text;
++
++  // All broader search grouping, duplicate-line collapsing, and head+tail CLI log
++  // trimming are gated behind `!safety.bypassLossy` (exit 0, zero error/stacktrace signals).
++  if (!safety.bypassLossy) {
++    candidate = compactSearchOutput(tool.part.tool, candidate, workspaceRoot);
++    candidate = collapseConsecutiveIdenticalLines(candidate);
++
++    const candidateLines = candidate.split("\n");
++    const candidateBytes = utf8ByteLength(candidate);
++    if (
++      candidateLines.length > CLI_HEAD_TAIL_LINE_THRESHOLD &&
++      candidateBytes > CLI_HEAD_TAIL_BYTE_THRESHOLD
++    ) {
++      const omitted = candidateLines.length - CLI_KEEP_HEAD_LINES - CLI_KEEP_TAIL_LINES;
++      if (omitted >= 20) {
++        const head = candidateLines.slice(0, CLI_KEEP_HEAD_LINES).join("\n");
++        const tail = candidateLines.slice(candidateLines.length - CLI_KEEP_TAIL_LINES).join("\n");
++        candidate = `${head}\n[... omitted ${omitted} middle lines (exit 0, no errors detected) ...]\n${tail}`;
++      }
++    }
++  }
++
++  const originalBytes = utf8ByteLength(rawOutput);
++  const newBytes = utf8ByteLength(candidate);
++  const saved = originalBytes - newBytes;
++  if (saved < MIN_SMART_NET_WIN_BYTES) {
++    return { output: rawOutput, compacted: false, savedBytes: 0 };
++  }
++
++  return { output: candidate, compacted: true, savedBytes: saved };
++}
++
++export type BranchStubIndex = {
++  /** Normalized comparable file paths modified anywhere in the visible branch. */
++  mutatedPaths: ReadonlySet<string>;
++  /** Latest completed CanonicalReadFile tool call per comparablePath in document order. */
++  latestReadByPath: ReadonlyMap<string, CanonicalToolPartIR>;
++};
++
++function extractPathsFromPatchText(patchText: string): string[] {
++  const found: string[] = [];
++  const lines = patchText.split(/\r?\n/);
++  for (const line of lines) {
++    const applyPatchMatch = /^\*\*\* (?:Update|Add|Delete) File:\s+(.+)$/.exec(line.trim());
++    if (applyPatchMatch) {
++      found.push(applyPatchMatch[1]!.trim());
++      continue;
++    }
++    const unifiedMatch = /^\+\+\+\s+b\/(.+)$/.exec(line.trim());
++    if (unifiedMatch && unifiedMatch[1] !== "/dev/null") {
++      found.push(unifiedMatch[1]!.trim());
++    }
++  }
++  return found;
++}
++
++function extractMutatedInputPaths(
++  toolName: string,
++  input: Record<string, unknown>,
++  workspaceRoot?: string,
++): string[] {
++  const lower = toolName.trim().toLowerCase();
++  const rawPaths: string[] = [];
++
++  if (lower === "write" || lower === "edit" || lower === "multiedit") {
++    for (const key of ["filePath", "file_path", "path"]) {
++      const val = input[key];
++      if (typeof val === "string" && val.trim()) {
++        rawPaths.push(val.trim());
++      }
++    }
++  } else if (lower === "apply_patch" || lower === "patch") {
++    for (const key of ["patchText", "patch", "diff", "content"]) {
++      const val = input[key];
++      if (typeof val === "string" && val.trim()) {
++        rawPaths.push(...extractPathsFromPatchText(val));
++      }
++    }
++    for (const key of ["filePath", "file_path", "path"]) {
++      const val = input[key];
++      if (typeof val === "string" && val.trim()) {
++        rawPaths.push(val.trim());
++      }
++    }
++  }
++
++  return rawPaths
++    .map((p) => normalizeComparableFilePath(p, workspaceRoot))
++    .filter(Boolean);
++}
++
++/**
++ * Index all mutated file paths and latest `Read` snapshots across the visible
++ * session branch (root + subagents) so `"stubs"` mode keeps the latest context
++ * of edited files while stubbing superseded or purely exploratory reads.
++ */
++export function buildBranchStubIndex(root: CanonicalSessionNodeIR): BranchStubIndex {
++  const mutatedPaths = new Set<string>();
++  const latestReadByPath = new Map<string, CanonicalToolPartIR>();
++
++  const walk = (node: CanonicalSessionNodeIR) => {
++    const workspaceRoot = node.session.directory?.trim() ?? "";
++    for (const msg of node.messages) {
++      for (const part of msg.parts) {
++        if (part.kind === "patch") {
++          for (const file of part.files) {
++            const norm = normalizeComparableFilePath(file, workspaceRoot);
++            if (norm) mutatedPaths.add(norm);
++          }
++          continue;
++        }
++        if (part.kind !== "tool") continue;
++
++        if (isPlainObject(part.part.state.input)) {
++          const touched = extractMutatedInputPaths(
++            part.part.tool,
++            part.part.state.input,
++            workspaceRoot,
++          );
++          for (const p of touched) mutatedPaths.add(p);
++        }
++
++        if (part.canonicalRead && part.canonicalRead.comparablePath) {
++          latestReadByPath.set(part.canonicalRead.comparablePath, part);
++        }
++
++        if (part.subagent) {
++          walk(part.subagent.node);
++        }
++      }
++    }
++  };
++
++  walk(root);
++  return { mutatedPaths, latestReadByPath };
++}
++
++function sanitizeInlineCode(value: string): string {
++  return value.replace(/[`[\]\r\n]+/g, " ").trim();
++}
++
++function formatReadShortRange(read: CanonicalReadFile): string {
++  if (read.lines.length === 0) return "0 lines";
++  const suffix = read.footerKind === "eof" ? ", EOF" : read.truncated ? ", truncated" : "";
++  return `L${read.firstLine}–L${read.lastLine}, ${read.lines.length} lines${suffix}`;
++}
++
++/**
++ * Try converting an eligible read-only inspection tool output into a compact
++ * CMV-style stub when `compression === "stubs"`.
++ *
++ * Never stubs errors, stack traces, non-zero exit codes, credentials/PEM, SQL
++ * migrations, mutating tools, or the latest `Read` snapshot of a modified file.
++ */
++export function tryBuildCompactStub(params: {
++  tool: CanonicalToolPartIR;
++  safety: ToolSafetyDecision;
++  stubIndex: BranchStubIndex;
++  rawBaselineBytes: number;
++}): { markdownBlock: string; savedBytes: number } | null {
++  const { tool, safety, stubIndex, rawBaselineBytes } = params;
++  if (safety.bypassLossy || safety.isMutatingTool) return null;
++
++  // Case 1 & 2: Canonical `Read` file outputs
++  if (tool.canonicalRead !== null) {
++    const read = tool.canonicalRead;
++    if (!read.comparablePath) return null;
++    const latestForPath = stubIndex.latestReadByPath.get(read.comparablePath);
++    const isSupersededByLaterRead =
++      Boolean(latestForPath) && latestForPath!.callRefId !== tool.callRefId;
++    const pathLabel = sanitizeInlineCode(read.displayPath || read.comparablePath);
++
++    if (
++      isSupersededByLaterRead &&
++      rawBaselineBytes >= MIN_SUPERSEDED_READ_BYTES &&
++      read.lines.length >= MIN_SUPERSEDED_READ_LINES
++    ) {
++      const stub = `> [Stubbed superseded Read of \`${pathLabel}\` (${formatReadShortRange(read)}) · \`sha256:${shortSha256(read.cleanBodySha256)}\` — latest snapshot in ${latestForPath!.turnLabel}]`;
++      const saved = rawBaselineBytes - utf8ByteLength(stub);
++      if (saved >= MIN_STUB_NET_WIN_BYTES) {
++        return { markdownBlock: stub, savedBytes: saved };
++      }
++    }
++
++    const wasMutated = stubIndex.mutatedPaths.has(read.comparablePath);
++    if (
++      !wasMutated &&
++      rawBaselineBytes >= MIN_EXPLORATORY_READ_BYTES &&
++      read.lines.length >= MIN_EXPLORATORY_READ_LINES
++    ) {
++      const bodyBytes = utf8ByteLength(read.cleanBody);
++      const stub = `> [Stubbed exploratory Read of \`${pathLabel}\` (${formatReadShortRange(read)}, ${bodyBytes.toLocaleString("en-US")} B) · \`sha256:${shortSha256(read.cleanBodySha256)}\` — file unmodified in branch]`;
++      const saved = rawBaselineBytes - utf8ByteLength(stub);
++      if (saved >= MIN_STUB_NET_WIN_BYTES) {
++        return { markdownBlock: stub, savedBytes: saved };
++      }
++    }
++
++    return null;
++  }
++
++  // Case 3: Bulky read-only search / directory / web fetch exploration outputs
++  const lowerTool = tool.part.tool.trim().toLowerCase();
++  if (!EXPLORATORY_INSPECTION_TOOLS.has(lowerTool) || tool.normalizedOutput === null) {
++    return null;
++  }
++  if (
++    tool.outputLineCount < MIN_EXPLORATORY_TOOL_LINES &&
++    tool.outputBytes < MIN_EXPLORATORY_TOOL_BYTES
++  ) {
++    return null;
++  }
++
++  const allLines = tool.normalizedOutput.split("\n");
++  if (allLines.length <= STUB_PREVIEW_LINES + 2) return null;
++
++  const previewLines = allLines.slice(0, STUB_PREVIEW_LINES);
++  const remaining = allLines.length - STUB_PREVIEW_LINES;
++  const shaNote = tool.outputSha256 ? ` · \`sha256:${shortSha256(tool.outputSha256)}\`` : "";
++  const header = `> [Stubbed exploratory ${sanitizeInlineCode(tool.displayName)} output (${allLines.length} lines, ${tool.outputBytes.toLocaleString("en-US")} B${shaNote})]`;
++  const previewFence = fenceMarkdownCode(
++    `${previewLines.join("\n")}\n[... ${remaining} additional lines stubbed in stubs mode ...]`,
++  );
++  const combined = `${header}\n\n${previewFence}`;
++  const saved = rawBaselineBytes - utf8ByteLength(combined);
++  if (saved < MIN_STUB_NET_WIN_BYTES) return null;
++
++  return { markdownBlock: combined, savedBytes: saved };
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/structured-compact.ts b/apps/app/src/app/lib/markdown-export/structured-compact.ts
 new file mode 100644
@@ -2740,10 +3534,10 @@ index 00000000..e8155f76
 +}
 diff --git a/apps/app/src/app/lib/markdown-export/types.ts b/apps/app/src/app/lib/markdown-export/types.ts
 new file mode 100644
-index 00000000..b5d949e1
+index 00000000..84baa761
 --- /dev/null
 +++ b/apps/app/src/app/lib/markdown-export/types.ts
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,216 @@
 +import type {
 +  AssistantMessage,
 +  Message,
@@ -2906,6 +3700,23 @@ index 00000000..b5d949e1
 +  baselineBytes: number;
 +};
 +
++export type SafetyBypassReason =
++  | "tool_error_status"
++  | "nonzero_exit_code"
++  | "stack_trace_or_exception"
++  | "compiler_diagnostic_error"
++  | "credentials_or_pem"
++  | "sql_migration"
++  | "mutating_tool";
++
++export type ToolSafetyDecision = {
++  /** When true, lossy Smart truncation/grouping and Stubs mode must not drop lines from this tool call. */
++  bypassLossy: boolean;
++  /** True when the tool mutates workspace or todo state. */
++  isMutatingTool: boolean;
++  reasons: SafetyBypassReason[];
++};
++
 +export type CompressionStats = {
 +  exactDedupCount: number;
 +  rangeRefCount: number;
@@ -2913,11 +3724,16 @@ index 00000000..b5d949e1
 +  canonicalReadCount: number;
 +  compactJsonCount: number;
 +  toonTableCount: number;
++  smartCompactedCount: number;
++  stubbedCount: number;
++  safetyBypassCount: number;
 +  anchorCount: number;
 +  savedBytesByDedup: number;
 +  savedBytesByRange: number;
 +  savedBytesByDelta: number;
 +  savedBytesByStructured: number;
++  savedBytesBySmart: number;
++  savedBytesByStubs: number;
 +};
 +
 +export type ExportRenderResult = {
@@ -2940,10 +3756,10 @@ index 00000000..b5d949e1
 +};
 diff --git a/apps/app/src/app/lib/session-markdown-export.ts b/apps/app/src/app/lib/session-markdown-export.ts
 new file mode 100644
-index 00000000..14a24565
+index 00000000..19a71d44
 --- /dev/null
 +++ b/apps/app/src/app/lib/session-markdown-export.ts
-@@ -0,0 +1,233 @@
+@@ -0,0 +1,253 @@
 +import type { Session } from "@opencode-ai/sdk/v2/client";
 +
 +import {
@@ -2957,6 +3773,15 @@ index 00000000..14a24565
 +import { sha256Hex, shortSha256, utf8ByteLength } from "./markdown-export/hash-and-bytes";
 +import { expandLosslessMarkdown, verifyLosslessRoundTrip } from "./markdown-export/lossless-expander";
 +import { buildCanonicalTranscriptIR, renderTranscriptFromIR } from "./markdown-export/render-markdown";
++import { classifyToolSafety } from "./markdown-export/safety-router";
++import {
++  applySmartCliTransform,
++  buildBranchStubIndex,
++  collapsePassingTestRuns,
++  compactSearchOutput,
++  stripAnsiAndProgressNoise,
++  tryBuildCompactStub,
++} from "./markdown-export/smart-cli";
 +import {
 +  decodeLosslessToon,
 +  fenceMarkdownCode,
@@ -2983,11 +3808,18 @@ index 00000000..14a24565
 +  type ParsedExportSlashCommand,
 +  type ReadFooterKind,
 +  type RelativeExportPathValidation,
++  type SafetyBypassReason,
++  type ToolSafetyDecision,
 +} from "./markdown-export/types";
 +
 +export {
 +  applyLosslessFileDelta,
++  applySmartCliTransform,
++  buildBranchStubIndex,
 +  buildCanonicalTranscriptIR,
++  classifyToolSafety,
++  collapsePassingTestRuns,
++  compactSearchOutput,
 +  computeLosslessFileDelta,
 +  decodeLosslessToon,
 +  DEFAULT_EXPORT_MARKDOWN_OPTIONS,
@@ -3001,6 +3833,8 @@ index 00000000..14a24565
 +  renderTranscriptFromIR,
 +  sha256Hex,
 +  shortSha256,
++  stripAnsiAndProgressNoise,
++  tryBuildCompactStub,
 +  tryEncodeLosslessToon,
 +  tryFormatCompactJsonInput,
 +  utf8ByteLength,
@@ -3025,6 +3859,8 @@ index 00000000..14a24565
 +  ParsedExportSlashCommand,
 +  ReadFooterKind,
 +  RelativeExportPathValidation,
++  SafetyBypassReason,
++  ToolSafetyDecision,
 +};
 +
 +const MAX_SLUG_UTF8_BYTES = 64;
@@ -4336,6 +5172,540 @@ index 00000000..188e4043
 +    expect(rendered.stats.anchorCount).toBe(0);
 +    expect(expandLosslessMarkdown(rendered.markdown)).toEqual([]);
 +    expect(rendered.utf8Bytes).toBeLessThanOrEqual(rendered.baselineBytes);
++  });
++});
+diff --git a/apps/app/tests/markdown-export-smart-stubs.test.ts b/apps/app/tests/markdown-export-smart-stubs.test.ts
+new file mode 100644
+index 00000000..655c3a54
+--- /dev/null
++++ b/apps/app/tests/markdown-export-smart-stubs.test.ts
+@@ -0,0 +1,528 @@
++import { describe, expect, test } from "bun:test";
++import type { AssistantMessage, Part, Session, UserMessage } from "@opencode-ai/sdk/v2/client";
++
++import {
++  buildCanonicalTranscriptIR,
++  classifyToolSafety,
++  collapsePassingTestRuns,
++  compactSearchOutput,
++  renderTranscriptFromIR,
++  stripAnsiAndProgressNoise,
++  type ExportableSessionMessage,
++  type ExportableSessionTree,
++} from "../src/app/lib/session-markdown-export";
++
++function makeSession(overrides: Partial<Session> = {}): Session {
++  return {
++    id: "ses_stage2_01",
++    slug: "smart-stubs",
++    projectID: "proj_1",
++    directory: "/workspace/omnirush-gui",
++    title: "Smart and Stubs Compression",
++    version: "2.0.0",
++    time: {
++      created: Date.UTC(2026, 9, 30, 11, 0, 0),
++      updated: Date.UTC(2026, 9, 30, 11, 30, 0),
++    },
++    ...overrides,
++  };
++}
++
++function makeUser(id: string, text: string): ExportableSessionMessage {
++  const info: UserMessage = {
++    id,
++    sessionID: "ses_stage2_01",
++    role: "user",
++    time: { created: Date.UTC(2026, 9, 30, 11, 0, 0) },
++    agent: "build",
++    model: { providerID: "anthropic", modelID: "claude-sonnet-4-5" },
++  };
++  return {
++    info,
++    parts: [{ id: `${id}_p1`, sessionID: "ses_stage2_01", messageID: id, type: "text", text }],
++  };
++}
++
++function makeAssistant(id: string, parentID: string, parts: Part[]): ExportableSessionMessage {
++  const info: AssistantMessage = {
++    id,
++    sessionID: "ses_stage2_01",
++    role: "assistant",
++    parentID,
++    time: {
++      created: Date.UTC(2026, 9, 30, 11, 1, 0),
++      completed: Date.UTC(2026, 9, 30, 11, 2, 0),
++    },
++    modelID: "claude-sonnet-4-5",
++    providerID: "anthropic",
++    mode: "build",
++    agent: "build",
++    path: { cwd: "/workspace/omnirush-gui", root: "/workspace/omnirush-gui" },
++    cost: 0.015,
++    tokens: {
++      input: 1500,
++      output: 500,
++      reasoning: 250,
++      cache: { read: 0, write: 0 },
++    },
++  };
++  return { info, parts };
++}
++
++function makeV2ReadOutput(filePath: string, lines: string[], startLine = 1): string {
++  const numbered = lines.map((line, idx) => `${startLine + idx}: ${line}`).join("\n");
++  return `<path>${filePath}</path>\n<type>file</type>\n<content>\n${numbered}\n\n(End of file - total ${startLine + lines.length - 1} lines)\n</content>`;
++}
++
++describe("markdown-export Stage 2 Safety Router, Smart CLI, and Compact Stubs", () => {
++  test("stripAnsiAndProgressNoise and collapsePassingTestRuns clean CLI noise while preserving 100% of test failures", () => {
++    const rawSpinner =
++      "⠋ Building...\n\x1b[36mDownloading 10%\x1b[0m\r\x1b[36mDownloading 60%\x1b[0m\r\x1b[32mDownload complete\x1b[0m\n";
++    expect(stripAnsiAndProgressNoise(rawSpinner)).toBe("Download complete");
++
++    const mixedSuite = [
++      "bun test v1.3.14",
++      ...Array.from({ length: 24 }, (_, idx) => `(pass) auth > case #${idx + 1} [0.42ms]`),
++      "(fail) auth > rejects expired token [3.10ms]",
++      "error: expect(received).toBe(expected)",
++      "Expected: 401",
++      "Received: 200",
++      "      at <anonymous> (/workspace/omnirush-gui/tests/auth.test.ts:88:14)",
++      ...Array.from({ length: 12 }, (_, idx) => `  ✓ vitest suite > check #${idx + 1} (2 ms)`),
++      " 24 pass",
++      " 1 fail",
++    ].join("\n");
++
++    const collapsed = collapsePassingTestRuns(mixedSuite);
++    expect(collapsed.collapsedLines).toBe(36);
++    expect(collapsed.text).toContain("[... collapsed 24 passing test lines ...]");
++    expect(collapsed.text).toContain("[... collapsed 12 passing test lines ...]");
++    expect(collapsed.text).toContain("(fail) auth > rejects expired token [3.10ms]");
++    expect(collapsed.text).toContain("Expected: 401");
++    expect(collapsed.text).toContain("Received: 200");
++    expect(collapsed.text).toContain("at <anonymous> (/workspace/omnirush-gui/tests/auth.test.ts:88:14)");
++    expect(collapsed.text).toContain(" 1 fail");
++  });
++
++  test("Safety Router strictly protects errors, stack traces, compiler errors, non-zero exits, PEM keys, SQL migrations, and mutating tools in both Smart and Stubs", () => {
++    const longStackLines = [
++      ...Array.from({ length: 140 }, (_, i) => `step ${i + 1}: initializing worker context padding_text_for_size_threshold`),
++      "TypeError: Cannot read properties of undefined (reading 'session')",
++      "    at runWorker (/workspace/omnirush-gui/src/worker.ts:142:19)",
++      ...Array.from({ length: 30 }, (_, i) => `cleanup line ${i + 1}: releasing handle`),
++    ].join("\n");
++
++    const sqlMigrationLines = [
++      "-- Initial schema migration",
++      "BEGIN TRANSACTION;",
++      "CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL);",
++      ...Array.from({ length: 45 }, (_, i) => `ALTER TABLE sessions ADD COLUMN col_${i + 1} TEXT;`),
++      "COMMIT;",
++    ];
++
++    const pemLines = [
++      "-----BEGIN PUBLIC KEY-----",
++      ...Array.from({ length: 35 }, () => "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7V1234567890ABCDEF"),
++      "-----END PUBLIC KEY-----",
++    ];
++
++    const tsErrorOutput = [
++      ...Array.from({ length: 130 }, (_, i) => `checking module_${i + 1}.ts ... ok_padding_line_for_threshold_check`),
++      "src/broken.ts(29,7): error TS2322: Type 'string' is not assignable to type 'number'.",
++    ].join("\n");
++
++    const tree: ExportableSessionTree = {
++      session: makeSession(),
++      messages: [
++        makeUser("u1", "Run diagnostics and inspect migration + cert."),
++        makeAssistant("a1", "u1", [
++          {
++            id: "r1",
++            sessionID: "ses_stage2_01",
++            messageID: "a1",
++            type: "reasoning",
++            text: "CRITICAL_REASONING_TEXT_MUST_NEVER_BE_TRUNCATED",
++            time: { start: 1, end: 2 },
++          },
++          // 1. Completed status, but contains V8 stack trace in output
++          {
++            id: "t_stack",
++            sessionID: "ses_stage2_01",
++            messageID: "a1",
++            type: "tool",
++            callID: "c_stack",
++            tool: "bash",
++            state: {
++              status: "completed",
++              input: { command: "node worker.js" },
++              output: longStackLines,
++              title: "Run worker",
++              metadata: { exitCode: 0 },
++              time: { start: 2, end: 3 },
++            },
++          },
++          // 2. TypeScript compiler diagnostic error
++          {
++            id: "t_tsc",
++            sessionID: "ses_stage2_01",
++            messageID: "a1",
++            type: "tool",
++            callID: "c_tsc",
++            tool: "bash",
++            state: {
++              status: "completed",
++              input: { command: "tsc --noEmit" },
++              output: tsErrorOutput,
++              title: "Typecheck",
++              metadata: { exitCode: 2 },
++              time: { start: 3, end: 4 },
++            },
++          },
++          // 3. SQL migration opened via Read (must NOT be stubbed even though unmodified!)
++          {
++            id: "t_sql",
++            sessionID: "ses_stage2_01",
++            messageID: "a1",
++            type: "tool",
++            callID: "c_sql",
++            tool: "read",
++            state: {
++              status: "completed",
++              input: { filePath: "migrations/0001_init.sql" },
++              output: makeV2ReadOutput("/workspace/omnirush-gui/migrations/0001_init.sql", sqlMigrationLines),
++              title: "migrations/0001_init.sql",
++              metadata: {},
++              time: { start: 4, end: 5 },
++            },
++          },
++          // 4. PEM file opened via Read (must NOT be stubbed!)
++          {
++            id: "t_pem",
++            sessionID: "ses_stage2_01",
++            messageID: "a1",
++            type: "tool",
++            callID: "c_pem",
++            tool: "read",
++            state: {
++              status: "completed",
++              input: { filePath: "certs/pub.pem" },
++              output: makeV2ReadOutput("/workspace/omnirush-gui/certs/pub.pem", pemLines),
++              title: "certs/pub.pem",
++              metadata: {},
++              time: { start: 5, end: 6 },
++            },
++          },
++          // 5. Explicit error status tool call
++          {
++            id: "t_err",
++            sessionID: "ses_stage2_01",
++            messageID: "a1",
++            type: "tool",
++            callID: "c_err",
++            tool: "grep",
++            state: {
++              status: "error",
++              input: { pattern: "foo" },
++              error: "ripgrep failed with exit status 2",
++              metadata: {
++                output: Array.from({ length: 60 }, (_, i) => `partial_err_line_${i + 1}`).join("\n"),
++              },
++              time: { start: 6, end: 7 },
++            },
++          },
++          // 6. Mutating Edit tool call
++          {
++            id: "t_edit",
++            sessionID: "ses_stage2_01",
++            messageID: "a1",
++            type: "tool",
++            callID: "c_edit",
++            tool: "edit",
++            state: {
++              status: "completed",
++              input: { filePath: "src/app.ts", oldString: "a = 1", newString: "a = 2" },
++              output: "Applied edit to src/app.ts",
++              title: "src/app.ts",
++              metadata: {},
++              time: { start: 7, end: 8 },
++            },
++          },
++          {
++            id: "txt1",
++            sessionID: "ses_stage2_01",
++            messageID: "a1",
++            type: "text",
++            text: "ASSISTANT_FINAL_ANSWER_INTACT",
++          },
++        ]),
++      ],
++    };
++
++    const ir = buildCanonicalTranscriptIR(tree);
++    const toolParts = ir.root.messages[1]!.parts.filter((p) => p.kind === "tool");
++    for (const tp of toolParts) {
++      if (tp.kind === "tool") {
++        expect(classifyToolSafety(tp).bypassLossy).toBe(true);
++      }
++    }
++
++    for (const mode of ["smart", "stubs"] as const) {
++      const res = renderTranscriptFromIR(ir, {
++        includeToolCalls: true,
++        includeReasoning: true,
++        compression: mode,
++      });
++
++      // Every single protected line and middle line of stack/tsc/sql/pem/error/edit is preserved!
++      expect(res.markdown).toContain("CRITICAL_REASONING_TEXT_MUST_NEVER_BE_TRUNCATED");
++      expect(res.markdown).toContain("ASSISTANT_FINAL_ANSWER_INTACT");
++      expect(res.markdown).toContain("step 75: initializing worker context");
++      expect(res.markdown).toContain("TypeError: Cannot read properties of undefined (reading 'session')");
++      expect(res.markdown).toContain("at runWorker (/workspace/omnirush-gui/src/worker.ts:142:19)");
++      expect(res.markdown).toContain("checking module_75.ts");
++      expect(res.markdown).toContain("src/broken.ts(29,7): error TS2322:");
++      expect(res.markdown).toContain("ALTER TABLE sessions ADD COLUMN col_40 TEXT;");
++      expect(res.markdown).toContain("-----BEGIN PUBLIC KEY-----");
++      expect(res.markdown).toContain("partial_err_line_55");
++      expect(res.markdown).toContain("ripgrep failed with exit status 2");
++      expect(res.markdown).toContain("Applied edit to src/app.ts");
++      expect(res.markdown).not.toContain("[... omitted ");
++      expect(res.markdown).not.toContain("[Stubbed ");
++    }
++  });
++
++  test("achieves strict size hierarchy (stubs < smart < lossless < off), deduplicates post-ANSI Bash outputs, and keeps latest snapshot of edited files in Stubs", () => {
++    const untouchedLines = Array.from(
++      { length: 65 },
++      (_, idx) => `export const untouchedHelper_${idx + 1} = () => "exploratory_only_${idx + 1}";`,
++    );
++    const initialEditedLines = Array.from(
++      { length: 55 },
++      (_, idx) => `export const serviceLine_${idx + 1} = "v1_value_${idx + 1}";`,
++    );
++    const finalEditedLines = [...initialEditedLines];
++    finalEditedLines[19] = 'export const serviceLine_20 = "FINAL_UPDATED_V2_VALUE";';
++
++    const cleanVerboseBuild = Array.from(
++      { length: 160 },
++      (_, idx) => `[build] Bundled module chunk_${String(idx + 1).padStart(3, "0")}.js (14.2 KB) in 3ms`,
++    ).join("\n");
++
++    const suiteSummaryFooter = [
++      "Test Suites: 6 passed, 6 total (auth, session, export, router, ipc, markdown)",
++      "Tests:       30 passed, 30 total",
++      "Snapshots:   4 passed, 4 total",
++      "Coverage:    statements 94.2%, branches 89.7%, functions 96.1%, lines 94.5%",
++      "Ran 30 tests across 6 files in 412.00ms.",
++    ].join("\n");
++
++    const ansiTestRun1 = [
++      "⠋ Running tests...",
++      "\x1b[32mbun test v1.3.14\x1b[0m",
++      ...Array.from({ length: 30 }, (_, i) => `\x1b[32m(pass)\x1b[0m suite > spec_${i + 1} [1.00ms]`),
++      suiteSummaryFooter,
++    ].join("\n");
++
++    // Second run has different progress spinner frames, but identical semantic output after Smart normalization!
++    const ansiTestRun2 = [
++      "⠙ Running tests...\r⠸ Running tests...\r",
++      "⠹ Compiling test bundle...",
++      "\x1b[32mbun test v1.3.14\x1b[0m",
++      ...Array.from({ length: 30 }, (_, i) => `(pass) suite > spec_${i + 1} [1.00ms]`),
++      suiteSummaryFooter,
++    ].join("\n");
++
++    const bulkyGlob = Array.from(
++      { length: 42 },
++      (_, i) => `/workspace/omnirush-gui/apps/app/src/components/icons/icon-${String(i + 1).padStart(2, "0")}.tsx`,
++    ).join("\n");
++
++    const tree: ExportableSessionTree = {
++      session: makeSession(),
++      messages: [
++        makeUser("m1", "Explore codebase, update service.ts, and run build + tests."),
++        makeAssistant("m2", "m1", [
++          // 1. Exploratory Read of untouched file
++          {
++            id: "p_untouched",
++            sessionID: "ses_stage2_01",
++            messageID: "m2",
++            type: "tool",
++            callID: "c1",
++            tool: "read",
++            state: {
++              status: "completed",
++              input: { filePath: "src/untouched.ts" },
++              output: makeV2ReadOutput("/workspace/omnirush-gui/src/untouched.ts", untouchedLines),
++              title: "src/untouched.ts",
++              metadata: {},
++              time: { start: 1, end: 2 },
++            },
++          },
++          // 2. Bulky Glob exploration
++          {
++            id: "p_glob",
++            sessionID: "ses_stage2_01",
++            messageID: "m2",
++            type: "tool",
++            callID: "c2",
++            tool: "glob",
++            state: {
++              status: "completed",
++              input: { pattern: "apps/app/src/components/icons/*.tsx" },
++              output: bulkyGlob,
++              title: "Find icons",
++              metadata: {},
++              time: { start: 2, end: 3 },
++            },
++          },
++          // 3. Initial Read of src/service.ts (will be superseded by Turn 2's post-edit Read)
++          {
++            id: "p_read_v1",
++            sessionID: "ses_stage2_01",
++            messageID: "m2",
++            type: "tool",
++            callID: "c3",
++            tool: "read",
++            state: {
++              status: "completed",
++              input: { filePath: "src/service.ts" },
++              output: makeV2ReadOutput("/workspace/omnirush-gui/src/service.ts", initialEditedLines),
++              title: "src/service.ts",
++              metadata: {},
++              time: { start: 3, end: 4 },
++            },
++          },
++          // 4. Edit src/service.ts
++          {
++            id: "p_edit",
++            sessionID: "ses_stage2_01",
++            messageID: "m2",
++            type: "tool",
++            callID: "c4",
++            tool: "edit",
++            state: {
++              status: "completed",
++              input: {
++                filePath: "src/service.ts",
++                oldString: 'serviceLine_20 = "v1_value_20"',
++                newString: 'serviceLine_20 = "FINAL_UPDATED_V2_VALUE"',
++              },
++              output: "Updated src/service.ts",
++              title: "src/service.ts",
++              metadata: {},
++              time: { start: 4, end: 5 },
++            },
++          },
++          // 5. Post-edit Read of src/service.ts (latest snapshot of mutated file!)
++          {
++            id: "p_read_v2",
++            sessionID: "ses_stage2_01",
++            messageID: "m2",
++            type: "tool",
++            callID: "c5",
++            tool: "read",
++            state: {
++              status: "completed",
++              input: { filePath: "src/service.ts" },
++              output: makeV2ReadOutput("/workspace/omnirush-gui/src/service.ts", finalEditedLines),
++              title: "src/service.ts",
++              metadata: {},
++              time: { start: 5, end: 6 },
++            },
++          },
++          // 6. Clean verbose build output (exit 0)
++          {
++            id: "p_build",
++            sessionID: "ses_stage2_01",
++            messageID: "m2",
++            type: "tool",
++            callID: "c6",
++            tool: "bash",
++            state: {
++              status: "completed",
++              input: { command: "pnpm build" },
++              output: cleanVerboseBuild,
++              title: "Build",
++              metadata: { exitCode: 0 },
++              time: { start: 6, end: 7 },
++            },
++          },
++          // 7. Test run #1 (with ANSI + spinner)
++          {
++            id: "p_test1",
++            sessionID: "ses_stage2_01",
++            messageID: "m2",
++            type: "tool",
++            callID: "c7",
++            tool: "bash",
++            state: {
++              status: "completed",
++              input: { command: "bun test" },
++              output: ansiTestRun1,
++              title: "Run tests",
++              metadata: { exitCode: 0 },
++              time: { start: 7, end: 8 },
++            },
++          },
++          // 8. Test run #2 (different spinner frames, identical post-Smart test output!)
++          {
++            id: "p_test2",
++            sessionID: "ses_stage2_01",
++            messageID: "m2",
++            type: "tool",
++            callID: "c8",
++            tool: "bash",
++            state: {
++              status: "completed",
++              input: { command: "bun test" },
++              output: ansiTestRun2,
++              title: "Re-run tests",
++              metadata: { exitCode: 0 },
++              time: { start: 8, end: 9 },
++            },
++          },
++        ]),
++      ],
++    };
++
++    const ir = buildCanonicalTranscriptIR(tree);
++    const rawRes = renderTranscriptFromIR(ir, { compression: "off" });
++    const losslessRes = renderTranscriptFromIR(ir, { compression: "lossless" });
++    const smartRes = renderTranscriptFromIR(ir, { compression: "smart" });
++    const stubsRes = renderTranscriptFromIR(ir, { compression: "stubs" });
++
++    // Strict progressive byte reduction across all 4 modes
++    expect(losslessRes.utf8Bytes).toBeLessThan(rawRes.utf8Bytes);
++    expect(smartRes.utf8Bytes).toBeLessThan(losslessRes.utf8Bytes);
++    expect(stubsRes.utf8Bytes).toBeLessThan(smartRes.utf8Bytes);
++
++    // Smart assertions
++    expect(smartRes.markdown).toContain("[... omitted 80 middle lines (exit 0, no errors detected) ...]");
++    expect(smartRes.markdown).toContain("[... collapsed 30 passing test lines ...]");
++    expect(smartRes.markdown).toContain("[Base directory: /workspace/omnirush-gui/]");
++    expect(smartRes.markdown).toContain("[... +37 more files in apps/app/src/components/icons/ ...]");
++    // Post-ANSI test run #2 deduplicated against test run #1!
++    expect(smartRes.stats.exactDedupCount).toBeGreaterThanOrEqual(1);
++
++    // Stubs assertions: untouched Read & superseded v1 Read & Glob are stubbed, while FINAL_UPDATED_V2_VALUE stays intact!
++    expect(stubsRes.stats.stubbedCount).toBe(3);
++    expect(stubsRes.markdown).toContain("Stubbed exploratory Read of `/workspace/omnirush-gui/src/untouched.ts`");
++    expect(stubsRes.markdown).toContain("Stubbed superseded Read of `/workspace/omnirush-gui/src/service.ts`");
++    expect(stubsRes.markdown).toContain("Stubbed exploratory Glob output");
++    expect(stubsRes.markdown).toContain("FINAL_UPDATED_V2_VALUE");
++
++    // Helper unit check for grep compaction
++    const grepSample = Array.from(
++      { length: 45 },
++      (_, i) => `/workspace/omnirush-gui/src/big.ts:${i + 1}:const match = ${i};`,
++    ).join("\n");
++    const grepCompacted = compactSearchOutput("grep", grepSample, "/workspace/omnirush-gui");
++    expect(grepCompacted).toContain("[Base directory: /workspace/omnirush-gui/]");
++    expect(grepCompacted).toContain("[... +39 more matches in src/big.ts ...]");
++
++    // Zero Russian / Cyrillic characters in either Smart or Stubs output
++    expect(/[\u0400-\u04FF]/.test(smartRes.markdown)).toBe(false);
++    expect(/[\u0400-\u04FF]/.test(stubsRes.markdown)).toBe(false);
 +  });
 +});
 diff --git a/apps/app/tests/session-markdown-export.test.ts b/apps/app/tests/session-markdown-export.test.ts
