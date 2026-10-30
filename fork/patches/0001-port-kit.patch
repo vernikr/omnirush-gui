@@ -4308,10 +4308,10 @@ index 00000000..e1be6057
 ++});
 diff --git a/fork/patches/0013-session-markdown-export.patch b/fork/patches/0013-session-markdown-export.patch
 new file mode 100644
-index 00000000..ba3aa196
+index 00000000..df3328df
 --- /dev/null
 +++ b/fork/patches/0013-session-markdown-export.patch
-@@ -0,0 +1,8313 @@
+@@ -0,0 +1,8330 @@
 +diff --git a/apps/app/src/app/lib/markdown-export/canonicalize.ts b/apps/app/src/app/lib/markdown-export/canonicalize.ts
 +new file mode 100644
 +index 00000000..0dbc8373
@@ -8801,7 +8801,7 @@ index 00000000..ba3aa196
 ++  "session.export_confirm": "Скачать .md",
 + } as const;
 +diff --git a/apps/app/src/i18n/locales/zh.ts b/apps/app/src/i18n/locales/zh.ts
-+index e3010078..f2a96d89 100644
++index e3010078..2303541b 100644
 +--- a/apps/app/src/i18n/locales/zh.ts
 ++++ b/apps/app/src/i18n/locales/zh.ts
 +@@ -1247,6 +1247,12 @@ export default {
@@ -8817,7 +8817,24 @@ index 00000000..ba3aa196
 +   "session.cmd_reload_config_title": "重新加载 omnirush.ai 配置",
 +   "session.cmd_reload_config_detail": "无需重启，重新读取提供商、MCP 服务器和模型配置",
 +   "session.cmd_sessions_detail": "跨工作区共 {count} 个",
-+@@ -2683,4 +2689,24 @@ export default {
++@@ -2669,6 +2675,16 @@ export default {
++   "session.undo_stop_first": "请先停止本轮（Esc），再撤销",
++   "session.undo_confirm": "撤销上一轮？其消息会被隐藏，文件更改会被撤回。可通过“重做”或“恢复”找回。",
++   "session.redo_turn": "重做已撤销的一轮",
+++  "events.counting": "你在 {name} 活动期间于 OmniRush 中创建的对话都计入该活动，无需其他设置。",
+++  "events.hide": "明天之前不再显示",
+++  "events.participating": "你已参与",
+++  "events.show": "{name} 黑客松：你已参与",
+++  "events.restart": "重启 OmniRush 后你的对话才会计入",
+++  "events.joined_title": "已加入的活动",
+++  "events.joined_on": "加入于 {date}",
+++  "events.live": "正在进行",
+++  "events.empty_title": "还没有活动",
+++  "events.empty_detail": "用活动码加入黑客松，活动会显示在这里。",
++   "voice.privacy": "隐私",
++   "editor.outline": "大纲",
++   "editor.outline_no_file": "打开文件即可查看其符号。",
++@@ -2683,4 +2699,24 @@ export default {
 +   "settings.appearance.same_as_code_font": "与代码字体相同",
 +   "settings.appearance.preset_default": "默认",
 +   "settings.appearance.preset_high_contrast": "高对比度",
@@ -12625,6 +12642,246 @@ index 00000000..ba3aa196
 +     result: string | null;
 +   };
 + 
+diff --git a/fork/patches/0014-resolve-bare-file-names.patch b/fork/patches/0014-resolve-bare-file-names.patch
+new file mode 100644
+index 00000000..e8cc5c8c
+--- /dev/null
++++ b/fork/patches/0014-resolve-bare-file-names.patch
+@@ -0,0 +1,234 @@
++diff --git a/apps/server/src/artifact-files.e2e.test.ts b/apps/server/src/artifact-files.e2e.test.ts
++index a32469ed..e796e507 100644
++--- a/apps/server/src/artifact-files.e2e.test.ts
+++++ b/apps/server/src/artifact-files.e2e.test.ts
++@@ -27,6 +27,17 @@ async function createWorkspaceRoot() {
++   await writeFile(join(root, "reports", "artifact-eval.ts"), "export const artifact = true;\n", "utf8");
++   await mkdir(join(root, "node_modules", "hidden-package"), { recursive: true });
++   await writeFile(join(root, "node_modules", "hidden-package", "index.ts"), "export {};\n", "utf8");
+++  // The same file name at several depths: a transcript that says `deep-report.md`
+++  // must open the highest one, not the first one a directory walk stumbles on.
+++  await writeFile(join(root, "deep-report.md"), "# Root report\n", "utf8");
+++  await mkdir(join(root, "reports", "archive"), { recursive: true });
+++  await writeFile(join(root, "reports", "deep-report.md"), "# Reports copy\n", "utf8");
+++  await writeFile(join(root, "reports", "archive", "deep-report.md"), "# Archived copy\n", "utf8");
+++  await mkdir(join(root, "docs", "guides"), { recursive: true });
+++  await writeFile(join(root, "docs", "guides", "nested-only.md"), "# Nested only\n", "utf8");
+++  await mkdir(join(root, "src", "components"), { recursive: true });
+++  await writeFile(join(root, "src", "components", "button.tsx"), "export const Button = true;\n", "utf8");
+++  await writeFile(join(root, "components-notes.ts"), "export const notes = true;\n", "utf8");
++   await writeFile(join(root, "reports", "artifact-eval.xlsx"), new Uint8Array([80, 75, 3, 4, 1, 2, 3, 4]));
++   await writeFile(join(root, "reports", "artifact-eval.pptx"), new Uint8Array([80, 75, 3, 4, 5, 6, 7, 8]));
++   await writeFile(join(root, "reports", "artifact-eval.docx"), new Uint8Array([80, 75, 3, 4, 9, 10, 11, 12]));
++@@ -124,6 +135,51 @@ describe("artifact file routes", () => {
++     expect(Array.from(new Uint8Array(await xlsxDownload.arrayBuffer()))).toEqual([80, 75, 9, 9]);
++   });
++ 
+++  test("a bare file name opens the highest workspace file with that name", async () => {
+++    const root = await createWorkspaceRoot();
+++    const { base, token } = await startOmniRushServer(root);
+++
+++    // One target per reference, answered in request order: an item's `value` is
+++    // the path the server resolved, which is the point of the check.
+++    const resolve = async (value: string) => {
+++      const response = await fetch(`${base}/workspace/ws_1/artifacts/resolve`, {
+++        method: "POST",
+++        headers: auth(token),
+++        body: JSON.stringify({ targets: [{ kind: "file", value, confidence: 80, reason: "message" }] }),
+++      });
+++      expect(response.status).toBe(200);
+++      const resolved = await response.json() as { items: Array<any> };
+++      return resolved.items[0];
+++    };
+++
+++    const rootCopy = await resolve("deep-report.md");
+++    const reportsCopy = await resolve("reports/deep-report.md");
+++    const archivedCopy = await resolve("reports/archive/deep-report.md");
+++    const nestedOnly = await resolve("nested-only.md");
+++    const partialPath = await resolve("components/button.tsx");
+++    const missing = await resolve("docs/guides/missing.md");
+++    const directory = await resolve("coverage");
+++
+++    // The root copy wins over the deeper copies, and the deeper names keep
+++    // resolving exactly as written.
+++    expect(rootCopy).toMatchObject({ exists: true, value: "deep-report.md", preview: "markdown", name: "deep-report.md" });
+++    expect(reportsCopy).toMatchObject({ exists: true, value: "reports/deep-report.md", preview: "markdown" });
+++    expect(archivedCopy).toMatchObject({ exists: true, value: "reports/archive/deep-report.md", preview: "markdown" });
+++
+++    // A name that only exists deep opens the one file that has it, and a
+++    // partial path resolves to the highest file whose path ends with it.
+++    expect(nestedOnly).toMatchObject({ exists: true, value: "docs/guides/nested-only.md", name: "nested-only.md" });
+++    expect(partialPath).toMatchObject({ exists: true, value: "src/components/button.tsx", preview: "code" });
+++
+++    // Nothing with that name is still not a file, and a directory is not one either.
+++    expect(missing).toMatchObject({ exists: false, value: "docs/guides/missing.md" });
+++    expect(directory).toMatchObject({ exists: false, value: "coverage" });
+++
+++    // The resolved path is what the preview then reads.
+++    const read = await fetch(`${base}/workspace/ws_1/files/content?path=${encodeURIComponent("docs/guides/nested-only.md")}`, { headers: auth(token) });
+++    expect(await read.json()).toMatchObject({ content: "# Nested only\n" });
+++  });
+++
++   test("lists code artifacts while excluding heavy directories", async () => {
++     const root = await createWorkspaceRoot();
++     const { base, token } = await startOmniRushServer(root);
++diff --git a/apps/server/src/routes/files.ts b/apps/server/src/routes/files.ts
++index 994c99b1..24650971 100644
++--- a/apps/server/src/routes/files.ts
+++++ b/apps/server/src/routes/files.ts
++@@ -264,10 +264,104 @@ function normalizeUrlTarget(value: string): string | null {
++   }
++ }
++ 
+++/**
+++ * A reference the transcript made to a file, as spoken: `report.md`,
+++ * `docs/report.md`, `src/components/button.tsx` — no leading slash, no drive,
+++ * no `..`. Those name a file relative to the workspace root, so a bare name
+++ * that does not sit at the root is still a workspace file, just a deeper one.
+++ */
+++function isWorkspaceRelativeReference(value: string): boolean {
+++  if (!value || isAbsolute(value) || /^[A-Za-z]:/.test(value)) return false;
+++  const segments = value.split("/").filter(Boolean);
+++  return segments.length > 0 && segments.every((segment) => segment !== "." && segment !== "..");
+++}
+++
+++const ARTIFACT_LOOKUP_MAX_ENTRIES = 20_000;
+++
+++/**
+++ * Workspace files in breadth-first order: the root first, then each
+++ * directory's entries sorted by name (files and directories interleaved, as
+++ * `ls` shows them). The first path that equals a reference or ends with
+++ * `/${reference}` is the highest file with that name, so `report.md` finds
+++ * `report.md` before `docs/report.md` before `docs/archive/report.md`, and
+++ * `components/button.tsx` before `src/components/button.tsx`.
+++ *
+++ * The index is built lazily — only when a target does not resolve as written —
+++ * so a request whose paths all exist never pays for a walk. It is bounded so an
+++ * unresolvable name cannot stall the request on an enormous workspace.
+++ */
+++async function workspacePathIndex(workspaceRoot: string): Promise<string[]> {
+++  const rootResolved = resolve(workspaceRoot);
+++  const queue = [""];
+++  const paths: string[] = [];
+++
+++  while (queue.length && paths.length < ARTIFACT_LOOKUP_MAX_ENTRIES) {
+++    const relDir = queue.shift() as string;
+++    const entries = await readdir(join(rootResolved, relDir), { withFileTypes: true }).catch(() => []);
+++    entries.sort((left, right) => left.name.localeCompare(right.name));
+++
+++    for (const entry of entries) {
+++      const relPath = relDir ? `${relDir}/${entry.name}` : entry.name;
+++      if (entry.isDirectory()) {
+++        if (entry.name !== ".git" && entry.name !== "node_modules") queue.push(relPath);
+++        continue;
+++      }
+++      if (!entry.isFile()) continue;
+++      paths.push(relPath);
+++      if (paths.length >= ARTIFACT_LOOKUP_MAX_ENTRIES) break;
+++    }
+++  }
+++
+++  return paths;
+++}
+++
+++const ARTIFACT_LOOKUP_INDEX_TTL_MS = 15_000;
+++
+++/**
+++ * One workspace serves many resolve requests in a row while a chat streams;
+++ * the index is reused for a moment so a transcript full of dead references
+++ * does not walk the tree on every frame.
+++ */
+++const artifactLookupIndexes = new Map<string, { expiresAt: number; index: Promise<string[]> }>();
+++
+++/** The workspace file list, reused for a moment; see ARTIFACT_LOOKUP_INDEX_TTL_MS. */
+++function artifactLookupIndex(workspaceRoot: string): Promise<string[]> {
+++  const key = resolve(workspaceRoot);
+++  const now = Date.now();
+++  const cached = artifactLookupIndexes.get(key);
+++  if (cached && cached.expiresAt > now) return cached.index;
+++
+++  const index = workspacePathIndex(workspaceRoot);
+++  artifactLookupIndexes.set(key, { expiresAt: now + ARTIFACT_LOOKUP_INDEX_TTL_MS, index });
+++  // A failed walk must not be cached as the answer for the whole TTL.
+++  index.catch(() => {
+++    if (artifactLookupIndexes.get(key)?.index === index) artifactLookupIndexes.delete(key);
+++  });
+++  return index;
+++}
+++
+++/** The highest workspace file a transcript reference can mean, if any. */
+++function findShallowestWorkspaceFile(paths: string[], reference: string): string | null {
+++  const wanted = reference.toLowerCase().replace(/^\.\//, "").replace(/^\/+/, "");
+++  if (!wanted) return null;
+++
+++  return paths.find((path) => {
+++    const lowered = path.toLowerCase();
+++    return lowered === wanted || lowered.endsWith(`/${wanted}`);
+++  }) ?? null;
+++}
+++
++ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, input: unknown): Promise<Array<Record<string, unknown>>> {
++   const targets = Array.isArray(input) ? input.slice(0, 80) : [];
++   const results = new Map<string, Record<string, unknown>>();
++   const workspaceResolved = resolve(workspaceRoot);
+++  // Built at most once per request, and only when a reference does not
+++  // resolve as written.
+++  let pathIndex: Promise<string[]> | null = null;
+++  const findShallowest = (reference: string) => {
+++    pathIndex ??= artifactLookupIndex(workspaceRoot);
+++    return pathIndex.then((paths) => findShallowestWorkspaceFile(paths, reference));
+++  };
++ 
++   for (const item of targets) {
++     if (!item || typeof item !== "object") continue;
++@@ -312,19 +406,27 @@ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, inp
++     } catch {
++       continue;
++     }
++-    const key = `file:${relativePath.toLowerCase()}`;
++-    const absPath = resolveSafeChildPath(workspaceRoot, relativePath);
++-    let existsFile = false;
++-    let size: number | undefined;
++-    let updatedAt: number | undefined;
++-    let kindValue: "file" | "dir" | "other" | undefined;
++-    if (await exists(absPath)) {
++-      const info = await stat(absPath);
++-      kindValue = info.isFile() ? "file" : info.isDirectory() ? "dir" : "other";
++-      existsFile = info.isFile();
++-      size = info.size;
++-      updatedAt = info.mtimeMs;
+++
+++    // A transcript names files the way a person does (`report.md`, `main.ts`),
+++    // not as the workspace path they happen to sit at. Keep the path when it
+++    // resolves at the root; otherwise open the highest file with that name
+++    // instead of reporting a file that is not there.
+++    let absPath = resolveSafeChildPath(workspaceRoot, relativePath);
+++    let info = await stat(absPath).catch(() => null);
+++    if (info?.isFile() !== true && isWorkspaceRelativeReference(relativePath)) {
+++      const shallowest = await findShallowest(relativePath);
+++      if (shallowest) {
+++        relativePath = shallowest;
+++        absPath = resolveSafeChildPath(workspaceRoot, relativePath);
+++        info = await stat(absPath).catch(() => null);
+++      }
++     }
+++
+++    const key = `file:${relativePath.toLowerCase()}`;
+++    const kindValue: "file" | "dir" | "other" | undefined = info
+++      ? (info.isFile() ? "file" : info.isDirectory() ? "dir" : "other")
+++      : undefined;
+++    const existsFile = info?.isFile() === true;
++     const next = {
++       id: key,
++       kind: "file",
++@@ -335,8 +437,8 @@ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, inp
++       reason,
++       exists: existsFile,
++       fileKind: kindValue,
++-      size,
++-      updatedAt,
+++      size: info?.size,
+++      updatedAt: info?.mtimeMs,
++       contentType: contentTypeForPath(relativePath),
++     };
++     const previous = results.get(key);
 diff --git a/fork/scripts/lib/git.mjs b/fork/scripts/lib/git.mjs
 new file mode 100644
 index 00000000..df604348
