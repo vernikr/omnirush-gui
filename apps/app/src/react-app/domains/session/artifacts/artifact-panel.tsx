@@ -68,6 +68,20 @@ function absoluteWorkspacePath(root: string, path: string) {
   return cleanRoot ? `${cleanRoot}/${cleanPath}` : cleanPath;
 }
 
+/**
+ * The address shown next to the file name in the panel header.
+ *
+ * A name alone hides where the file lives, so the workspace path is shown in
+ * full (and in a tooltip, since the row truncates). A file directly at the
+ * workspace root has nothing to add: showing its own name twice reads as a
+ * rendering bug.
+ */
+export function artifactHeaderPath(target: OpenTarget): string {
+  const path = target.value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  if (target.kind !== "file") return path;
+  return path === target.name ? "" : path;
+}
+
 function isTextContent(target: OpenTarget): boolean {
   return ["markdown", "code", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
 }
@@ -110,6 +124,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   const lastSyncedRef = useRef<string | null>(null);
   const failedDraftRef = useRef<string | null>(null);
   const isMermaidArtifact = target.kind === "file" && /\.mmd$/i.test(target.value);
+  const panelPath = artifactHeaderPath(target);
   // Plain text opens directly in CodeMirror. Markdown and HTML default to
   // their rendered previews and retain the existing Edit toggle.
   const isDirectTextEdit = isTextContent(target) && target.preview === "text";
@@ -385,10 +400,21 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
             />
             <TooltipContent>{treeOpen ? "Hide workspace files" : "Show workspace files"}</TooltipContent>
           </Tooltip>
-          <div className="min-w-0 flex-1 flex items-center gap-1.5">
-            <h3 className="min-w-0 truncate text-sm font-medium text-foreground">
+          <div className="min-w-0 flex-1 flex items-baseline gap-1.5">
+            <h3 className="max-w-[55%] shrink-0 truncate text-sm font-medium text-foreground">
               {target.name}
             </h3>
+            {/* The tab only has room for the basename; the address keeps the
+                workspace path so a file read from a nested folder is identifiable. */}
+            {panelPath ? (
+              <span
+                data-artifact-path=""
+                className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                title={panelPath}
+              >
+                {panelPath}
+              </span>
+            ) : null}
             <span className="shrink-0 text-xs text-muted-foreground">
               {target.exists === false ? "missing" : isEditingSurface ? (isSaving || isDirty ? "Saving\u2026" : "Saved") : ""}
             </span>
