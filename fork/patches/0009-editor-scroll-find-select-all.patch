@@ -485,14 +485,14 @@ index 54262b60..b8948313 100644
          <ImperativeHandlePlugin editorRef={ref} />
        </div>
 diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-index e6a4472e..12f868db 100644
+index e6a4472e..ff55a2d8 100644
 --- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 @@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
  import { FullPermissionsToggle } from "./composer/full-permissions-toggle";
  import { SandboxStatusChip } from "./composer/sandbox-status-chip";
  import { SandboxSetupPanel } from "./sandbox-setup-panel";
-+import { exportSessionMarkdown } from "@/react-app/domains/session/commands/export-session-markdown";
++import { openExportMarkdownModal } from "@/react-app/domains/session/commands/export-session-markdown-store";
  import { useSessionCommandsStore } from "@/react-app/domains/session/commands/session-commands-store";
 +import { parseExportSlashCommand } from "@/app/lib/session-markdown-export";
  import { SubagentModelMenu } from "./composer/subagent-model-menu";
@@ -511,15 +511,15 @@ index e6a4472e..12f868db 100644
      return true;
    }, [clearComposer, props.client, props.sessionId, props.workspaceId]);
  
-+  // "/export [filename]": exports the full branch (messages, reasoning, tool calls, subagents)
-+  // locally to a Markdown file without sending a prompt to the model.
++  // "/export [filename]": opens the Markdown export modal for the full branch
++  // (messages, reasoning, tool calls, subagents) without sending a prompt to the model.
 +  const exportFromDraft = useCallback((text: string, hasAttachments = false): boolean => {
 +    if (hasAttachments) return false;
 +    const parsed = parseExportSlashCommand(text);
 +    if (!parsed) return false;
 +    setSteering(false);
 +    clearComposer();
-+    void exportSessionMarkdown({
++    openExportMarkdownModal({
 +      workspaceId: props.workspaceId,
 +      sessionId: props.sessionId,
 +      opencodeBaseUrl: props.opencodeBaseUrl,

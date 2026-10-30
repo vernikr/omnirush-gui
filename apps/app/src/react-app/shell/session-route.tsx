@@ -27,7 +27,8 @@ import { isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
-import { exportSessionMarkdown } from "@/react-app/domains/session/commands/export-session-markdown";
+import { ExportSessionMarkdownModal } from "@/react-app/domains/session/commands/export-session-markdown-modal";
+import { openExportMarkdownModal } from "@/react-app/domains/session/commands/export-session-markdown-store";
 import { copySessionId } from "@/react-app/domains/session/sidebar/copy-session-id";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
@@ -3173,7 +3174,7 @@ export function SessionRoute() {
     selectedWorkspaceId,
   ]);
 
-  const handleExportSession = useCallback(async (workspaceId: string, sessionId: string) => {
+  const handleExportSession = useCallback((workspaceId: string, sessionId: string) => {
     const ownerId =
       workspaceId.trim() ||
       workspaceSessionGroups.find((group) =>
@@ -3185,7 +3186,7 @@ export function SessionRoute() {
       toast.error(t("session.export_markdown_failed"));
       return;
     }
-    await exportSessionMarkdown({
+    openExportMarkdownModal({
       workspaceId: ownerWorkspace.id,
       serverWorkspaceId: endpoint.workspaceId,
       sessionId,
@@ -4265,6 +4266,7 @@ export function SessionRoute() {
       fetchMessages={sessionSearchFetcher}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
     />
+    <ExportSessionMarkdownModal />
     <ModelPickerModal
       open={modelPicker.open}
       options={pickerOptions}

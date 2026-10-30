@@ -55,7 +55,7 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
 import { FullPermissionsToggle } from "./composer/full-permissions-toggle";
 import { SandboxStatusChip } from "./composer/sandbox-status-chip";
 import { SandboxSetupPanel } from "./sandbox-setup-panel";
-import { exportSessionMarkdown } from "@/react-app/domains/session/commands/export-session-markdown";
+import { openExportMarkdownModal } from "@/react-app/domains/session/commands/export-session-markdown-store";
 import { useSessionCommandsStore } from "@/react-app/domains/session/commands/session-commands-store";
 import { parseExportSlashCommand } from "@/app/lib/session-markdown-export";
 import { SubagentModelMenu } from "./composer/subagent-model-menu";
@@ -2314,15 +2314,15 @@ export function SessionSurface(props: SessionSurfaceProps) {
     return true;
   }, [clearComposer, props.client, props.sessionId, props.workspaceId]);
 
-  // "/export [filename]": exports the full branch (messages, reasoning, tool calls, subagents)
-  // locally to a Markdown file without sending a prompt to the model.
+  // "/export [filename]": opens the Markdown export modal for the full branch
+  // (messages, reasoning, tool calls, subagents) without sending a prompt to the model.
   const exportFromDraft = useCallback((text: string, hasAttachments = false): boolean => {
     if (hasAttachments) return false;
     const parsed = parseExportSlashCommand(text);
     if (!parsed) return false;
     setSteering(false);
     clearComposer();
-    void exportSessionMarkdown({
+    openExportMarkdownModal({
       workspaceId: props.workspaceId,
       sessionId: props.sessionId,
       opencodeBaseUrl: props.opencodeBaseUrl,

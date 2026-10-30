@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback } from "react";
 
 import { toast } from "@/components/ui/sonner";
 import { revealDesktopItemInDir, saveFile } from "@/app/lib/desktop";
@@ -8,15 +8,22 @@ import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import type { OmniRushServerClient, OmniRushSessionSnapshot } from "@/app/lib/omnirush-server";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
 import {
+  buildCanonicalTranscriptIR,
   buildSessionExportFilename,
   collectReferencedSubagentSessionIds,
-  formatSessionAsMarkdown,
+  renderTranscriptFromIR,
   validateRelativeExportPath,
+  type CanonicalTranscriptIR,
   type ExportableSessionTree,
+  type ExportMarkdownOptions,
 } from "@/app/lib/session-markdown-export";
 import { t } from "@/i18n";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
 import { snapshotKey } from "@/react-app/domains/session/sync/session-sync";
+import {
+  openExportMarkdownModal,
+  useExportSessionMarkdownStore,
+} from "./export-session-markdown-store";
 
 export type ExportSessionMarkdownTarget = {
   workspaceId: string;
@@ -35,7 +42,34 @@ export type ExportSessionMarkdownOutcome =
   | { outcome: "canceled" }
   | { outcome: "failed"; error: string };
 
+export type LoadedExportSessionData = {
+  ir: CanonicalTranscriptIR;
+  defaultFilename: string;
+};
+
 const MAX_SUBAGENT_DEPTH = 4;
+
+export function formatExportByteSize(bytes: number): string {
+  const safe = Math.max(0, Math.round(bytes));
+  if (safe < 1024) {
+    return `${safe} B`;
+  }
+  if (safe < 1024 * 1024) {
+    return `${(safe / 1024).toFixed(1)} KB`;
+  }
+  return `${(safe / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+export function formatEstimatedTokenCount(tokens: number): string {
+  const safe = Math.max(0, Math.round(tokens));
+  if (safe < 1000) {
+    return String(safe);
+  }
+  if (safe < 1_000_000) {
+    return `${(safe / 1000).toFixed(1)}k`;
+  }
+  return `${(safe / 1_000_000).toFixed(2)}M`;
+}
 
 function shortenSavedPathForToast(savedPath: string, workspaceRoot?: string): string {
   const root = workspaceRoot?.trim().replace(/[\\/]+$/, "") ?? "";
@@ -116,21 +150,51 @@ async function loadSessionTreeRecursive(params: {
 }
 
 /**
- * Fetch the full unwindowed session transcript (including reasoning, tool
- * calls, and any nested sub-agent sessions), serialize it to Markdown, and
- * write/download the `.md` file with toast feedback.
+ * Fetch the full unwindowed session transcript + nested subagent transcripts and
+ * construct the reusable `CanonicalTranscriptIR` for instant live size previews.
  */
-export async function exportSessionMarkdown(
+export async function loadExportableSessionIR(
   target: ExportSessionMarkdownTarget,
-): Promise<ExportSessionMarkdownOutcome> {
+): Promise<LoadedExportSessionData> {
   const sessionId = target.sessionId.trim();
   const baseUrl = target.opencodeBaseUrl.trim();
   if (!sessionId || !baseUrl) {
-    const message = t("session.export_markdown_failed");
-    toast.error(message);
-    return { outcome: "failed", error: message };
+    throw new Error(t("session.export_markdown_failed"));
   }
 
+  const relativeArg = target.relativeFilename?.trim() ?? "";
+  const validatedRelative = relativeArg ? validateRelativeExportPath(relativeArg) : null;
+  if (validatedRelative && !validatedRelative.ok) {
+    throw new Error(validatedRelative.reason);
+  }
+
+  const client = createClientV2(baseUrl, target.workspaceRoot?.trim() || undefined, {
+    token: target.token,
+  });
+  const tree = await loadSessionTreeRecursive({
+    client,
+    workspaceId: target.workspaceId,
+    sessionId,
+    depth: 0,
+    visited: new Set<string>(),
+  });
+
+  const ir = buildCanonicalTranscriptIR(tree);
+  const defaultFilename = buildSessionExportFilename(tree.session);
+  return { ir, defaultFilename };
+}
+
+/**
+ * Persist an already-rendered Markdown string to `Downloads` (or an explicit
+ * nested workspace subpath when `/export dir/file.md` was passed) and display
+ * completion toast feedback.
+ */
+export async function savePreparedSessionMarkdown(params: {
+  target: ExportSessionMarkdownTarget;
+  markdown: string;
+  defaultFilename: string;
+}): Promise<ExportSessionMarkdownOutcome> {
+  const { target, markdown, defaultFilename } = params;
   try {
     const relativeArg = target.relativeFilename?.trim() ?? "";
     const validatedRelative = relativeArg ? validateRelativeExportPath(relativeArg) : null;
@@ -138,19 +202,6 @@ export async function exportSessionMarkdown(
       throw new Error(validatedRelative.reason);
     }
 
-    const client = createClientV2(baseUrl, target.workspaceRoot?.trim() || undefined, {
-      token: target.token,
-    });
-    const tree = await loadSessionTreeRecursive({
-      client,
-      workspaceId: target.workspaceId,
-      sessionId,
-      depth: 0,
-      visited: new Set<string>(),
-    });
-
-    const markdown = formatSessionAsMarkdown(tree);
-    const defaultFilename = buildSessionExportFilename(tree.session);
     const desktop = isDesktopRuntime();
     const localWorkspaceRoot = target.workspaceRoot?.trim() ?? "";
 
@@ -250,28 +301,54 @@ export async function exportSessionMarkdown(
   }
 }
 
+/**
+ * Fetch the full unwindowed session transcript (including reasoning, tool
+ * calls, and any nested sub-agent sessions), serialize it to Markdown under
+ * `options`, and write/download the `.md` file with toast feedback.
+ */
+export async function exportSessionMarkdown(
+  target: ExportSessionMarkdownTarget,
+  options?: Partial<ExportMarkdownOptions>,
+): Promise<ExportSessionMarkdownOutcome> {
+  const sessionId = target.sessionId.trim();
+  const baseUrl = target.opencodeBaseUrl.trim();
+  if (!sessionId || !baseUrl) {
+    const message = t("session.export_markdown_failed");
+    toast.error(message);
+    return { outcome: "failed", error: message };
+  }
+
+  try {
+    const { ir, defaultFilename } = await loadExportableSessionIR(target);
+    const rendered = renderTranscriptFromIR(ir, options);
+    return await savePreparedSessionMarkdown({
+      target,
+      markdown: rendered.markdown,
+      defaultFilename,
+    });
+  } catch (error) {
+    const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "";
+    const message = detail ? `${t("session.export_markdown_failed")}: ${detail}` : t("session.export_markdown_failed");
+    toast.error(message);
+    return { outcome: "failed", error: message };
+  }
+}
+
 export function useExportSessionMarkdown(target: Omit<ExportSessionMarkdownTarget, "relativeFilename">) {
-  const [exporting, setExporting] = useState(false);
-  const inFlightRef = useRef(false);
+  const activeSessionId = useExportSessionMarkdownStore((state) => state.activeTarget?.sessionId ?? null);
+  const exporting = Boolean(activeSessionId && activeSessionId === target.sessionId);
 
   const runExport = useCallback(
-    async (relativeFilename?: string | null) => {
-      if (inFlightRef.current) return;
-      inFlightRef.current = true;
-      setExporting(true);
-      try {
-        await exportSessionMarkdown({
-          ...target,
-          relativeFilename,
-        });
-      } finally {
-        inFlightRef.current = false;
-        setExporting(false);
-      }
+    (relativeFilename?: string | null) => {
+      openExportMarkdownModal({
+        ...target,
+        relativeFilename,
+      });
     },
     [
       target.opencodeBaseUrl,
       target.serverClient,
+      target.serverWorkspaceId,
       target.sessionId,
       target.token,
       target.workspaceId,

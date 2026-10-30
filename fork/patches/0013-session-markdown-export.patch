@@ -4014,7 +4014,7 @@ index 00000000..19a71d44
 +  return found;
 +}
 diff --git a/apps/app/src/i18n/locales/en.ts b/apps/app/src/i18n/locales/en.ts
-index 588f94b6..7963f8df 100644
+index 588f94b6..4771e35e 100644
 --- a/apps/app/src/i18n/locales/en.ts
 +++ b/apps/app/src/i18n/locales/en.ts
 @@ -1241,6 +1241,12 @@ export default {
@@ -4030,11 +4030,36 @@ index 588f94b6..7963f8df 100644
    "session.cmd_reload_config_title": "Reload omnirush.ai config",
    "session.cmd_reload_config_detail": "Re-read provider, MCP server, and model configuration without restarting",
    "session.cmd_sessions_detail": "{count} available across workspaces",
+@@ -2676,4 +2682,24 @@ export default {
+   "settings.appearance.same_as_code_font": "Same as code font",
+   "settings.appearance.preset_default": "Default",
+   "settings.appearance.preset_high_contrast": "High contrast",
++  "session.export_modal_description": "Choose what to include in the exported Markdown file. Saved directly to Downloads.",
++  "session.export_opt_tool_calls": "Include tool calls",
++  "session.export_opt_tool_calls_hint": "Tool inputs, outputs, errors, and nested sub-agent transcripts",
++  "session.export_opt_reasoning": "Include reasoning",
++  "session.export_opt_reasoning_hint": "Model thinking blocks (> Reasoning) across turns",
++  "session.export_opt_compress": "Compress output",
++  "session.export_opt_compress_hint": "Deterministic LLM-free deduplication and tool output compaction",
++  "session.export_mode_lossless": "Lossless",
++  "session.export_mode_lossless_desc": "100% reversible: exact dedup, line slices, file deltas, and TOON tables",
++  "session.export_mode_smart": "Smart",
++  "session.export_mode_smart_desc": "Lossless + strips ANSI/progress noise and collapses passing test lines; keeps all errors",
++  "session.export_mode_stubs": "Compact stubs",
++  "session.export_mode_stubs_desc": "Smart + replaces superseded and unmodified exploratory reads with short stubs",
++  "session.export_size_label": "Final file size",
++  "session.export_size_loading": "Loading full branch history…",
++  "session.export_size_saved": "−{percent}% from {baseline}",
++  "session.export_size_tokens": "~{tokens} tokens",
++  "session.export_retry": "Retry",
++  "session.export_cancel": "Cancel",
++  "session.export_confirm": "Export .md",
+ } as const;
 diff --git a/apps/app/src/i18n/locales/ru.ts b/apps/app/src/i18n/locales/ru.ts
-index 2269df41..e7080fd2 100644
+index 2269df41..49c1064e 100644
 --- a/apps/app/src/i18n/locales/ru.ts
 +++ b/apps/app/src/i18n/locales/ru.ts
-@@ -1287,4 +1287,10 @@ export default {
+@@ -1287,4 +1287,30 @@ export default {
    "extensions.subtitle": "Навыки, подключения и инструменты, которые может использовать ваш агент.",
    "extensions.open_in_den": "Открыть в Den",
    "extensions.title": "Библиотека",
@@ -4044,9 +4069,29 @@ index 2269df41..e7080fd2 100644
 +  "session.export_markdown_saved": "Ветка экспортирована в {path}",
 +  "session.export_markdown_failed": "Не удалось экспортировать ветку в Markdown",
 +  "session.export_markdown_reveal": "Показать файл",
++  "session.export_modal_description": "Выберите содержимое для экспорта в Markdown. Файл сохранится напрямую в Downloads.",
++  "session.export_opt_tool_calls": "Включать вызовы инструментов",
++  "session.export_opt_tool_calls_hint": "Входные параметры, выводы, ошибки и вложенные сессии субагентов",
++  "session.export_opt_reasoning": "Включать размышления",
++  "session.export_opt_reasoning_hint": "Блоки размышлений модели (> Reasoning) в каждом ходе",
++  "session.export_opt_compress": "Сжимать вывод",
++  "session.export_opt_compress_hint": "Детерминированная дедупликация и сжатие выводов без участия LLM",
++  "session.export_mode_lossless": "Без потерь",
++  "session.export_mode_lossless_desc": "100% обратимо: дедупликация, срезы строк, дельты файлов и TOON-таблицы",
++  "session.export_mode_smart": "Умное CLI",
++  "session.export_mode_smart_desc": "Lossless + очистка ANSI/прогресс-баров и сворачивание успешных тестов с сохранением всех ошибок",
++  "session.export_mode_stubs": "Сводка",
++  "session.export_mode_stubs_desc": "Smart + замена устаревших и обзорных чтений неизменённых файлов краткими стабами",
++  "session.export_size_label": "Итоговый объём файла",
++  "session.export_size_loading": "Загрузка полной истории ветки…",
++  "session.export_size_saved": "−{percent}% от {baseline}",
++  "session.export_size_tokens": "~{tokens} токенов",
++  "session.export_retry": "Повторить",
++  "session.export_cancel": "Отмена",
++  "session.export_confirm": "Скачать .md",
  } as const;
 diff --git a/apps/app/src/i18n/locales/zh.ts b/apps/app/src/i18n/locales/zh.ts
-index e3010078..d2a102f7 100644
+index e3010078..f2a96d89 100644
 --- a/apps/app/src/i18n/locales/zh.ts
 +++ b/apps/app/src/i18n/locales/zh.ts
 @@ -1247,6 +1247,12 @@ export default {
@@ -4062,13 +4107,419 @@ index e3010078..d2a102f7 100644
    "session.cmd_reload_config_title": "重新加载 omnirush.ai 配置",
    "session.cmd_reload_config_detail": "无需重启，重新读取提供商、MCP 服务器和模型配置",
    "session.cmd_sessions_detail": "跨工作区共 {count} 个",
+@@ -2683,4 +2689,24 @@ export default {
+   "settings.appearance.same_as_code_font": "与代码字体相同",
+   "settings.appearance.preset_default": "默认",
+   "settings.appearance.preset_high_contrast": "高对比度",
++  "session.export_modal_description": "选择要包含在导出的 Markdown 文件中的内容。文件将直接保存到“下载”文件夹。",
++  "session.export_opt_tool_calls": "包含工具调用",
++  "session.export_opt_tool_calls_hint": "工具输入、输出、错误以及嵌套子智能体对话记录",
++  "session.export_opt_reasoning": "包含思考过程",
++  "session.export_opt_reasoning_hint": "各轮回复中的模型思考区块（> Reasoning）",
++  "session.export_opt_compress": "压缩输出",
++  "session.export_opt_compress_hint": "无需调用大模型的确定性去重与工具输出精简",
++  "session.export_mode_lossless": "无损 (Lossless)",
++  "session.export_mode_lossless_desc": "100% 可逆：精确去重、行范围切片、文件增量与 TOON 表格",
++  "session.export_mode_smart": "智能 (Smart)",
++  "session.export_mode_smart_desc": "无损压缩基础上清理 ANSI/进度噪声并折叠通过的测试行，完整保留所有错误",
++  "session.export_mode_stubs": "精简摘要 (Stubs)",
++  "session.export_mode_stubs_desc": "智能压缩基础上将已过时及未修改文件的探索性读取替换为简短摘要",
++  "session.export_size_label": "最终文件大小",
++  "session.export_size_loading": "正在加载完整分支记录…",
++  "session.export_size_saved": "较原始 {baseline} 减少 {percent}%",
++  "session.export_size_tokens": "约 {tokens} tokens",
++  "session.export_retry": "重试",
++  "session.export_cancel": "取消",
++  "session.export_confirm": "导出 .md",
+ } as const;
+diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown-modal.tsx b/apps/app/src/react-app/domains/session/commands/export-session-markdown-modal.tsx
+new file mode 100644
+index 00000000..c9a267f8
+--- /dev/null
++++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown-modal.tsx
+@@ -0,0 +1,340 @@
++/** @jsxImportSource react */
++import { useEffect, useMemo, useState } from "react";
++import { Download, Loader2 } from "lucide-react";
++
++import { DEFAULT_EXPORT_MARKDOWN_OPTIONS, renderTranscriptFromIR, type CompressionMode } from "@/app/lib/session-markdown-export";
++import { Button } from "@/components/ui/button";
++import { Checkbox } from "@/components/ui/checkbox";
++import {
++  Dialog,
++  DialogContent,
++  DialogDescription,
++  DialogFooter,
++  DialogHeader,
++  DialogTitle,
++} from "@/components/ui/dialog";
++import { t } from "@/i18n";
++import { cn } from "@/lib/utils";
++import {
++  formatEstimatedTokenCount,
++  formatExportByteSize,
++  loadExportableSessionIR,
++  savePreparedSessionMarkdown,
++  type LoadedExportSessionData,
++} from "./export-session-markdown";
++import { useExportSessionMarkdownStore } from "./export-session-markdown-store";
++
++type ActiveCompressionVariant = Exclude<CompressionMode, "off">;
++
++type LoadState =
++  | { kind: "loading" }
++  | { kind: "ready"; data: LoadedExportSessionData }
++  | { kind: "error"; message: string };
++
++export function ExportSessionMarkdownModal() {
++  const activeTarget = useExportSessionMarkdownStore((state) => state.activeTarget);
++  const requestId = useExportSessionMarkdownStore((state) => state.requestId);
++  const closeExportModal = useExportSessionMarkdownStore((state) => state.closeExportModal);
++
++  const [includeToolCalls, setIncludeToolCalls] = useState<boolean>(
++    DEFAULT_EXPORT_MARKDOWN_OPTIONS.includeToolCalls,
++  );
++  const [includeReasoning, setIncludeReasoning] = useState<boolean>(
++    DEFAULT_EXPORT_MARKDOWN_OPTIONS.includeReasoning,
++  );
++  const [compressOutput, setCompressOutput] = useState<boolean>(
++    DEFAULT_EXPORT_MARKDOWN_OPTIONS.compression !== "off",
++  );
++  const [compressionVariant, setCompressionVariant] = useState<ActiveCompressionVariant>("lossless");
++  const [loadState, setLoadState] = useState<LoadState>({ kind: "loading" });
++  const [retryCount, setRetryCount] = useState(0);
++  const [saving, setSaving] = useState(false);
++
++  // Reset all 3 checkboxes to enabled defaults whenever a new export modal session opens.
++  useEffect(() => {
++    if (!activeTarget) return;
++    setIncludeToolCalls(true);
++    setIncludeReasoning(true);
++    setCompressOutput(true);
++    setCompressionVariant("lossless");
++    setSaving(false);
++  }, [activeTarget, requestId]);
++
++  useEffect(() => {
++    if (!activeTarget) return;
++    let cancelled = false;
++    setLoadState({ kind: "loading" });
++
++    loadExportableSessionIR(activeTarget)
++      .then((data) => {
++        if (!cancelled) {
++          setLoadState({ kind: "ready", data });
++        }
++      })
++      .catch((error: unknown) => {
++        if (!cancelled) {
++          const detail =
++            error instanceof Error && error.message.trim()
++              ? error.message.trim()
++              : t("session.export_markdown_failed");
++          setLoadState({ kind: "error", message: detail });
++        }
++      });
++
++    return () => {
++      cancelled = true;
++    };
++  }, [activeTarget, requestId, retryCount]);
++
++  const effectiveCompression: CompressionMode = compressOutput ? compressionVariant : "off";
++
++  const preview = useMemo(() => {
++    if (loadState.kind !== "ready") return null;
++    return renderTranscriptFromIR(loadState.data.ir, {
++      includeToolCalls,
++      includeReasoning,
++      compression: effectiveCompression,
++    });
++  }, [effectiveCompression, includeReasoning, includeToolCalls, loadState]);
++
++  const open = activeTarget !== null;
++
++  const handleConfirm = async () => {
++    if (!activeTarget || loadState.kind !== "ready" || !preview || saving) return;
++    setSaving(true);
++    try {
++      const outcome = await savePreparedSessionMarkdown({
++        target: activeTarget,
++        markdown: preview.markdown,
++        defaultFilename: loadState.data.defaultFilename,
++      });
++      if (outcome.outcome === "saved") {
++        closeExportModal();
++      }
++    } finally {
++      setSaving(false);
++    }
++  };
++
++  const variantDescription =
++    compressionVariant === "lossless"
++      ? t("session.export_mode_lossless_desc")
++      : compressionVariant === "smart"
++        ? t("session.export_mode_smart_desc")
++        : t("session.export_mode_stubs_desc");
++
++  const savedPercent =
++    preview && preview.savedBytes > 0
++      ? Math.max(1, Math.round(preview.savedRatio * 100))
++      : 0;
++
++  return (
++    <Dialog
++      open={open}
++      onOpenChange={(next) => {
++        if (!next && !saving) {
++          closeExportModal();
++        }
++      }}
++    >
++      <DialogContent className="max-w-md gap-5" data-testid="export-markdown-modal">
++        <DialogHeader>
++          <DialogTitle>{t("session.cmd_export_markdown_title")}</DialogTitle>
++          <DialogDescription>{t("session.export_modal_description")}</DialogDescription>
++        </DialogHeader>
++
++        <div className="flex flex-col gap-2.5">
++          <div className="flex items-start gap-3 rounded-2xl border border-border/70 bg-muted/20 p-3 transition-colors hover:bg-muted/35">
++            <Checkbox
++              id="export-opt-tool-calls-input"
++              checked={includeToolCalls}
++              onCheckedChange={(checked) => setIncludeToolCalls(checked === true)}
++              nativeButton
++              render={<button type="button" />}
++              className="mt-0.5"
++              data-testid="export-opt-tool-calls"
++            />
++            <label htmlFor="export-opt-tool-calls-input" className="min-w-0 flex-1 cursor-pointer">
++              <span className="block text-[13px] font-medium text-foreground">
++                {t("session.export_opt_tool_calls")}
++              </span>
++              <span className="block text-xs text-muted-foreground">
++                {t("session.export_opt_tool_calls_hint")}
++              </span>
++            </label>
++          </div>
++
++          <div className="flex items-start gap-3 rounded-2xl border border-border/70 bg-muted/20 p-3 transition-colors hover:bg-muted/35">
++            <Checkbox
++              id="export-opt-reasoning-input"
++              checked={includeReasoning}
++              onCheckedChange={(checked) => setIncludeReasoning(checked === true)}
++              nativeButton
++              render={<button type="button" />}
++              className="mt-0.5"
++              data-testid="export-opt-reasoning"
++            />
++            <label htmlFor="export-opt-reasoning-input" className="min-w-0 flex-1 cursor-pointer">
++              <span className="block text-[13px] font-medium text-foreground">
++                {t("session.export_opt_reasoning")}
++              </span>
++              <span className="block text-xs text-muted-foreground">
++                {t("session.export_opt_reasoning_hint")}
++              </span>
++            </label>
++          </div>
++
++          <div className="rounded-2xl border border-border/70 bg-muted/20 p-3 transition-colors">
++            <div className="flex items-start gap-3">
++              <Checkbox
++                id="export-opt-compress-input"
++                checked={compressOutput}
++                onCheckedChange={(checked) => setCompressOutput(checked === true)}
++                nativeButton
++                render={<button type="button" />}
++                className="mt-0.5"
++                data-testid="export-opt-compress"
++              />
++              <label htmlFor="export-opt-compress-input" className="min-w-0 flex-1 cursor-pointer">
++                <span className="block text-[13px] font-medium text-foreground">
++                  {t("session.export_opt_compress")}
++                </span>
++                <span className="block text-xs text-muted-foreground">
++                  {t("session.export_opt_compress_hint")}
++                </span>
++              </label>
++            </div>
++
++            {compressOutput ? (
++              <div
++                className={cn(
++                  "mt-3 flex flex-col gap-2 border-t border-border/60 pt-3",
++                  !includeToolCalls && "pointer-events-none opacity-50",
++                )}
++              >
++                <div
++                  role="radiogroup"
++                  aria-label={t("session.export_opt_compress")}
++                  className="grid grid-cols-3 gap-1 rounded-xl bg-muted/60 p-1"
++                >
++                  {(
++                    [
++                      { value: "lossless", label: t("session.export_mode_lossless") },
++                      { value: "smart", label: t("session.export_mode_smart") },
++                      { value: "stubs", label: t("session.export_mode_stubs") },
++                    ] as const
++                  ).map((item) => {
++                    const selected = compressionVariant === item.value;
++                    return (
++                      <button
++                        key={item.value}
++                        type="button"
++                        role="radio"
++                        aria-checked={selected}
++                        disabled={!includeToolCalls}
++                        data-testid={`export-mode-${item.value}`}
++                        onClick={() => setCompressionVariant(item.value)}
++                        className={cn(
++                          "rounded-lg px-2 py-1.5 text-center text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
++                          selected
++                            ? "bg-background text-foreground shadow-xs"
++                            : "text-muted-foreground hover:text-foreground",
++                        )}
++                      >
++                        {item.label}
++                      </button>
++                    );
++                  })}
++                </div>
++                <p className="text-[11.5px] leading-snug text-muted-foreground">
++                  {variantDescription}
++                </p>
++              </div>
++            ) : null}
++          </div>
++        </div>
++
++        <div
++          className="flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-secondary/40 px-3.5 py-2.5"
++          data-testid="export-markdown-size-card"
++        >
++          {loadState.kind === "loading" ? (
++            <div className="flex items-center gap-2 text-xs text-muted-foreground">
++              <Loader2 className="size-3.5 animate-spin" />
++              <span>{t("session.export_size_loading")}</span>
++            </div>
++          ) : loadState.kind === "error" ? (
++            <div className="flex w-full items-center justify-between gap-2">
++              <span className="min-w-0 flex-1 truncate text-xs text-destructive">
++                {loadState.message}
++              </span>
++              <Button
++                variant="outline"
++                size="sm"
++                onClick={() => setRetryCount((n) => n + 1)}
++                data-testid="export-markdown-retry"
++              >
++                {t("session.export_retry")}
++              </Button>
++            </div>
++          ) : preview ? (
++            <>
++              <div className="min-w-0">
++                <div className="text-xs font-medium text-foreground">
++                  {t("session.export_size_label")}
++                </div>
++                <div className="text-[11.5px] text-muted-foreground tabular-nums">
++                  {t("session.export_size_tokens", {
++                    tokens: formatEstimatedTokenCount(preview.estimatedTokens),
++                  })}
++                </div>
++              </div>
++              <div className="text-right tabular-nums">
++                <div
++                  className="text-sm font-semibold text-foreground"
++                  data-testid="export-markdown-live-size"
++                >
++                  {formatExportByteSize(preview.utf8Bytes)}
++                </div>
++                {savedPercent > 0 ? (
++                  <div
++                    className="text-[11.5px] font-medium text-emerald-600 dark:text-emerald-400"
++                    data-testid="export-markdown-live-savings"
++                  >
++                    {t("session.export_size_saved", {
++                      percent: String(savedPercent),
++                      baseline: formatExportByteSize(preview.baselineBytes),
++                    })}
++                  </div>
++                ) : null}
++              </div>
++            </>
++          ) : null}
++        </div>
++
++        <DialogFooter>
++          <Button
++            variant="ghost"
++            disabled={saving}
++            onClick={() => closeExportModal()}
++            data-testid="export-markdown-cancel"
++          >
++            {t("session.export_cancel")}
++          </Button>
++          <Button
++            disabled={loadState.kind !== "ready" || !preview || saving}
++            onClick={() => void handleConfirm()}
++            data-testid="export-markdown-confirm"
++          >
++            {saving ? (
++              <Loader2 className="mr-1.5 size-4 animate-spin" />
++            ) : (
++              <Download className="mr-1.5 size-4" />
++            )}
++            {t("session.export_confirm")}
++          </Button>
++        </DialogFooter>
++      </DialogContent>
++    </Dialog>
++  );
++}
+diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown-store.ts b/apps/app/src/react-app/domains/session/commands/export-session-markdown-store.ts
+new file mode 100644
+index 00000000..929da545
+--- /dev/null
++++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown-store.ts
+@@ -0,0 +1,29 @@
++import { create } from "zustand";
++
++import type { ExportSessionMarkdownTarget } from "./export-session-markdown";
++
++type ExportSessionMarkdownModalState = {
++  activeTarget: ExportSessionMarkdownTarget | null;
++  requestId: number;
++  openExportModal: (target: ExportSessionMarkdownTarget) => void;
++  closeExportModal: () => void;
++};
++
++export const useExportSessionMarkdownStore = create<ExportSessionMarkdownModalState>((set) => ({
++  activeTarget: null,
++  requestId: 0,
++  openExportModal: (target) =>
++    set((state) => ({
++      activeTarget: target,
++      requestId: state.requestId + 1,
++    })),
++  closeExportModal: () => set({ activeTarget: null }),
++}));
++
++export function openExportMarkdownModal(target: ExportSessionMarkdownTarget): void {
++  useExportSessionMarkdownStore.getState().openExportModal(target);
++}
++
++export function closeExportMarkdownModal(): void {
++  useExportSessionMarkdownStore.getState().closeExportModal();
++}
 diff --git a/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
 new file mode 100644
-index 00000000..be970732
+index 00000000..516da88c
 --- /dev/null
 +++ b/apps/app/src/react-app/domains/session/commands/export-session-markdown.ts
-@@ -0,0 +1,283 @@
-+import { useCallback, useRef, useState } from "react";
+@@ -0,0 +1,360 @@
++import { useCallback } from "react";
 +
 +import { toast } from "@/components/ui/sonner";
 +import { revealDesktopItemInDir, saveFile } from "@/app/lib/desktop";
@@ -4078,15 +4529,22 @@ index 00000000..be970732
 +import type { OmniRushServerClient, OmniRushSessionSnapshot } from "@/app/lib/omnirush-server";
 +import { isDesktopRuntime } from "@/app/lib/runtime-env";
 +import {
++  buildCanonicalTranscriptIR,
 +  buildSessionExportFilename,
 +  collectReferencedSubagentSessionIds,
-+  formatSessionAsMarkdown,
++  renderTranscriptFromIR,
 +  validateRelativeExportPath,
++  type CanonicalTranscriptIR,
 +  type ExportableSessionTree,
++  type ExportMarkdownOptions,
 +} from "@/app/lib/session-markdown-export";
 +import { t } from "@/i18n";
 +import { getReactQueryClient } from "@/react-app/infra/query-client";
 +import { snapshotKey } from "@/react-app/domains/session/sync/session-sync";
++import {
++  openExportMarkdownModal,
++  useExportSessionMarkdownStore,
++} from "./export-session-markdown-store";
 +
 +export type ExportSessionMarkdownTarget = {
 +  workspaceId: string;
@@ -4105,7 +4563,34 @@ index 00000000..be970732
 +  | { outcome: "canceled" }
 +  | { outcome: "failed"; error: string };
 +
++export type LoadedExportSessionData = {
++  ir: CanonicalTranscriptIR;
++  defaultFilename: string;
++};
++
 +const MAX_SUBAGENT_DEPTH = 4;
++
++export function formatExportByteSize(bytes: number): string {
++  const safe = Math.max(0, Math.round(bytes));
++  if (safe < 1024) {
++    return `${safe} B`;
++  }
++  if (safe < 1024 * 1024) {
++    return `${(safe / 1024).toFixed(1)} KB`;
++  }
++  return `${(safe / (1024 * 1024)).toFixed(2)} MB`;
++}
++
++export function formatEstimatedTokenCount(tokens: number): string {
++  const safe = Math.max(0, Math.round(tokens));
++  if (safe < 1000) {
++    return String(safe);
++  }
++  if (safe < 1_000_000) {
++    return `${(safe / 1000).toFixed(1)}k`;
++  }
++  return `${(safe / 1_000_000).toFixed(2)}M`;
++}
 +
 +function shortenSavedPathForToast(savedPath: string, workspaceRoot?: string): string {
 +  const root = workspaceRoot?.trim().replace(/[\\/]+$/, "") ?? "";
@@ -4186,21 +4671,51 @@ index 00000000..be970732
 +}
 +
 +/**
-+ * Fetch the full unwindowed session transcript (including reasoning, tool
-+ * calls, and any nested sub-agent sessions), serialize it to Markdown, and
-+ * write/download the `.md` file with toast feedback.
++ * Fetch the full unwindowed session transcript + nested subagent transcripts and
++ * construct the reusable `CanonicalTranscriptIR` for instant live size previews.
 + */
-+export async function exportSessionMarkdown(
++export async function loadExportableSessionIR(
 +  target: ExportSessionMarkdownTarget,
-+): Promise<ExportSessionMarkdownOutcome> {
++): Promise<LoadedExportSessionData> {
 +  const sessionId = target.sessionId.trim();
 +  const baseUrl = target.opencodeBaseUrl.trim();
 +  if (!sessionId || !baseUrl) {
-+    const message = t("session.export_markdown_failed");
-+    toast.error(message);
-+    return { outcome: "failed", error: message };
++    throw new Error(t("session.export_markdown_failed"));
 +  }
 +
++  const relativeArg = target.relativeFilename?.trim() ?? "";
++  const validatedRelative = relativeArg ? validateRelativeExportPath(relativeArg) : null;
++  if (validatedRelative && !validatedRelative.ok) {
++    throw new Error(validatedRelative.reason);
++  }
++
++  const client = createClientV2(baseUrl, target.workspaceRoot?.trim() || undefined, {
++    token: target.token,
++  });
++  const tree = await loadSessionTreeRecursive({
++    client,
++    workspaceId: target.workspaceId,
++    sessionId,
++    depth: 0,
++    visited: new Set<string>(),
++  });
++
++  const ir = buildCanonicalTranscriptIR(tree);
++  const defaultFilename = buildSessionExportFilename(tree.session);
++  return { ir, defaultFilename };
++}
++
++/**
++ * Persist an already-rendered Markdown string to `Downloads` (or an explicit
++ * nested workspace subpath when `/export dir/file.md` was passed) and display
++ * completion toast feedback.
++ */
++export async function savePreparedSessionMarkdown(params: {
++  target: ExportSessionMarkdownTarget;
++  markdown: string;
++  defaultFilename: string;
++}): Promise<ExportSessionMarkdownOutcome> {
++  const { target, markdown, defaultFilename } = params;
 +  try {
 +    const relativeArg = target.relativeFilename?.trim() ?? "";
 +    const validatedRelative = relativeArg ? validateRelativeExportPath(relativeArg) : null;
@@ -4208,19 +4723,6 @@ index 00000000..be970732
 +      throw new Error(validatedRelative.reason);
 +    }
 +
-+    const client = createClientV2(baseUrl, target.workspaceRoot?.trim() || undefined, {
-+      token: target.token,
-+    });
-+    const tree = await loadSessionTreeRecursive({
-+      client,
-+      workspaceId: target.workspaceId,
-+      sessionId,
-+      depth: 0,
-+      visited: new Set<string>(),
-+    });
-+
-+    const markdown = formatSessionAsMarkdown(tree);
-+    const defaultFilename = buildSessionExportFilename(tree.session);
 +    const desktop = isDesktopRuntime();
 +    const localWorkspaceRoot = target.workspaceRoot?.trim() ?? "";
 +
@@ -4320,28 +4822,54 @@ index 00000000..be970732
 +  }
 +}
 +
++/**
++ * Fetch the full unwindowed session transcript (including reasoning, tool
++ * calls, and any nested sub-agent sessions), serialize it to Markdown under
++ * `options`, and write/download the `.md` file with toast feedback.
++ */
++export async function exportSessionMarkdown(
++  target: ExportSessionMarkdownTarget,
++  options?: Partial<ExportMarkdownOptions>,
++): Promise<ExportSessionMarkdownOutcome> {
++  const sessionId = target.sessionId.trim();
++  const baseUrl = target.opencodeBaseUrl.trim();
++  if (!sessionId || !baseUrl) {
++    const message = t("session.export_markdown_failed");
++    toast.error(message);
++    return { outcome: "failed", error: message };
++  }
++
++  try {
++    const { ir, defaultFilename } = await loadExportableSessionIR(target);
++    const rendered = renderTranscriptFromIR(ir, options);
++    return await savePreparedSessionMarkdown({
++      target,
++      markdown: rendered.markdown,
++      defaultFilename,
++    });
++  } catch (error) {
++    const detail = error instanceof Error && error.message.trim() ? error.message.trim() : "";
++    const message = detail ? `${t("session.export_markdown_failed")}: ${detail}` : t("session.export_markdown_failed");
++    toast.error(message);
++    return { outcome: "failed", error: message };
++  }
++}
++
 +export function useExportSessionMarkdown(target: Omit<ExportSessionMarkdownTarget, "relativeFilename">) {
-+  const [exporting, setExporting] = useState(false);
-+  const inFlightRef = useRef(false);
++  const activeSessionId = useExportSessionMarkdownStore((state) => state.activeTarget?.sessionId ?? null);
++  const exporting = Boolean(activeSessionId && activeSessionId === target.sessionId);
 +
 +  const runExport = useCallback(
-+    async (relativeFilename?: string | null) => {
-+      if (inFlightRef.current) return;
-+      inFlightRef.current = true;
-+      setExporting(true);
-+      try {
-+        await exportSessionMarkdown({
-+          ...target,
-+          relativeFilename,
-+        });
-+      } finally {
-+        inFlightRef.current = false;
-+        setExporting(false);
-+      }
++    (relativeFilename?: string | null) => {
++      openExportMarkdownModal({
++        ...target,
++        relativeFilename,
++      });
 +    },
 +    [
 +      target.opencodeBaseUrl,
 +      target.serverClient,
++      target.serverWorkspaceId,
 +      target.sessionId,
 +      target.token,
 +      target.workspaceId,
@@ -4511,22 +5039,23 @@ index 21785ad1..f93fb355 100644
      onOpenCreateGroupModal: props.onOpenCreateGroupModal,
      onOpenRenameWorkspace: props.onOpenRenameWorkspace,
 diff --git a/apps/app/src/react-app/shell/session-route.tsx b/apps/app/src/react-app/shell/session-route.tsx
-index 0a8f1b5c..7a962c0d 100644
+index 0a8f1b5c..a5de271d 100644
 --- a/apps/app/src/react-app/shell/session-route.tsx
 +++ b/apps/app/src/react-app/shell/session-route.tsx
-@@ -27,6 +27,7 @@ import { isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
+@@ -27,6 +27,8 @@ import { isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
  import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
  import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
  import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
-+import { exportSessionMarkdown } from "@/react-app/domains/session/commands/export-session-markdown";
++import { ExportSessionMarkdownModal } from "@/react-app/domains/session/commands/export-session-markdown-modal";
++import { openExportMarkdownModal } from "@/react-app/domains/session/commands/export-session-markdown-store";
  import { copySessionId } from "@/react-app/domains/session/sidebar/copy-session-id";
  import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
  import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
-@@ -3172,6 +3173,47 @@ export function SessionRoute() {
+@@ -3172,6 +3174,47 @@ export function SessionRoute() {
      selectedWorkspaceId,
    ]);
  
-+  const handleExportSession = useCallback(async (workspaceId: string, sessionId: string) => {
++  const handleExportSession = useCallback((workspaceId: string, sessionId: string) => {
 +    const ownerId =
 +      workspaceId.trim() ||
 +      workspaceSessionGroups.find((group) =>
@@ -4538,7 +5067,7 @@ index 0a8f1b5c..7a962c0d 100644
 +      toast.error(t("session.export_markdown_failed"));
 +      return;
 +    }
-+    await exportSessionMarkdown({
++    openExportMarkdownModal({
 +      workspaceId: ownerWorkspace.id,
 +      serverWorkspaceId: endpoint.workspaceId,
 +      sessionId,
@@ -4570,7 +5099,7 @@ index 0a8f1b5c..7a962c0d 100644
    const copySessionIdPaletteItem = useMemo(() => buildCopySessionIdPaletteItem(focusedSession?.sessionId, (sessionId) => {
      setCommandPaletteOpen(false);
      void copySessionId(sessionId);
-@@ -4072,6 +4114,7 @@ export function SessionRoute() {
+@@ -4072,6 +4115,7 @@ export function SessionRoute() {
            : undefined
        }
        onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
@@ -4578,7 +5107,7 @@ index 0a8f1b5c..7a962c0d 100644
        archiveDisabledReason={archiveDisabledReason}
        statusBar={{
          // No per-session loading state here: the account row renders only
-@@ -4210,7 +4253,7 @@ export function SessionRoute() {
+@@ -4210,7 +4254,7 @@ export function SessionRoute() {
        currentSessionForGroupMove={currentSessionForGroupMove}
        currentSessionGroupId={currentSessionGroupId}
        onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
@@ -4587,6 +5116,441 @@ index 0a8f1b5c..7a962c0d 100644
        listAgents={listAgents}
        selectedAgent={selectedAgent}
        onSelectAgent={setSelectedAgent}
+@@ -4222,6 +4266,7 @@ export function SessionRoute() {
+       fetchMessages={sessionSearchFetcher}
+       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
+     />
++    <ExportSessionMarkdownModal />
+     <ModelPickerModal
+       open={modelPicker.open}
+       options={pickerOptions}
+diff --git a/apps/app/tests/export-session-markdown-modal.test.tsx b/apps/app/tests/export-session-markdown-modal.test.tsx
+new file mode 100644
+index 00000000..c1086757
+--- /dev/null
++++ b/apps/app/tests/export-session-markdown-modal.test.tsx
+@@ -0,0 +1,421 @@
++/** @jsxImportSource react */
++import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
++import { GlobalRegistrator } from "@happy-dom/global-registrator";
++import { act } from "react";
++import { createRoot } from "react-dom/client";
++import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
++
++import type { ExportableSessionTree } from "../src/app/lib/session-markdown-export";
++import { buildCanonicalTranscriptIR } from "../src/app/lib/session-markdown-export";
++
++let savedPayloads: Array<{ filename: string; content: string }> = [];
++
++const realRuntimeEnv = await import("../src/app/lib/runtime-env");
++
++mock.module("@/app/lib/runtime-env", () => ({
++  ...realRuntimeEnv,
++  isDesktopRuntime: () => false,
++}));
++
++mock.module("@/app/lib/download", () => ({
++  downloadTextAsFile: (filename: string, content: string) => {
++    savedPayloads.push({ filename, content });
++  },
++}));
++
++mock.module("@/components/ui/sonner", () => ({
++  toast: {
++    success: () => {},
++    error: () => {},
++  },
++}));
++
++function makeModalFixtureTree(): ExportableSessionTree {
++  const session: Session = {
++    id: "ses_modal_test",
++    slug: "modal-export-test",
++    projectID: "proj_1",
++    directory: "/workspace/app",
++    title: "Modal Export Test",
++    version: "0.0.1",
++    time: {
++      created: Date.UTC(2026, 9, 30, 12, 0, 0),
++      updated: Date.UTC(2026, 9, 30, 12, 5, 0),
++    },
++  };
++
++  const userInfo: Message = {
++    id: "msg_u1",
++    sessionID: session.id,
++    role: "user",
++    time: { created: Date.UTC(2026, 9, 30, 12, 0, 5) },
++    agent: "build",
++    model: { providerID: "anthropic", modelID: "claude-sonnet-4-5" },
++  } as unknown as Message;
++
++  const userPart: Part = {
++    id: "prt_u1",
++    sessionID: session.id,
++    messageID: "msg_u1",
++    type: "text",
++    text: "Inspect config.ts twice and run the unit test suite.",
++  } as unknown as Part;
++
++  const fileLines = Array.from(
++    { length: 70 },
++    (_, i) => `${i + 1}: export const SETTING_${i + 1} = "value_${i + 1}_padding_for_dedup";`,
++  ).join("\n");
++  const readOutput = `<path>/workspace/app/src/config.ts</path>\n<type>file</type>\n<content>${fileLines}\n</content>`;
++
++  const passingTestLines = Array.from(
++    { length: 45 },
++    (_, i) => `✓ tests/unit-${i + 1}.test.ts > verifies behavior #${i + 1} [2.00ms]`,
++  ).join("\n");
++  const testOutput = `${passingTestLines}\n\n 45 pass\n 0 fail\nRan 45 tests across 45 files. [120.00ms]`;
++
++  const assistantInfo: Message = {
++    id: "msg_a1",
++    sessionID: session.id,
++    role: "assistant",
++    parentID: "msg_u1",
++    time: {
++      created: Date.UTC(2026, 9, 30, 12, 0, 10),
++      completed: Date.UTC(2026, 9, 30, 12, 1, 0),
++    },
++    modelID: "claude-sonnet-4-5",
++    providerID: "anthropic",
++    mode: "build",
++    agent: "build",
++    path: { cwd: "/workspace/app", root: "/workspace/app" },
++    cost: 0,
++    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
++  } as unknown as Message;
++
++  const assistantParts: Part[] = [
++    {
++      id: "prt_r1",
++      sessionID: session.id,
++      messageID: "msg_a1",
++      type: "reasoning",
++      text: "Let me inspect src/config.ts carefully before running tests. ".repeat(8),
++      time: { start: 1, end: 2 },
++    } as unknown as Part,
++    {
++      id: "prt_t1",
++      sessionID: session.id,
++      messageID: "msg_a1",
++      type: "tool",
++      callID: "call_read_1",
++      tool: "read",
++      state: {
++        status: "completed",
++        input: { filePath: "/workspace/app/src/config.ts" },
++        output: readOutput,
++        title: "src/config.ts",
++        metadata: {},
++        time: { start: 1, end: 2 },
++      },
++    } as unknown as Part,
++    {
++      id: "prt_t2",
++      sessionID: session.id,
++      messageID: "msg_a1",
++      type: "tool",
++      callID: "call_read_2",
++      tool: "read",
++      state: {
++        status: "completed",
++        input: { filePath: "/workspace/app/src/config.ts" },
++        output: readOutput,
++        title: "src/config.ts",
++        metadata: {},
++        time: { start: 3, end: 4 },
++      },
++    } as unknown as Part,
++    {
++      id: "prt_t3",
++      sessionID: session.id,
++      messageID: "msg_a1",
++      type: "tool",
++      callID: "call_bash_tests",
++      tool: "bash",
++      state: {
++        status: "completed",
++        input: { command: "bun test" },
++        output: testOutput,
++        title: "bun test",
++        metadata: { exit: 0 },
++        time: { start: 5, end: 6 },
++      },
++    } as unknown as Part,
++    {
++      id: "prt_txt_final",
++      sessionID: session.id,
++      messageID: "msg_a1",
++      type: "text",
++      text: "All 45 tests pass and `src/config.ts` needs no changes.",
++    } as unknown as Part,
++  ];
++
++  return {
++    session,
++    messages: [
++      { info: userInfo, parts: [userPart] },
++      { info: assistantInfo, parts: assistantParts },
++    ],
++    todos: [],
++  };
++}
++
++const fixtureTree = makeModalFixtureTree();
++const realV2Adapter = await import("../src/app/lib/opencode-v2-adapter");
++
++mock.module("@/app/lib/opencode-v2-adapter", () => ({
++  ...realV2Adapter,
++  createClientV2: () => ({
++    session: {
++      get: async () => ({ data: fixtureTree.session }),
++      messages: async () => ({ data: fixtureTree.messages }),
++      todo: async () => ({ data: [] }),
++    },
++  }),
++}));
++
++async function waitFor(predicate: () => boolean, label: string) {
++  const deadline = Date.now() + 2_500;
++  while (Date.now() < deadline) {
++    if (predicate()) return;
++    await act(async () => {
++      await new Promise<void>((resolve) => setTimeout(resolve, 10));
++    });
++  }
++  throw new Error(`Timed out waiting for ${label}`);
++}
++
++describe("ExportSessionMarkdownModal (Stage 3)", () => {
++  beforeAll(() => {
++    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
++    GlobalRegistrator.register();
++  });
++
++  afterAll(async () => {
++    await GlobalRegistrator.unregister();
++  });
++
++  test("formats byte sizes and estimated token counts deterministically", async () => {
++    const { formatEstimatedTokenCount, formatExportByteSize } = await import(
++      "../src/react-app/domains/session/commands/export-session-markdown"
++    );
++
++    expect(formatExportByteSize(0)).toBe("0 B");
++    expect(formatExportByteSize(512)).toBe("512 B");
++    expect(formatExportByteSize(2048)).toBe("2.0 KB");
++    expect(formatExportByteSize(146_227)).toBe("142.8 KB");
++    expect(formatExportByteSize(1_572_864)).toBe("1.50 MB");
++
++    expect(formatEstimatedTokenCount(420)).toBe("420");
++    expect(formatEstimatedTokenCount(12_460)).toBe("12.5k");
++    expect(formatEstimatedTokenCount(1_250_000)).toBe("1.25M");
++  });
++
++  test("opens with all 3 checkboxes enabled + lossless default, updates live file size on every toggle, has no filename/copy controls, and exports selected variant", async () => {
++    savedPayloads = [];
++    const { renderTranscriptFromIR } = await import("../src/app/lib/session-markdown-export");
++    const { ExportSessionMarkdownModal } = await import(
++      "../src/react-app/domains/session/commands/export-session-markdown-modal"
++    );
++    const { formatExportByteSize } = await import(
++      "../src/react-app/domains/session/commands/export-session-markdown"
++    );
++    const { closeExportMarkdownModal, openExportMarkdownModal, useExportSessionMarkdownStore } =
++      await import("../src/react-app/domains/session/commands/export-session-markdown-store");
++
++    const ir = buildCanonicalTranscriptIR(fixtureTree);
++    const expectedLossless = renderTranscriptFromIR(ir, {
++      includeToolCalls: true,
++      includeReasoning: true,
++      compression: "lossless",
++    });
++    const expectedSmart = renderTranscriptFromIR(ir, {
++      includeToolCalls: true,
++      includeReasoning: true,
++      compression: "smart",
++    });
++    const expectedStubs = renderTranscriptFromIR(ir, {
++      includeToolCalls: true,
++      includeReasoning: true,
++      compression: "stubs",
++    });
++    const expectedRaw = renderTranscriptFromIR(ir, {
++      includeToolCalls: true,
++      includeReasoning: true,
++      compression: "off",
++    });
++    const expectedNoTools = renderTranscriptFromIR(ir, {
++      includeToolCalls: false,
++      includeReasoning: true,
++      compression: "stubs",
++    });
++
++    const host = document.createElement("div");
++    document.body.appendChild(host);
++    const root = createRoot(host);
++
++    try {
++      await act(async () => {
++        root.render(<ExportSessionMarkdownModal />);
++      });
++
++      await act(async () => {
++        openExportMarkdownModal({
++          workspaceId: "ws_1",
++          sessionId: "ses_modal_test",
++          opencodeBaseUrl: "http://127.0.0.1:4096",
++          token: "tok",
++        });
++      });
++
++      await waitFor(
++        () => document.querySelector('[data-testid="export-markdown-live-size"]') !== null,
++        "live size element",
++      );
++
++      const modal = document.querySelector('[data-testid="export-markdown-modal"]');
++      expect(modal).not.toBeNull();
++
++      // Strictly NO editable filename input and NO copy-to-clipboard button in the modal.
++      expect(modal?.querySelector('input[type="text"]')).toBeNull();
++      expect(modal?.textContent?.toLowerCase()).not.toContain("clipboard");
++
++      const toolCallsCheckbox = document.querySelector<HTMLElement>(
++        '[data-testid="export-opt-tool-calls"]',
++      )!;
++      const reasoningCheckbox = document.querySelector<HTMLElement>(
++        '[data-testid="export-opt-reasoning"]',
++      )!;
++      const compressCheckbox = document.querySelector<HTMLElement>(
++        '[data-testid="export-opt-compress"]',
++      )!;
++
++      // All 3 checkboxes must default to checked.
++      expect(toolCallsCheckbox.getAttribute("aria-checked")).toBe("true");
++      expect(reasoningCheckbox.getAttribute("aria-checked")).toBe("true");
++      expect(compressCheckbox.getAttribute("aria-checked")).toBe("true");
++
++      const losslessBtn = document.querySelector<HTMLButtonElement>(
++        '[data-testid="export-mode-lossless"]',
++      )!;
++      const smartBtn = document.querySelector<HTMLButtonElement>(
++        '[data-testid="export-mode-smart"]',
++      )!;
++      const stubsBtn = document.querySelector<HTMLButtonElement>(
++        '[data-testid="export-mode-stubs"]',
++      )!;
++      expect(losslessBtn.getAttribute("aria-checked")).toBe("true");
++
++      const readSizeText = () =>
++        document.querySelector('[data-testid="export-markdown-live-size"]')?.textContent?.trim();
++
++      expect(readSizeText()).toBe(formatExportByteSize(expectedLossless.utf8Bytes));
++      expect(
++        document.querySelector('[data-testid="export-markdown-live-savings"]')?.textContent,
++      ).toContain(formatExportByteSize(expectedRaw.utf8Bytes));
++
++      // Switch to Smart -> live size updates immediately.
++      await act(async () => {
++        smartBtn.click();
++      });
++      expect(smartBtn.getAttribute("aria-checked")).toBe("true");
++      expect(readSizeText()).toBe(formatExportByteSize(expectedSmart.utf8Bytes));
++
++      // Switch to Compact Stubs -> live size drops further.
++      await act(async () => {
++        stubsBtn.click();
++      });
++      expect(stubsBtn.getAttribute("aria-checked")).toBe("true");
++      expect(readSizeText()).toBe(formatExportByteSize(expectedStubs.utf8Bytes));
++
++      // Uncheck Compress output -> live size matches uncompressed raw baseline and savings badge disappears.
++      await act(async () => {
++        compressCheckbox.click();
++      });
++      expect(compressCheckbox.getAttribute("aria-checked")).toBe("false");
++      expect(readSizeText()).toBe(formatExportByteSize(expectedRaw.utf8Bytes));
++      expect(document.querySelector('[data-testid="export-markdown-live-savings"]')).toBeNull();
++
++      // Re-check Compress output (still remembers Stubs within same modal open) and uncheck Tool Calls.
++      await act(async () => {
++        compressCheckbox.click();
++      });
++      expect(readSizeText()).toBe(formatExportByteSize(expectedStubs.utf8Bytes));
++
++      await act(async () => {
++        toolCallsCheckbox.click();
++      });
++      expect(toolCallsCheckbox.getAttribute("aria-checked")).toBe("false");
++      expect(readSizeText()).toBe(formatExportByteSize(expectedNoTools.utf8Bytes));
++
++      // Re-enable Tool Calls and uncheck Reasoning by clicking its label, then export!
++      const reasoningLabel = document.querySelector<HTMLLabelElement>(
++        'label[for="export-opt-reasoning-input"]',
++      )!;
++      await act(async () => {
++        toolCallsCheckbox.click();
++        reasoningLabel.click();
++      });
++      expect(toolCallsCheckbox.getAttribute("aria-checked")).toBe("true");
++      expect(reasoningCheckbox.getAttribute("aria-checked")).toBe("false");
++
++      const confirmBtn = document.querySelector<HTMLButtonElement>(
++        '[data-testid="export-markdown-confirm"]',
++      )!;
++      await act(async () => {
++        confirmBtn.click();
++      });
++
++      await waitFor(
++        () => useExportSessionMarkdownStore.getState().activeTarget === null,
++        "modal close after export",
++      );
++
++      expect(savedPayloads.length).toBe(1);
++      expect(savedPayloads[0]!.filename).toBe("Modal-Export-Test-modal_test.md");
++      expect(savedPayloads[0]!.content).not.toContain("> **Reasoning**");
++      expect(savedPayloads[0]!.content).toContain("- **Omitted:** reasoning");
++      expect(savedPayloads[0]!.content).toContain("- **Compression:** `stubs`");
++
++      // Re-opening the modal resets all 3 checkboxes back to true + lossless default.
++      await act(async () => {
++        openExportMarkdownModal({
++          workspaceId: "ws_1",
++          sessionId: "ses_modal_test",
++          opencodeBaseUrl: "http://127.0.0.1:4096",
++          token: "tok",
++        });
++      });
++      await waitFor(
++        () => document.querySelector('[data-testid="export-opt-reasoning"]') !== null,
++        "reopened modal controls",
++      );
++      expect(
++        document
++          .querySelector('[data-testid="export-opt-reasoning"]')
++          ?.getAttribute("aria-checked"),
++      ).toBe("true");
++      expect(
++        document
++          .querySelector('[data-testid="export-mode-lossless"]')
++          ?.getAttribute("aria-checked"),
++      ).toBe("true");
++
++      await act(async () => {
++        closeExportMarkdownModal();
++      });
++    } finally {
++      await act(async () => {
++        root.unmount();
++      });
++      host.remove();
++    }
++  });
++});
 diff --git a/apps/app/tests/markdown-export-lossless.test.ts b/apps/app/tests/markdown-export-lossless.test.ts
 new file mode 100644
 index 00000000..188e4043
