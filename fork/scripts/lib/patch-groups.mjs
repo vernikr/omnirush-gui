@@ -170,6 +170,24 @@ export const PATCH_GROUPS = [
     ],
     addsOnly: false,
   },
+  {
+    file: "0015-quote-and-artifact-tree.patch",
+    title: "quote boundaries and resizable artifact tree; retain side-panel fixes",
+    paths: [
+      "apps/app/src/components/chat/quote.ts",
+      "apps/app/src/react-app/domains/session/editor/chat-context.ts",
+      "apps/app/src/react-app/domains/session/chat/new-task-composer.tsx",
+      "apps/app/src/react-app/domains/session/chat/side-panel-width.ts",
+      "apps/app/src/react-app/domains/session/artifacts/workspace-file-tree.tsx",
+      "apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts",
+      "apps/app/tests/quote-send.test.ts",
+      "apps/app/tests/quote-expand-editor.test.tsx",
+      "apps/app/tests/artifact-header-path.test.ts",
+      "apps/app/tests/side-panel-width-commit.test.tsx",
+      "evals/worlds/first-run.ts",
+    ],
+    addsOnly: false,
+  },
 ];
 
 /** Paths no group may touch: the engine tarballs are pinned in upstream releases. */

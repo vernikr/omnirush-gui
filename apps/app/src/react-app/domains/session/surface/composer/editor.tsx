@@ -12,7 +12,6 @@ import {
   $createRangeSelection,
   $createParagraphNode,
   $createTextNode,
-  $getNearestNodeFromDOMNode,
   $getRoot,
   $getSelection,
   $nodesOfType,
@@ -1126,20 +1125,6 @@ function pastedExpandButton(target: EventTarget | null) {
   return button instanceof HTMLButtonElement ? button : null;
 }
 
-function replacePastedTextChip(label: string, text: string, button: HTMLButtonElement) {
-  const nearest = $getNearestNodeFromDOMNode(button);
-  if (nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label) {
-    nearest.select(0, nearest.getTextContentSize());
-    return insertPastedText(text);
-  }
-  for (const node of $nodesOfType(ComposerPastedTextNode)) {
-    if (node.getPastedLabel() !== label) continue;
-    node.select(0, node.getTextContentSize());
-    return insertPastedText(text);
-  }
-  return false;
-}
-
 function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
   const [editor] = useLexicalComposerContext();
   const pastedTextRef = useRef(props.pastedText);
@@ -1165,12 +1150,9 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
       event.preventDefault();
       event.stopPropagation();
       const target = pastedTextRef.current?.find((item) => item.label === label);
-      if (target) {
-        editor.update(() => {
-          replacePastedTextChip(label, target.text, button);
-        });
-      }
-      onExpandPastedTextRef.current?.(label);
+      // Expand through the draft once. Mutating Lexical and the external draft
+      // simultaneously races the editor's change listener when text is adjacent.
+      if (target) onExpandPastedTextRef.current?.(label);
     };
 
     return editor.registerRootListener((rootElement, previousRootElement) => {

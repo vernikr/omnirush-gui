@@ -8,6 +8,19 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
   await user.click("Select tab: overflow-tab-12.md");
   await user.see({ placeholder: "Search files" }, { timeoutMs: 30_000 });
 
+  await step("The file tree can be resized with the keyboard", async () => {
+    const before = await world.artifactTreeWidth();
+    expect(before).toBeGreaterThan(0);
+    expect(await world.focusArtifactTreeSeparator()).toBe(true);
+    await user.press("ArrowRight");
+    const after = await eventually(() => world.artifactTreeWidth(), {
+      within: 5_000,
+      until: (width) => width > before,
+    });
+    expect(after).toBeGreaterThan(before);
+    evidence.recordAssertionEvidence("The artifact tree has an accessible, working resize separator", `Tree width changed from ${before}px to ${after}px.`, true);
+  });
+
   await step("Cmd/Ctrl+F in the artifact panel opens document Find, not chat Find", async () => {
     await user.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
     await user.see({ placeholder: "Find in document" });

@@ -114,10 +114,10 @@ index 00000000..75204d3d
 +  color: inherit;
 +}
 diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
-index 738adbc6..66dfb729 100644
+index 738adbc6..f3831367 100644
 --- a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
 +++ b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
-@@ -1,7 +1,7 @@
+@@ -1,11 +1,12 @@
  /** @jsxImportSource react */
  import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
  import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -126,7 +126,12 @@ index 738adbc6..66dfb729 100644
  
  import type { OmniRushServerClient, OmniRushWorkspaceCatalogEntry } from "@/app/lib/omnirush-server";
  import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
-@@ -16,6 +16,8 @@ import { toast } from "@/components/ui/sonner";
+ import { Button } from "@/components/ui/button";
++import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+ import {
+   DropdownMenu,
+   DropdownMenuContent,
+@@ -16,6 +17,8 @@ import { toast } from "@/components/ui/sonner";
  import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
  import { usePlatform } from "@/react-app/kernel/platform";
  import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
@@ -135,9 +140,32 @@ index 738adbc6..66dfb729 100644
  import { isCollectibleArtifactTarget, openTargetFromWorkspaceFile, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
  import { HTMLPreview, ImagePreview, MarkdownPreview, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
  
-@@ -98,6 +100,13 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+@@ -66,6 +69,20 @@ function absoluteWorkspacePath(root: string, path: string) {
+   return cleanRoot ? `${cleanRoot}/${cleanPath}` : cleanPath;
+ }
+ 
++/**
++ * The address shown next to the file name in the panel header.
++ *
++ * A name alone hides where the file lives, so the workspace path is shown in
++ * full (and in a tooltip, since the row truncates). A file directly at the
++ * workspace root has nothing to add: showing its own name twice reads as a
++ * rendering bug.
++ */
++export function artifactHeaderPath(target: OpenTarget): string {
++  const path = target.value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
++  if (target.kind !== "file") return path;
++  return path === target.name ? "" : path;
++}
++
+ function isTextContent(target: OpenTarget): boolean {
+   return ["markdown", "code", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
+ }
+@@ -97,10 +114,19 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+   const queryClient = useQueryClient();
    const [editing, setEditing] = useState(false);
    const [treeOpen, setTreeOpen] = useState(true);
++  const treeWidthRef = useRef(160);
    const [draft, setDraft] = useState("");
 +  const [findOpen, setFindOpen] = useState(false);
 +  const [findQuery, setFindQuery] = useState("");
@@ -149,7 +177,11 @@ index 738adbc6..66dfb729 100644
    const lastSyncedRef = useRef<string | null>(null);
    const failedDraftRef = useRef<string | null>(null);
    const isMermaidArtifact = target.kind === "file" && /\.mmd$/i.test(target.value);
-@@ -167,6 +176,11 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++  const panelPath = artifactHeaderPath(target);
+   // Plain text opens directly in CodeMirror. Markdown and HTML default to
+   // their rendered previews and retain the existing Edit toggle.
+   const isDirectTextEdit = isTextContent(target) && target.preview === "text";
+@@ -167,6 +193,11 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
    useEffect(() => {
      setEditing(false);
      setDraft("");
@@ -161,7 +193,7 @@ index 738adbc6..66dfb729 100644
      lastSyncedRef.current = null;
      failedDraftRef.current = null;
    }, [target.id, workspaceId]);
-@@ -273,6 +287,48 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+@@ -273,6 +304,48 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
    const isTextEditing = data?.kind === "text" && (editing || isDirectTextEdit);
    const isEditingSurface = data?.kind === "text" && (editing || isDirectTextEdit || isDirectCodeEdit);
    const isDirty = data?.kind === "text" && draft !== data.data;
@@ -210,7 +242,7 @@ index 738adbc6..66dfb729 100644
  
    useEffect(() => {
      if (
-@@ -293,6 +349,17 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+@@ -293,6 +366,17 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
      return () => window.clearTimeout(timer);
    }, [draft, data, editing, isDirectTextEdit, isDirectCodeEdit, isSaving, target.kind, mutate]);
  
@@ -228,7 +260,7 @@ index 738adbc6..66dfb729 100644
    const saveSpreadsheetContent = async (payload: Data) => {
      if (target.kind !== "file") {
        return;
-@@ -305,7 +372,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+@@ -305,7 +389,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
    };
  
    return (
@@ -237,7 +269,31 @@ index 738adbc6..66dfb729 100644
        <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
          <div className="flex h-10 items-center gap-2 pe-2 ps-2">
            <Tooltip>
-@@ -337,6 +404,18 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+@@ -318,10 +402,21 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+             />
+             <TooltipContent>{treeOpen ? "Hide workspace files" : "Show workspace files"}</TooltipContent>
+           </Tooltip>
+-          <div className="min-w-0 flex-1 flex items-center gap-1.5">
+-            <h3 className="min-w-0 truncate text-sm font-medium text-foreground">
++          <div className="min-w-0 flex-1 flex items-baseline gap-1.5">
++            <h3 className="max-w-[55%] shrink-0 truncate text-sm font-medium text-foreground">
+               {target.name}
+             </h3>
++            {/* The tab only has room for the basename; the address keeps the
++                workspace path so a file read from a nested folder is identifiable. */}
++            {panelPath ? (
++              <span
++                data-artifact-path=""
++                className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
++                title={panelPath}
++              >
++                {panelPath}
++              </span>
++            ) : null}
+             <span className="shrink-0 text-xs text-muted-foreground">
+               {target.exists === false ? "missing" : isEditingSurface ? (isSaving || isDirty ? "Saving\u2026" : "Saved") : ""}
+             </span>
+@@ -337,6 +432,18 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
                  <TooltipContent>{editing ? "Stop editing" : "Edit artifact"}</TooltipContent>
                </Tooltip>
              ) : null}
@@ -256,7 +312,7 @@ index 738adbc6..66dfb729 100644
              {target.kind === "file" || target.kind === "url" ? (
                <DropdownMenu>
                  <DropdownMenuTrigger
-@@ -377,6 +456,44 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+@@ -377,10 +484,50 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
              </Tooltip>
            </div>
          </div>
@@ -299,17 +355,40 @@ index 738adbc6..66dfb729 100644
 +          </div>
 +        ) : null}
        </div>
-       <div className="flex min-h-0 flex-1 overflow-hidden">
+-      <div className="flex min-h-0 flex-1 overflow-hidden">
++      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1 overflow-hidden">
          {treeOpen ? (
-@@ -399,7 +516,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+-          <Suspense fallback={<div className="w-40 shrink-0 border-r border-border bg-muted/20" />}>
++          <>
++          <ResizablePanel id="artifact-file-tree" defaultSize={`${treeWidthRef.current}px`} minSize="100px" maxSize="65%" groupResizeBehavior="preserve-pixel-size" onResize={(size) => { if (size.inPixels >= 100) treeWidthRef.current = size.inPixels; }} className="min-h-0 min-w-0">
++          <Suspense fallback={<div className="h-full w-full bg-muted/20" />}>
+             <WorkspaceFileTree
+               client={client}
+               workspaceId={workspaceId}
+@@ -398,8 +545,12 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+               ]}
              />
            </Suspense>
++          </ResizablePanel>
++          <ResizableHandle aria-label="Resize workspace file tree" />
++          </>
          ) : null}
 -        <div className="min-w-0 flex-1 overflow-hidden">
-+        <div ref={previewContentRef} className="min-w-0 flex-1 overflow-hidden">
++        <ResizablePanel id="artifact-preview" minSize="120px" className="min-w-0">
++        <div ref={previewContentRef} className="h-full min-w-0 overflow-hidden">
            {isLoading || (data?.kind === "binary" && !binaryObjectUrl) ? (
            <PreviewLoading />
          ) : isError ? (
+@@ -439,7 +590,8 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+           <PreviewUnavailable />
+           )}
+         </div>
+-      </div>
++        </ResizablePanel>
++      </ResizablePanelGroup>
+     </div>
+   );
+ }
 diff --git a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
 index 76a2ff62..f9b718ea 100644
 --- a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
@@ -356,10 +435,18 @@ index 76a2ff62..f9b718ea 100644
  
    const panelRoundedClass =
 diff --git a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-index 54262b60..b8948313 100644
+index 54262b60..6774d77b 100644
 --- a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-@@ -31,6 +31,7 @@ import {
+@@ -12,7 +12,6 @@ import {
+   $createRangeSelection,
+   $createParagraphNode,
+   $createTextNode,
+-  $getNearestNodeFromDOMNode,
+   $getRoot,
+   $getSelection,
+   $nodesOfType,
+@@ -31,6 +30,7 @@ import {
    type Spread,
    TextNode,
    type EditorConfig,
@@ -367,7 +454,7 @@ index 54262b60..b8948313 100644
    type NodeKey,
  } from "lexical";
  import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
-@@ -68,6 +69,7 @@ type EditorProps = {
+@@ -68,6 +68,7 @@ type EditorProps = {
  };
  
  export type LexicalPromptEditorHandle = {
@@ -375,7 +462,7 @@ index 54262b60..b8948313 100644
    insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
    /** Voice dictation: marks the cursor with a live (dim) transcript placeholder. */
    voiceBegin: () => void;
-@@ -469,6 +471,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
+@@ -469,6 +470,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
    const dom = document.createElement("span");
    dom.className = "relative mx-0.5 inline-flex h-10 max-w-[140px] shrink-0 items-center align-middle";
    dom.contentEditable = "false";
@@ -384,7 +471,44 @@ index 54262b60..b8948313 100644
    dom.setAttribute("spellcheck", "false");
    dom.title = attachment.name;
    dom.dataset.attachmentId = attachment.id;
-@@ -1301,6 +1305,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
+@@ -1122,20 +1125,6 @@ function pastedExpandButton(target: EventTarget | null) {
+   return button instanceof HTMLButtonElement ? button : null;
+ }
+ 
+-function replacePastedTextChip(label: string, text: string, button: HTMLButtonElement) {
+-  const nearest = $getNearestNodeFromDOMNode(button);
+-  if (nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label) {
+-    nearest.select(0, nearest.getTextContentSize());
+-    return insertPastedText(text);
+-  }
+-  for (const node of $nodesOfType(ComposerPastedTextNode)) {
+-    if (node.getPastedLabel() !== label) continue;
+-    node.select(0, node.getTextContentSize());
+-    return insertPastedText(text);
+-  }
+-  return false;
+-}
+-
+ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
+   const [editor] = useLexicalComposerContext();
+   const pastedTextRef = useRef(props.pastedText);
+@@ -1161,12 +1150,9 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
+       event.preventDefault();
+       event.stopPropagation();
+       const target = pastedTextRef.current?.find((item) => item.label === label);
+-      if (target) {
+-        editor.update(() => {
+-          replacePastedTextChip(label, target.text, button);
+-        });
+-      }
+-      onExpandPastedTextRef.current?.(label);
++      // Expand through the draft once. Mutating Lexical and the external draft
++      // simultaneously races the editor's change listener when text is adjacent.
++      if (target) onExpandPastedTextRef.current?.(label);
+     };
+ 
+     return editor.registerRootListener((rootElement, previousRootElement) => {
+@@ -1301,6 +1287,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
    const [editor] = useLexicalComposerContext();
  
    useImperativeHandle(props.editorRef, () => ({
@@ -394,7 +518,7 @@ index 54262b60..b8948313 100644
      insertSkillAtSelection(skillName: string, skillToken?: string) {
        editor.update(() => insertSkillAtSelection(skillName, skillToken));
        editor.focus();
-@@ -1332,6 +1339,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
+@@ -1332,6 +1321,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
    return null;
  }
  
@@ -476,7 +600,7 @@ index 54262b60..b8948313 100644
  function attachmentRemoveButton(target: EventTarget | null) {
    if (!(target instanceof Element)) return null;
    const button = target.closest("button[data-attachment-remove-id]");
-@@ -1454,6 +1536,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
+@@ -1454,6 +1518,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
          <PasteChipPlugin onPasteText={props.onPasteText} />
          <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
          <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
@@ -485,7 +609,7 @@ index 54262b60..b8948313 100644
          <ImperativeHandlePlugin editorRef={ref} />
        </div>
 diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-index e6a4472e..ff55a2d8 100644
+index e6a4472e..3f15a191 100644
 --- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 @@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
@@ -498,6 +622,15 @@ index e6a4472e..ff55a2d8 100644
  import { SubagentModelMenu } from "./composer/subagent-model-menu";
  import { useSessionModelSelection } from "./session-model-store";
  import type { ProviderCatalog } from "./use-model-behavior";
+@@ -65,7 +67,7 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
+ import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
+ import { parseSlashCommandInvocation } from "./composer/slash-command";
+ import { parseConnectSkillToken } from "./composer/connect-skill-token";
+-import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, unresolvedPasteLabels } from "./composer/pasted-text";
++import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, replacePastedTextPlaceholder, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
+ import {
+   canAdmitNextQueuedItem,
+   claimQueuedSend,
 @@ -879,7 +881,7 @@ function SessionRunStatus(props: SessionRunStatusProps) {
        data-testid="session-run-status"
        role={props.acceptanceUnknown ? "alert" : "status"}
@@ -507,6 +640,15 @@ index e6a4472e..ff55a2d8 100644
      >
        <Icon aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${iconClass}`} />
        <div className="min-w-0 flex-1">
+@@ -2163,7 +2165,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+       if (pasteMatch) {
+         const target = sourcePasteParts.find((item) => item.label === pasteMatch[1]);
+         if (target) {
+-          return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines } satisfies ComposerDraft["parts"][number]];
++          return [{ type: "paste", id: target.id, label: target.label, text: pastedTextWithBoundaries(target, segments[index - 1] ?? "", segments[index + 1] ?? ""), lines: target.lines } satisfies ComposerDraft["parts"][number]];
+         }
+       }
+       const connectSkill = parseConnectSkillToken(segment);
 @@ -2312,10 +2314,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
      return true;
    }, [clearComposer, props.client, props.sessionId, props.workspaceId]);
@@ -566,6 +708,15 @@ index e6a4472e..ff55a2d8 100644
  
    const removeQueuedDraft = useCallback((id: string) => {
      const target = queuedItems.find((item) => item.id === id);
+@@ -2833,7 +2858,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+   const handleExpandPastedText = useCallback((id: string) => {
+     const part = pasteParts.find((item) => item.id === id);
+     if (!part) return;
+-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, part.text));
++    setComposerDraft(props.sessionId, replacePastedTextPlaceholder(draft, part));
+     setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
+   }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
+ 
 @@ -3061,6 +3086,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
      const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
      const mod = isMac ? event.metaKey : event.ctrlKey;
@@ -656,13 +807,26 @@ index f11d5510..0fe166ef 100644
      expect(creations).toBe(2);
      expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
 diff --git a/evals/specs/artifact-code-browser.e2e.test.ts b/evals/specs/artifact-code-browser.e2e.test.ts
-index 7227108b..55f52a8c 100644
+index 7227108b..192981f9 100644
 --- a/evals/specs/artifact-code-browser.e2e.test.ts
 +++ b/evals/specs/artifact-code-browser.e2e.test.ts
-@@ -8,6 +8,14 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
+@@ -8,6 +8,27 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
    await user.click("Select tab: overflow-tab-12.md");
    await user.see({ placeholder: "Search files" }, { timeoutMs: 30_000 });
  
++  await step("The file tree can be resized with the keyboard", async () => {
++    const before = await world.artifactTreeWidth();
++    expect(before).toBeGreaterThan(0);
++    expect(await world.focusArtifactTreeSeparator()).toBe(true);
++    await user.press("ArrowRight");
++    const after = await eventually(() => world.artifactTreeWidth(), {
++      within: 5_000,
++      until: (width) => width > before,
++    });
++    expect(after).toBeGreaterThan(before);
++    evidence.recordAssertionEvidence("The artifact tree has an accessible, working resize separator", `Tree width changed from ${before}px to ${after}px.`, true);
++  });
++
 +  await step("Cmd/Ctrl+F in the artifact panel opens document Find, not chat Find", async () => {
 +    await user.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
 +    await user.see({ placeholder: "Find in document" });

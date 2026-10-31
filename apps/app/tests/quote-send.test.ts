@@ -7,7 +7,7 @@ if (registered) GlobalRegistrator.register();
 const { clipGraphemes, quoteIntoComposer, quoteLabel, quoteText } = await import("../src/components/chat/quote");
 const { selectionInMessage, transcriptSelection } = await import("../src/components/chat/selection-quote");
 const { useComposerStateStore, persistableComposerDraftText } = await import("../src/react-app/domains/session/surface/composer-state-store");
-const { resolvePastedTextPlaceholders, unresolvedPasteLabels } = await import("../src/react-app/domains/session/surface/composer/pasted-text");
+const { resolvePastedTextPlaceholders, replacePastedTextPlaceholder, unresolvedPasteLabels } = await import("../src/react-app/domains/session/surface/composer/pasted-text");
 const { draftToParts } = await import("../src/react-app/domains/session/sync/draft-parts");
 
 const SESSION = "ses-quote";
@@ -40,7 +40,7 @@ describe("quotes in the composer", () => {
     const labels = (composer()?.pasteParts ?? []).map((part) => part.label);
     expect(new Set(labels).size).toBe(3);
     const draft = draftOf(composer()?.draft ?? "");
-    expect(draft.resolvedText).toBe([quoteText(`${prefix}first`), quoteText(`${prefix}second`), quoteText(`${prefix}first`)].join("\n"));
+    expect(draft.resolvedText).toBe([quoteText(`${prefix}first`), quoteText(`${prefix}second`), quoteText(`${prefix}first`)].join("\n\n") + "\n\n");
     // With an attachment token the parts are built token by token (draft-parts.ts): each chip by its own label.
     const withToken = { ...draft, text: `${draft.text} [attachment a1]` };
     const parts = await draftToParts(withToken, "/w", SESSION, null);
@@ -56,6 +56,19 @@ describe("quotes in the composer", () => {
     // After the reload the parts are gone: the saved words need none, a bare placeholder is refused at send.
     expect(unresolvedPasteLabels(saved, [])).toEqual([]);
     expect(unresolvedPasteLabels("see [pasted text Quote: lost words]", [])).toEqual(["Quote: lost words"]);
+  });
+
+  test("quote insertion leaves a blank line and expansion isolates adjacent text", () => {
+    useComposerStateStore.getState().clearSession?.(SESSION);
+    quoteIntoComposer(SESSION, "quoted");
+    const part = composer()?.pasteParts[0];
+    if (!part) throw new Error("missing quote");
+    const token = `[pasted text ${part.label}]`;
+    expect(composer()?.draft).toBe(`${token}\n\n`);
+    expect(replacePastedTextPlaceholder(`before${token}after`, part)).toBe("before\n\n> quoted\n\nafter");
+    expect(resolvePastedTextPlaceholders(`before${token}after`, [part])).toBe("before\n\n> quoted\n\nafter");
+    expect(replacePastedTextPlaceholder(`${token}\n\nreply`, part)).toBe("> quoted\n\nreply");
+    expect(replacePastedTextPlaceholder("a[pasted text ordinary]b", { label: "ordinary", text: "pasted" })).toBe("apastedb");
   });
 
   test("the label never cuts an emoji or accented letter in half", () => {

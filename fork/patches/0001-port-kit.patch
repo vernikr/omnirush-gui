@@ -136,10 +136,10 @@ index 00000000..5162bb6f
 +          fi
 diff --git a/fork/README.md b/fork/README.md
 new file mode 100644
-index 00000000..fdaf52ae
+index 00000000..97b17366
 --- /dev/null
 +++ b/fork/README.md
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,132 @@
 +# The Intel macOS port, as code
 +
 +This fork exists for one reason: upstream `omnirush-ai/omnirush-gui` ships
@@ -268,6 +268,10 @@ index 00000000..fdaf52ae
 +  macOS 13, so an Electron major bump is a decision, not a dependency update.
 +- `apps/desktop/scripts/engine-release.json` deliberately still names upstream:
 +  the engine tarballs are pinned by sha256 in an upstream pre-release.
++
++Quote boundaries, the artifact file-tree splitter, and the retained side-panel
++width fix are downstream changes tracked in `0015-quote-and-artifact-tree.patch`
++(and in existing patch groups for shared files). See `FORK_DIFFS.md`.
 diff --git a/fork/REPO b/fork/REPO
 new file mode 100644
 index 00000000..dfad7861
@@ -2899,10 +2903,10 @@ index 00000000..e4415789
 +   });
 diff --git a/fork/patches/0007-mac-pane-blur-on-intel.patch b/fork/patches/0007-mac-pane-blur-on-intel.patch
 new file mode 100644
-index 00000000..d632dd79
+index 00000000..467b76af
 --- /dev/null
 +++ b/fork/patches/0007-mac-pane-blur-on-intel.patch
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,176 @@
 +diff --git a/apps/app/src/app/index.css b/apps/app/src/app/index.css
 +index f304d6ee..cdaf6bb2 100644
 +--- a/apps/app/src/app/index.css
@@ -2966,7 +2970,7 @@ index 00000000..d632dd79
 +    illuminating left-to-right like a subtle running light. Used for boot,
 +    "awaiting first token", and any idle-but-alive hint. */
 +diff --git a/apps/app/src/react-app/domains/session/chat/session-page.tsx b/apps/app/src/react-app/domains/session/chat/session-page.tsx
-+index 66b1eb5c..588aa847 100644
++index 66b1eb5c..a33e7698 100644
 +--- a/apps/app/src/react-app/domains/session/chat/session-page.tsx
 ++++ b/apps/app/src/react-app/domains/session/chat/session-page.tsx
 +@@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
@@ -2978,7 +2982,15 @@ index 00000000..d632dd79
 + import { SessionCommandControls } from "../commands/session-command-controls";
 + import { useSessionCommandBridge, useSessionCommandsStore } from "../commands/session-commands-store";
 + 
-+@@ -293,6 +293,7 @@ export type SessionPageProps = {
++@@ -105,6 +105,7 @@ import {
++   type ConversationHistoryDirection,
++ } from "./conversation-tab-history";
++ import { useWorkbenchStore, type WorkbenchSessionTab } from "./workbench-store";
+++import { commitSidePanelWidth, MIN_SIDE_PANEL_WIDTH, scheduleSidePanelWidthCommit } from "./side-panel-width";
++ import { isSameWorkbenchSession } from "./workbench-store";
++ import { ReactSessionRuntime } from "../sync/runtime-sync";
++ import { useSessionInteractions } from "../sync/use-session-interactions";
++@@ -293,6 +294,7 @@ export type SessionPageProps = {
 +   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
 +   onDeleteSession?: (sessionId: string) => Promise<void> | void;
 +   onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
@@ -2986,7 +2998,39 @@ index 00000000..d632dd79
 +   archiveDisabledReason?: string;
 +   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
 +   /** Settings content rendered inside the right pane when the settings rail icon is active. */
-+@@ -1734,6 +1735,15 @@ export function SessionPage(props: SessionPageProps) {
++@@ -689,6 +691,8 @@ export function SessionPage(props: SessionPageProps) {
++     minRightWidth: 320,
++   });
++   const [browserPanelDefaultWidth, setBrowserPanelDefaultWidth] = useState(browserPanelWidth);
+++  // Only sizes the user actually settled on may become the remembered width.
+++  const lastBrowserPanelSizeRef = useRef(0);
++   const sidebarProviderStyle: CSSProperties & Record<"--sidebar-width", string> = {
++     "--sidebar-width": `${leftSidebarWidth}px`,
++   };
++@@ -699,10 +703,20 @@ export function SessionPage(props: SessionPageProps) {
++   useEffect(() => {
++     props.onAccessibleTargetsChange?.(accessibleTargets);
++   }, [accessibleTargets, props.onAccessibleTargetsChange]);
+++  // onLayoutChanged reports the *previous* width (it runs before the panel's
+++  // inline style is written), so the width is read on the next frame instead.
+++  const browserPanelWidthFrameRef = useRef<number | null>(null);
++   const commitBrowserPanelWidth = useCallback(() => {
++-    const size = browserPanelRef.current?.getSize();
++-    if (size?.inPixels) setBrowserPanelWidth(Math.round(size.inPixels));
+++    commitSidePanelWidth(browserPanelRef, lastBrowserPanelSizeRef, setBrowserPanelWidth);
++   }, [browserPanelRef, setBrowserPanelWidth]);
+++  const scheduleBrowserPanelWidthCommit = useCallback(() => {
+++    scheduleSidePanelWidthCommit(browserPanelWidthFrameRef, commitBrowserPanelWidth);
+++  }, [commitBrowserPanelWidth]);
+++  useEffect(() => () => {
+++    if (browserPanelWidthFrameRef.current === null) return;
+++    cancelAnimationFrame(browserPanelWidthFrameRef.current);
+++    browserPanelWidthFrameRef.current = null;
+++  }, []);
++   const browserUrlForTarget = useCallback((target: OpenTarget) => {
++     if (/^wss?:\/\//i.test(target.value)) return target.value.replace(/^ws:/i, "http:").replace(/^wss:/i, "https:");
++     return target.value;
++@@ -1734,6 +1748,15 @@ export function SessionPage(props: SessionPageProps) {
 +                       {t("session.changes")}
 +                     </DropdownMenuItem>
 +                   ) : null}
@@ -3002,7 +3046,7 @@ index 00000000..d632dd79
 +                   {commandSessionId ? (
 +                     <DropdownMenuItem
 +                       disabled={!commandBridge || commandBridge.busy}
-+@@ -2129,7 +2139,7 @@ export function SessionPage(props: SessionPageProps) {
++@@ -2129,7 +2152,7 @@ export function SessionPage(props: SessionPageProps) {
 +           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
 +           developerMode={props.sidebar.developerMode}
 +           selectedSessionId={props.sidebar.selectedSessionId}
@@ -3011,7 +3055,7 @@ index 00000000..d632dd79
 +           sessionStatusById={props.sidebar.sessionStatusById}
 +           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
 +           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
-+@@ -2150,6 +2160,9 @@ export function SessionPage(props: SessionPageProps) {
++@@ -2150,6 +2173,9 @@ export function SessionPage(props: SessionPageProps) {
 +           onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
 +             void props.onArchiveSession?.(sessionId, archived);
 +           } : undefined}
@@ -3021,6 +3065,24 @@ index 00000000..d632dd79
 +           archiveDisabledReason={props.archiveDisabledReason}
 +           onOpenCreateGroupModal={(workspaceId) => {
 +             setCreateGroupWorkspaceId(workspaceId);
++@@ -2320,7 +2346,7 @@ export function SessionPage(props: SessionPageProps) {
++           <>
++           <ResizablePanelGroup
++             orientation="horizontal"
++-            onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
+++            onLayoutChanged={sidePanelOpen ? scheduleBrowserPanelWidthCommit : undefined}
++             className="min-h-0 flex-1 max-lg:rounded-none lg:rounded-[14px]"
++           >
++             <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
++@@ -2332,7 +2358,7 @@ export function SessionPage(props: SessionPageProps) {
++                 <ResizablePanel
++                   panelRef={browserPanelRef}
++                   defaultSize={`${activeSidePanel === "extensions" ? Math.max(browserPanelDefaultWidth, 480) : activeSidePanel === "editor" ? Math.max(browserPanelDefaultWidth, 560) : browserPanelDefaultWidth}px`}
++-                  minSize={activeSidePanel === "extensions" ? "420px" : activeSidePanel === "editor" ? "420px" : "320px"}
+++                  minSize={activeSidePanel === "extensions" ? "420px" : activeSidePanel === "editor" ? "420px" : `${MIN_SIDE_PANEL_WIDTH}px`}
++                   maxSize="70%"
++                   className="min-h-0 overflow-hidden pl-2 lg:flex lg:flex-col"
++                 >
 diff --git a/fork/patches/0008-surface-markdown-dark-theme.patch b/fork/patches/0008-surface-markdown-dark-theme.patch
 new file mode 100644
 index 00000000..577242b9
@@ -3050,10 +3112,10 @@ index 00000000..577242b9
 + });
 diff --git a/fork/patches/0009-editor-scroll-find-select-all.patch b/fork/patches/0009-editor-scroll-find-select-all.patch
 new file mode 100644
-index 00000000..84f61046
+index 00000000..6e496c68
 --- /dev/null
 +++ b/fork/patches/0009-editor-scroll-find-select-all.patch
-@@ -0,0 +1,712 @@
+@@ -0,0 +1,876 @@
 +diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts b/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts
 +new file mode 100644
 +index 00000000..09fcd43b
@@ -3170,10 +3232,10 @@ index 00000000..84f61046
 ++  color: inherit;
 ++}
 +diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
-+index 738adbc6..66dfb729 100644
++index 738adbc6..f3831367 100644
 +--- a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
 ++++ b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
-+@@ -1,7 +1,7 @@
++@@ -1,11 +1,12 @@
 + /** @jsxImportSource react */
 + import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 + import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -3182,7 +3244,12 @@ index 00000000..84f61046
 + 
 + import type { OmniRushServerClient, OmniRushWorkspaceCatalogEntry } from "@/app/lib/omnirush-server";
 + import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
-+@@ -16,6 +16,8 @@ import { toast } from "@/components/ui/sonner";
++ import { Button } from "@/components/ui/button";
+++import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
++ import {
++   DropdownMenu,
++   DropdownMenuContent,
++@@ -16,6 +17,8 @@ import { toast } from "@/components/ui/sonner";
 + import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 + import { usePlatform } from "@/react-app/kernel/platform";
 + import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
@@ -3191,9 +3258,32 @@ index 00000000..84f61046
 + import { isCollectibleArtifactTarget, openTargetFromWorkspaceFile, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
 + import { HTMLPreview, ImagePreview, MarkdownPreview, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
 + 
-+@@ -98,6 +100,13 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++@@ -66,6 +69,20 @@ function absoluteWorkspacePath(root: string, path: string) {
++   return cleanRoot ? `${cleanRoot}/${cleanPath}` : cleanPath;
++ }
++ 
+++/**
+++ * The address shown next to the file name in the panel header.
+++ *
+++ * A name alone hides where the file lives, so the workspace path is shown in
+++ * full (and in a tooltip, since the row truncates). A file directly at the
+++ * workspace root has nothing to add: showing its own name twice reads as a
+++ * rendering bug.
+++ */
+++export function artifactHeaderPath(target: OpenTarget): string {
+++  const path = target.value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+++  if (target.kind !== "file") return path;
+++  return path === target.name ? "" : path;
+++}
+++
++ function isTextContent(target: OpenTarget): boolean {
++   return ["markdown", "code", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
++ }
++@@ -97,10 +114,19 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++   const queryClient = useQueryClient();
 +   const [editing, setEditing] = useState(false);
 +   const [treeOpen, setTreeOpen] = useState(true);
+++  const treeWidthRef = useRef(160);
 +   const [draft, setDraft] = useState("");
 ++  const [findOpen, setFindOpen] = useState(false);
 ++  const [findQuery, setFindQuery] = useState("");
@@ -3205,7 +3295,11 @@ index 00000000..84f61046
 +   const lastSyncedRef = useRef<string | null>(null);
 +   const failedDraftRef = useRef<string | null>(null);
 +   const isMermaidArtifact = target.kind === "file" && /\.mmd$/i.test(target.value);
-+@@ -167,6 +176,11 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+++  const panelPath = artifactHeaderPath(target);
++   // Plain text opens directly in CodeMirror. Markdown and HTML default to
++   // their rendered previews and retain the existing Edit toggle.
++   const isDirectTextEdit = isTextContent(target) && target.preview === "text";
++@@ -167,6 +193,11 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 +   useEffect(() => {
 +     setEditing(false);
 +     setDraft("");
@@ -3217,7 +3311,7 @@ index 00000000..84f61046
 +     lastSyncedRef.current = null;
 +     failedDraftRef.current = null;
 +   }, [target.id, workspaceId]);
-+@@ -273,6 +287,48 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++@@ -273,6 +304,48 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 +   const isTextEditing = data?.kind === "text" && (editing || isDirectTextEdit);
 +   const isEditingSurface = data?.kind === "text" && (editing || isDirectTextEdit || isDirectCodeEdit);
 +   const isDirty = data?.kind === "text" && draft !== data.data;
@@ -3266,7 +3360,7 @@ index 00000000..84f61046
 + 
 +   useEffect(() => {
 +     if (
-+@@ -293,6 +349,17 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++@@ -293,6 +366,17 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 +     return () => window.clearTimeout(timer);
 +   }, [draft, data, editing, isDirectTextEdit, isDirectCodeEdit, isSaving, target.kind, mutate]);
 + 
@@ -3284,7 +3378,7 @@ index 00000000..84f61046
 +   const saveSpreadsheetContent = async (payload: Data) => {
 +     if (target.kind !== "file") {
 +       return;
-+@@ -305,7 +372,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++@@ -305,7 +389,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 +   };
 + 
 +   return (
@@ -3293,7 +3387,31 @@ index 00000000..84f61046
 +       <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
 +         <div className="flex h-10 items-center gap-2 pe-2 ps-2">
 +           <Tooltip>
-+@@ -337,6 +404,18 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++@@ -318,10 +402,21 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++             />
++             <TooltipContent>{treeOpen ? "Hide workspace files" : "Show workspace files"}</TooltipContent>
++           </Tooltip>
++-          <div className="min-w-0 flex-1 flex items-center gap-1.5">
++-            <h3 className="min-w-0 truncate text-sm font-medium text-foreground">
+++          <div className="min-w-0 flex-1 flex items-baseline gap-1.5">
+++            <h3 className="max-w-[55%] shrink-0 truncate text-sm font-medium text-foreground">
++               {target.name}
++             </h3>
+++            {/* The tab only has room for the basename; the address keeps the
+++                workspace path so a file read from a nested folder is identifiable. */}
+++            {panelPath ? (
+++              <span
+++                data-artifact-path=""
+++                className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+++                title={panelPath}
+++              >
+++                {panelPath}
+++              </span>
+++            ) : null}
++             <span className="shrink-0 text-xs text-muted-foreground">
++               {target.exists === false ? "missing" : isEditingSurface ? (isSaving || isDirty ? "Saving\u2026" : "Saved") : ""}
++             </span>
++@@ -337,6 +432,18 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 +                 <TooltipContent>{editing ? "Stop editing" : "Edit artifact"}</TooltipContent>
 +               </Tooltip>
 +             ) : null}
@@ -3312,7 +3430,7 @@ index 00000000..84f61046
 +             {target.kind === "file" || target.kind === "url" ? (
 +               <DropdownMenu>
 +                 <DropdownMenuTrigger
-+@@ -377,6 +456,44 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++@@ -377,10 +484,50 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
 +             </Tooltip>
 +           </div>
 +         </div>
@@ -3355,17 +3473,40 @@ index 00000000..84f61046
 ++          </div>
 ++        ) : null}
 +       </div>
-+       <div className="flex min-h-0 flex-1 overflow-hidden">
++-      <div className="flex min-h-0 flex-1 overflow-hidden">
+++      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1 overflow-hidden">
 +         {treeOpen ? (
-+@@ -399,7 +516,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++-          <Suspense fallback={<div className="w-40 shrink-0 border-r border-border bg-muted/20" />}>
+++          <>
+++          <ResizablePanel id="artifact-file-tree" defaultSize={`${treeWidthRef.current}px`} minSize="100px" maxSize="65%" groupResizeBehavior="preserve-pixel-size" onResize={(size) => { if (size.inPixels >= 100) treeWidthRef.current = size.inPixels; }} className="min-h-0 min-w-0">
+++          <Suspense fallback={<div className="h-full w-full bg-muted/20" />}>
++             <WorkspaceFileTree
++               client={client}
++               workspaceId={workspaceId}
++@@ -398,8 +545,12 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++               ]}
 +             />
 +           </Suspense>
+++          </ResizablePanel>
+++          <ResizableHandle aria-label="Resize workspace file tree" />
+++          </>
 +         ) : null}
 +-        <div className="min-w-0 flex-1 overflow-hidden">
-++        <div ref={previewContentRef} className="min-w-0 flex-1 overflow-hidden">
+++        <ResizablePanel id="artifact-preview" minSize="120px" className="min-w-0">
+++        <div ref={previewContentRef} className="h-full min-w-0 overflow-hidden">
 +           {isLoading || (data?.kind === "binary" && !binaryObjectUrl) ? (
 +           <PreviewLoading />
 +         ) : isError ? (
++@@ -439,7 +590,8 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
++           <PreviewUnavailable />
++           )}
++         </div>
++-      </div>
+++        </ResizablePanel>
+++      </ResizablePanelGroup>
++     </div>
++   );
++ }
 +diff --git a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
 +index 76a2ff62..f9b718ea 100644
 +--- a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
@@ -3412,10 +3553,18 @@ index 00000000..84f61046
 + 
 +   const panelRoundedClass =
 +diff --git a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-+index 54262b60..b8948313 100644
++index 54262b60..6774d77b 100644
 +--- a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-+@@ -31,6 +31,7 @@ import {
++@@ -12,7 +12,6 @@ import {
++   $createRangeSelection,
++   $createParagraphNode,
++   $createTextNode,
++-  $getNearestNodeFromDOMNode,
++   $getRoot,
++   $getSelection,
++   $nodesOfType,
++@@ -31,6 +30,7 @@ import {
 +   type Spread,
 +   TextNode,
 +   type EditorConfig,
@@ -3423,7 +3572,7 @@ index 00000000..84f61046
 +   type NodeKey,
 + } from "lexical";
 + import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
-+@@ -68,6 +69,7 @@ type EditorProps = {
++@@ -68,6 +68,7 @@ type EditorProps = {
 + };
 + 
 + export type LexicalPromptEditorHandle = {
@@ -3431,7 +3580,7 @@ index 00000000..84f61046
 +   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
 +   /** Voice dictation: marks the cursor with a live (dim) transcript placeholder. */
 +   voiceBegin: () => void;
-+@@ -469,6 +471,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
++@@ -469,6 +470,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
 +   const dom = document.createElement("span");
 +   dom.className = "relative mx-0.5 inline-flex h-10 max-w-[140px] shrink-0 items-center align-middle";
 +   dom.contentEditable = "false";
@@ -3440,7 +3589,44 @@ index 00000000..84f61046
 +   dom.setAttribute("spellcheck", "false");
 +   dom.title = attachment.name;
 +   dom.dataset.attachmentId = attachment.id;
-+@@ -1301,6 +1305,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
++@@ -1122,20 +1125,6 @@ function pastedExpandButton(target: EventTarget | null) {
++   return button instanceof HTMLButtonElement ? button : null;
++ }
++ 
++-function replacePastedTextChip(label: string, text: string, button: HTMLButtonElement) {
++-  const nearest = $getNearestNodeFromDOMNode(button);
++-  if (nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label) {
++-    nearest.select(0, nearest.getTextContentSize());
++-    return insertPastedText(text);
++-  }
++-  for (const node of $nodesOfType(ComposerPastedTextNode)) {
++-    if (node.getPastedLabel() !== label) continue;
++-    node.select(0, node.getTextContentSize());
++-    return insertPastedText(text);
++-  }
++-  return false;
++-}
++-
++ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
++   const [editor] = useLexicalComposerContext();
++   const pastedTextRef = useRef(props.pastedText);
++@@ -1161,12 +1150,9 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
++       event.preventDefault();
++       event.stopPropagation();
++       const target = pastedTextRef.current?.find((item) => item.label === label);
++-      if (target) {
++-        editor.update(() => {
++-          replacePastedTextChip(label, target.text, button);
++-        });
++-      }
++-      onExpandPastedTextRef.current?.(label);
+++      // Expand through the draft once. Mutating Lexical and the external draft
+++      // simultaneously races the editor's change listener when text is adjacent.
+++      if (target) onExpandPastedTextRef.current?.(label);
++     };
++ 
++     return editor.registerRootListener((rootElement, previousRootElement) => {
++@@ -1301,6 +1287,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
 +   const [editor] = useLexicalComposerContext();
 + 
 +   useImperativeHandle(props.editorRef, () => ({
@@ -3450,7 +3636,7 @@ index 00000000..84f61046
 +     insertSkillAtSelection(skillName: string, skillToken?: string) {
 +       editor.update(() => insertSkillAtSelection(skillName, skillToken));
 +       editor.focus();
-+@@ -1332,6 +1339,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
++@@ -1332,6 +1321,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
 +   return null;
 + }
 + 
@@ -3532,7 +3718,7 @@ index 00000000..84f61046
 + function attachmentRemoveButton(target: EventTarget | null) {
 +   if (!(target instanceof Element)) return null;
 +   const button = target.closest("button[data-attachment-remove-id]");
-+@@ -1454,6 +1536,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
++@@ -1454,6 +1518,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
 +         <PasteChipPlugin onPasteText={props.onPasteText} />
 +         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
 +         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
@@ -3541,7 +3727,7 @@ index 00000000..84f61046
 +         <ImperativeHandlePlugin editorRef={ref} />
 +       </div>
 +diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-+index e6a4472e..ff55a2d8 100644
++index e6a4472e..3f15a191 100644
 +--- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 +@@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
@@ -3554,6 +3740,15 @@ index 00000000..84f61046
 + import { SubagentModelMenu } from "./composer/subagent-model-menu";
 + import { useSessionModelSelection } from "./session-model-store";
 + import type { ProviderCatalog } from "./use-model-behavior";
++@@ -65,7 +67,7 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
++ import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
++ import { parseSlashCommandInvocation } from "./composer/slash-command";
++ import { parseConnectSkillToken } from "./composer/connect-skill-token";
++-import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, unresolvedPasteLabels } from "./composer/pasted-text";
+++import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, replacePastedTextPlaceholder, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
++ import {
++   canAdmitNextQueuedItem,
++   claimQueuedSend,
 +@@ -879,7 +881,7 @@ function SessionRunStatus(props: SessionRunStatusProps) {
 +       data-testid="session-run-status"
 +       role={props.acceptanceUnknown ? "alert" : "status"}
@@ -3563,6 +3758,15 @@ index 00000000..84f61046
 +     >
 +       <Icon aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${iconClass}`} />
 +       <div className="min-w-0 flex-1">
++@@ -2163,7 +2165,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++       if (pasteMatch) {
++         const target = sourcePasteParts.find((item) => item.label === pasteMatch[1]);
++         if (target) {
++-          return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines } satisfies ComposerDraft["parts"][number]];
+++          return [{ type: "paste", id: target.id, label: target.label, text: pastedTextWithBoundaries(target, segments[index - 1] ?? "", segments[index + 1] ?? ""), lines: target.lines } satisfies ComposerDraft["parts"][number]];
++         }
++       }
++       const connectSkill = parseConnectSkillToken(segment);
 +@@ -2312,10 +2314,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
 +     return true;
 +   }, [clearComposer, props.client, props.sessionId, props.workspaceId]);
@@ -3622,6 +3826,15 @@ index 00000000..84f61046
 + 
 +   const removeQueuedDraft = useCallback((id: string) => {
 +     const target = queuedItems.find((item) => item.id === id);
++@@ -2833,7 +2858,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++   const handleExpandPastedText = useCallback((id: string) => {
++     const part = pasteParts.find((item) => item.id === id);
++     if (!part) return;
++-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, part.text));
+++    setComposerDraft(props.sessionId, replacePastedTextPlaceholder(draft, part));
++     setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
++   }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
++ 
 +@@ -3061,6 +3086,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 +     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 +     const mod = isMac ? event.metaKey : event.ctrlKey;
@@ -3712,13 +3925,26 @@ index 00000000..84f61046
 +     expect(creations).toBe(2);
 +     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
 +diff --git a/evals/specs/artifact-code-browser.e2e.test.ts b/evals/specs/artifact-code-browser.e2e.test.ts
-+index 7227108b..55f52a8c 100644
++index 7227108b..192981f9 100644
 +--- a/evals/specs/artifact-code-browser.e2e.test.ts
 ++++ b/evals/specs/artifact-code-browser.e2e.test.ts
-+@@ -8,6 +8,14 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
++@@ -8,6 +8,27 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
 +   await user.click("Select tab: overflow-tab-12.md");
 +   await user.see({ placeholder: "Search files" }, { timeoutMs: 30_000 });
 + 
+++  await step("The file tree can be resized with the keyboard", async () => {
+++    const before = await world.artifactTreeWidth();
+++    expect(before).toBeGreaterThan(0);
+++    expect(await world.focusArtifactTreeSeparator()).toBe(true);
+++    await user.press("ArrowRight");
+++    const after = await eventually(() => world.artifactTreeWidth(), {
+++      within: 5_000,
+++      until: (width) => width > before,
+++    });
+++    expect(after).toBeGreaterThan(before);
+++    evidence.recordAssertionEvidence("The artifact tree has an accessible, working resize separator", `Tree width changed from ${before}px to ${after}px.`, true);
+++  });
+++
 ++  await step("Cmd/Ctrl+F in the artifact panel opens document Find, not chat Find", async () => {
 ++    await user.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
 ++    await user.see({ placeholder: "Find in document" });
@@ -3768,10 +3994,10 @@ index 00000000..84f61046
 +       const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
 diff --git a/fork/patches/0010-upstream-compatibility.patch b/fork/patches/0010-upstream-compatibility.patch
 new file mode 100644
-index 00000000..bb1c40fa
+index 00000000..46881383
 --- /dev/null
 +++ b/fork/patches/0010-upstream-compatibility.patch
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,35 @@
 +diff --git a/AGENTS.md b/AGENTS.md
 +index 82a42408..0add8d71 100644
 +--- a/AGENTS.md
@@ -3788,10 +4014,10 @@ index 00000000..bb1c40fa
 ++Fork difference registry: `FORK_DIFFS.md`. Keep updated.
 +diff --git a/FORK_DIFFS.md b/FORK_DIFFS.md
 +new file mode 100644
-+index 00000000..f83c4608
++index 00000000..35e79e18
 +--- /dev/null
 ++++ b/FORK_DIFFS.md
-+@@ -0,0 +1,12 @@
++@@ -0,0 +1,15 @@
 ++# Fork differences
 ++
 ++Compared with `omnirush-ai/omnirush-gui`:
@@ -3804,6 +4030,9 @@ index 00000000..bb1c40fa
 ++- Saved desktop UI zoom (`Cmd+` / `Cmd-` / `Cmd+0`) is restored immediately on launch and preserved across route transitions.
 ++- Clicking a file named without its path (`` `report.md` ``) in chat opens the highest workspace file with that name ([omnirush-ai/omnirush-gui#351](https://github.com/omnirush-ai/omnirush-gui/issues/351)).
 ++- Full session/branch Markdown (`.md`) export — including model reasoning, tool call inputs/outputs/errors, and nested sub-agent transcripts — via the session header, sidebar menu, Command Palette, and `/export [filename]` ([omnirush-ai/omnirush-gui#349](https://github.com/omnirush-ai/omnirush-gui/issues/349)).
+++- Quote chips expand without swallowing adjacent text and start the reply on a blank line ([omnirush-ai/omnirush-gui#354](https://github.com/omnirush-ai/omnirush-gui/issues/354)).
+++- Resizable workspace tree in artifact previews ([omnirush-ai/omnirush-gui#355](https://github.com/omnirush-ai/omnirush-gui/issues/355)).
+++- The session side-panel width is retained when reopened, and artifact headers show nested paths.
 diff --git a/fork/patches/0011-github-favicon-theme.patch b/fork/patches/0011-github-favicon-theme.patch
 new file mode 100644
 index 00000000..cd8d6f44
@@ -12882,6 +13111,490 @@ index 00000000..e8cc5c8c
 +       contentType: contentTypeForPath(relativePath),
 +     };
 +     const previous = results.get(key);
+diff --git a/fork/patches/0015-quote-and-artifact-tree.patch b/fork/patches/0015-quote-and-artifact-tree.patch
+new file mode 100644
+index 00000000..3760ea23
+--- /dev/null
++++ b/fork/patches/0015-quote-and-artifact-tree.patch
+@@ -0,0 +1,478 @@
++diff --git a/apps/app/src/components/chat/quote.ts b/apps/app/src/components/chat/quote.ts
++index 4187fda9..fcbfec50 100644
++--- a/apps/app/src/components/chat/quote.ts
+++++ b/apps/app/src/components/chat/quote.ts
++@@ -45,5 +45,5 @@ export function quoteLabel(text: string): string {
++ 
++ export function quoteIntoComposer(sessionId: string | null, text: string): ChatHandoffResult {
++   if (!text.trim()) return { ok: false, reason: "Nothing to quote." }
++-  return sendToChat(sessionId, "", [{ label: quoteLabel(text), text: quoteText(text) }])
+++  return sendToChat(sessionId, "", [{ label: quoteLabel(text), text: quoteText(text) }], { block: true })
++ }
++diff --git a/apps/app/src/react-app/domains/session/artifacts/workspace-file-tree.tsx b/apps/app/src/react-app/domains/session/artifacts/workspace-file-tree.tsx
++index b578a9ba..245512bc 100644
++--- a/apps/app/src/react-app/domains/session/artifacts/workspace-file-tree.tsx
+++++ b/apps/app/src/react-app/domains/session/artifacts/workspace-file-tree.tsx
++@@ -123,7 +123,7 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
++ 
++   return (
++     <aside
++-      className="flex h-full min-h-0 w-40 shrink-0 flex-col border-r border-border bg-muted/20"
+++      className="flex h-full min-h-0 min-w-0 w-full flex-col bg-muted/20"
++       data-workspace-file-tree
++       data-workspace-file-count={entries.length}
++     >
++diff --git a/apps/app/src/react-app/domains/session/chat/new-task-composer.tsx b/apps/app/src/react-app/domains/session/chat/new-task-composer.tsx
++index ef2fbe98..b0cc816d 100644
++--- a/apps/app/src/react-app/domains/session/chat/new-task-composer.tsx
+++++ b/apps/app/src/react-app/domains/session/chat/new-task-composer.tsx
++@@ -25,6 +25,7 @@ import { clearSessionDraft, getSessionDraft, saveSessionDraft } from "@/react-ap
++ import { toast } from "@/components/ui/sonner";
++ import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
++ import {
+++  replacePastedTextPlaceholder,
++   createPastedTextChip,
++   resolvePastedTextPlaceholders,
++   type PastedTextChip,
++@@ -347,7 +348,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
++   const handleExpandPastedText = (id: string) => {
++     const pasted = continuationHolderRef.current.state.pasteParts.find((item) => item.id === id);
++     if (!pasted) return;
++-    updateDraft(continuationHolderRef.current.state.draft.replace(`[pasted text ${pasted.label}]`, pasted.text));
+++    updateDraft(replacePastedTextPlaceholder(continuationHolderRef.current.state.draft, pasted));
++     updatePasteParts(continuationHolderRef.current.state.pasteParts.filter((item) => item.id !== id));
++   };
++ 
++diff --git a/apps/app/src/react-app/domains/session/chat/side-panel-width.ts b/apps/app/src/react-app/domains/session/chat/side-panel-width.ts
++new file mode 100644
++index 00000000..7e24c855
++--- /dev/null
+++++ b/apps/app/src/react-app/domains/session/chat/side-panel-width.ts
++@@ -0,0 +1,62 @@
+++/** The side panel's width is remembered across open/close cycles. */
+++
+++export const MIN_SIDE_PANEL_WIDTH = 320;
+++
+++type PanelSizeRef = { current: { getSize: () => { inPixels: number } } | null } | null | undefined;
+++
+++/**
+++ * Commits a side-panel width from `onLayoutChanged`.
+++ *
+++ * The layout callback fires before the panel's inline style (and therefore its
+++ * measured width) has been updated, so reading the width inside the callback
+++ * returns the *previous* one. Callers must read on the next frame, once layout
+++ * has settled — see `scheduleSidePanelWidthCommit`.
+++ *
+++ * Two more transient states must never become the remembered width: a panel
+++ * that is mounting reports 0 and then a handful of pixels, and a panel whose
+++ * group is not laid out yet reports nothing useful. Only a size that is at
+++ * least the panel minimum counts, and a size equal to the last committed one is
+++ * ignored so a stream of layout events cannot loop through state.
+++ *
+++ * Returns whether anything was committed.
+++ */
+++export function commitSidePanelWidth(
+++  panelRef: PanelSizeRef,
+++  lastCommitted: { current: number },
+++  commit: (width: number) => void,
+++): boolean {
+++  const size = panelRef?.current?.getSize();
+++  if (!size || !Number.isFinite(size.inPixels) || size.inPixels < MIN_SIDE_PANEL_WIDTH) return false;
+++
+++  const width = Math.round(size.inPixels);
+++  if (width === lastCommitted.current) return false;
+++
+++  lastCommitted.current = width;
+++  commit(width);
+++  return true;
+++}
+++
+++type FrameHandle = { current: number | null };
+++
+++/**
+++ * Commits the panel width on the next animation frame, coalescing the burst of
+++ * layout events a single drag produces into one commit. Returns a cancel
+++ * function; the owner is expected to call it on unmount or when the panel
+++ * closes.
+++ */
+++export function scheduleSidePanelWidthCommit(
+++  frame: FrameHandle,
+++  commit: () => void,
+++  frameApi: Pick<typeof globalThis, "requestAnimationFrame" | "cancelAnimationFrame"> = globalThis,
+++): () => void {
+++  if (frame.current !== null) frameApi.cancelAnimationFrame(frame.current);
+++  frame.current = frameApi.requestAnimationFrame(() => {
+++    frame.current = null;
+++    commit();
+++  });
+++  return () => {
+++    if (frame.current === null) return;
+++    frameApi.cancelAnimationFrame(frame.current);
+++    frame.current = null;
+++  };
+++}
++diff --git a/apps/app/src/react-app/domains/session/editor/chat-context.ts b/apps/app/src/react-app/domains/session/editor/chat-context.ts
++index 1891d2a0..e97974ad 100644
++--- a/apps/app/src/react-app/domains/session/editor/chat-context.ts
+++++ b/apps/app/src/react-app/domains/session/editor/chat-context.ts
++@@ -20,7 +20,7 @@ export type ChatContextChip = {
++ 
++ export type ChatHandoffResult = { ok: true } | { ok: false; reason: string };
++ 
++-export function sendToChat(sessionId: string | null, instruction: string, chips: ChatContextChip[]): ChatHandoffResult {
+++export function sendToChat(sessionId: string | null, instruction: string, chips: ChatContextChip[], options?: { block?: boolean }): ChatHandoffResult {
++   if (!sessionId) {
++     // No chat yet: the new-task composer takes it as plain text (it has no chips). Unhandled = no composer on screen.
++     const text = [instruction, ...chips.map((chip) => chip.text)].filter(Boolean).join("\n\n");
++@@ -45,9 +45,9 @@ export function sendToChat(sessionId: string | null, instruction: string, chips:
++     return { id: `editor-${Math.random().toString(36).slice(2)}`, label, text: chip.text, lines: chip.text.split(/\r?\n/).length };
++   });
++   const placeholders = made.map((part) => `[pasted text ${part.label}]`).join(" ");
++-  const lead = draft.trim() ? `${draft.replace(/\s+$/, "")}\n` : "";
+++  const lead = draft.trim() ? `${draft.replace(/\s+$/, "")}${options?.block ? "\n\n" : "\n"}` : "";
++   store.setPasteParts(sessionId, [...parts, ...made]);
++-  store.replaceDraft(sessionId, `${lead}${instruction}${instruction && placeholders ? "\n" : ""}${placeholders}`);
+++  store.replaceDraft(sessionId, `${lead}${instruction}${instruction && placeholders ? "\n" : ""}${placeholders}${options?.block && placeholders ? "\n\n" : ""}`);
++   // The chat panel opens if it was folded away, and the composer takes the focus.
++   useEditorStore.getState().setIdeChatCollapsed(false);
++   window.setTimeout(() => window.dispatchEvent(new Event("omnirush:focusPrompt")), 50);
++diff --git a/apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts b/apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts
++index 6871f484..ec3d416f 100644
++--- a/apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts
+++++ b/apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts
++@@ -34,11 +34,28 @@ export function createPastedTextChip(text: string): PastedTextChip {
++   };
++ }
++ 
+++/** Expand a quote as a Markdown block even if its chip has adjacent typed text. */
+++export function replacePastedTextPlaceholder(text: string, part: Pick<PastedTextChip, "label" | "text">) {
+++  const token = `[pasted text ${part.label}]`;
+++  const index = text.indexOf(token);
+++  if (index < 0) return text;
+++  const before = text.slice(0, index);
+++  const after = text.slice(index + token.length);
+++  return before + pastedTextWithBoundaries(part, before, after) + after;
+++}
+++
+++/** Apply the same quote boundaries when the draft is sent as separate text parts. */
+++export function pastedTextWithBoundaries(part: Pick<PastedTextChip, "label" | "text">, before: string, after: string) {
+++  const isQuote = part.label.startsWith("Quote: ") && part.text.split(/\r?\n/).every((line) => line.startsWith(">"));
+++  if (!isQuote) return part.text;
+++  const left = before && !before.endsWith("\n") ? "\n\n" : "";
+++  const right = after && !after.startsWith("\n") ? "\n\n" : "";
+++  return left + part.text + right;
+++}
+++
++ export function resolvePastedTextPlaceholders(text: string, pastedText: readonly Pick<PastedTextChip, "label" | "text">[]) {
++   let resolved = text;
++-  for (const part of pastedText) {
++-    resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
++-  }
+++  for (const part of pastedText) resolved = replacePastedTextPlaceholder(resolved, part);
++   return resolved;
++ }
++ 
++diff --git a/apps/app/tests/artifact-header-path.test.ts b/apps/app/tests/artifact-header-path.test.ts
++new file mode 100644
++index 00000000..97143f32
++--- /dev/null
+++++ b/apps/app/tests/artifact-header-path.test.ts
++@@ -0,0 +1,34 @@
+++import { expect, test } from "bun:test";
+++
+++import { artifactHeaderPath } from "../src/react-app/domains/session/artifacts/artifact-panel";
+++import type { OpenTarget } from "../src/react-app/domains/session/artifacts/open-target";
+++
+++function target(value: string, name = value.split("/").pop() ?? value, kind: OpenTarget["kind"] = "file"): OpenTarget {
+++  return { id: `${kind}:${value}`, kind, value, name, preview: "text", confidence: 1, reason: "test" };
+++}
+++
+++test("the panel header shows where a nested file lives", () => {
+++  // The tab label is only the basename; the header carries the full path.
+++  expect(artifactHeaderPath(target("apps/app/src/main.tsx"))).toBe("apps/app/src/main.tsx");
+++  expect(artifactHeaderPath(target("docs/guides/setup.md"))).toBe("docs/guides/setup.md");
+++});
+++
+++test("the header never repeats the name for a file at the workspace root", () => {
+++  expect(artifactHeaderPath(target("README.md", "README.md"))).toBe("");
+++});
+++
+++test("a Windows path is shown with forward slashes", () => {
+++  expect(artifactHeaderPath(target("docs\\guides\\setup.md", "setup.md"))).toBe("docs/guides/setup.md");
+++});
+++
+++test("a leading ./ and a trailing / are trimmed", () => {
+++  expect(artifactHeaderPath(target("./src/app.tsx", "app.tsx"))).toBe("src/app.tsx");
+++  expect(artifactHeaderPath(target("docs/guides/", "guides"))).toBe("docs/guides");
+++  // A directory-like root name is still nothing to add.
+++  expect(artifactHeaderPath(target("docs/", "docs"))).toBe("");
+++});
+++
+++test("URLs keep their full address", () => {
+++  const url = target("https://omnirush.ai/docs/quick-start?x=1", "quick-start", "url");
+++  expect(artifactHeaderPath(url)).toBe("https://omnirush.ai/docs/quick-start?x=1");
+++});
++diff --git a/apps/app/tests/quote-expand-editor.test.tsx b/apps/app/tests/quote-expand-editor.test.tsx
++new file mode 100644
++index 00000000..83019596
++--- /dev/null
+++++ b/apps/app/tests/quote-expand-editor.test.tsx
++@@ -0,0 +1,52 @@
+++/** @jsxImportSource react */
+++import { expect, mock, test } from "bun:test";
+++import { GlobalRegistrator } from "@happy-dom/global-registrator";
+++import { createRequire } from "node:module";
+++import { act, useState } from "react";
+++import { createRoot } from "react-dom/client";
+++
+++const require = createRequire(import.meta.url);
+++for (const moduleId of [
+++  "lexical", "@lexical/react/LexicalComposer.js", "@lexical/react/LexicalPlainTextPlugin.js",
+++  "@lexical/react/LexicalContentEditable.js", "@lexical/react/LexicalErrorBoundary.js",
+++  "@lexical/react/LexicalOnChangePlugin.js", "@lexical/react/LexicalHistoryPlugin.js",
+++  "@lexical/react/LexicalComposerContext.js",
+++]) {
+++  const exports = require(moduleId);
+++  mock.module(moduleId, () => exports);
+++}
+++const registered = !globalThis.document;
+++if (registered) GlobalRegistrator.register({ url: "http://localhost/" });
+++const { LexicalPromptEditor } = await import("../src/react-app/domains/session/surface/composer/editor");
+++const { replacePastedTextPlaceholder } = await import("../src/react-app/domains/session/surface/composer/pasted-text");
+++
+++test("Expand replaces a quote with text on both sides without losing either", async () => {
+++  const part = { label: "Quote: quoted", text: "> quoted", lines: 1 };
+++  let observed = "";
+++  function TestEditor() {
+++    const [value, setValue] = useState(`before[pasted text ${part.label}]after`);
+++    const [chips, setChips] = useState([part]);
+++    observed = value;
+++    return <LexicalPromptEditor value={value} mentions={{}} pastedText={chips} submitDisabled={false} placeholder="Message"
+++      onChange={setValue} onSubmit={() => {}} onExpandPastedText={() => {
+++        setValue((draft) => replacePastedTextPlaceholder(draft, part));
+++        setChips([]);
+++      }} />;
+++  }
+++  const container = document.createElement("div");
+++  document.body.append(container);
+++  const root = createRoot(container);
+++  try {
+++    await act(async () => { root.render(<TestEditor />); });
+++    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Expand pasted text in composer"]');
+++    expect(button).not.toBeNull();
+++    await act(async () => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+++    expect(observed).toBe("before\n\n> quoted\n\nafter");
+++    expect(container.querySelector('button[aria-label="Expand pasted text in composer"]')).toBeNull();
+++    expect(container.querySelector('[contenteditable="true"]')?.textContent).toContain("> quoted");
+++  } finally {
+++    await act(async () => { root.unmount(); });
+++    container.remove();
+++    if (registered) await GlobalRegistrator.unregister();
+++  }
+++});
++diff --git a/apps/app/tests/quote-send.test.ts b/apps/app/tests/quote-send.test.ts
++index 84e13874..50dbef69 100644
++--- a/apps/app/tests/quote-send.test.ts
+++++ b/apps/app/tests/quote-send.test.ts
++@@ -7,7 +7,7 @@ if (registered) GlobalRegistrator.register();
++ const { clipGraphemes, quoteIntoComposer, quoteLabel, quoteText } = await import("../src/components/chat/quote");
++ const { selectionInMessage, transcriptSelection } = await import("../src/components/chat/selection-quote");
++ const { useComposerStateStore, persistableComposerDraftText } = await import("../src/react-app/domains/session/surface/composer-state-store");
++-const { resolvePastedTextPlaceholders, unresolvedPasteLabels } = await import("../src/react-app/domains/session/surface/composer/pasted-text");
+++const { resolvePastedTextPlaceholders, replacePastedTextPlaceholder, unresolvedPasteLabels } = await import("../src/react-app/domains/session/surface/composer/pasted-text");
++ const { draftToParts } = await import("../src/react-app/domains/session/sync/draft-parts");
++ 
++ const SESSION = "ses-quote";
++@@ -40,7 +40,7 @@ describe("quotes in the composer", () => {
++     const labels = (composer()?.pasteParts ?? []).map((part) => part.label);
++     expect(new Set(labels).size).toBe(3);
++     const draft = draftOf(composer()?.draft ?? "");
++-    expect(draft.resolvedText).toBe([quoteText(`${prefix}first`), quoteText(`${prefix}second`), quoteText(`${prefix}first`)].join("\n"));
+++    expect(draft.resolvedText).toBe([quoteText(`${prefix}first`), quoteText(`${prefix}second`), quoteText(`${prefix}first`)].join("\n\n") + "\n\n");
++     // With an attachment token the parts are built token by token (draft-parts.ts): each chip by its own label.
++     const withToken = { ...draft, text: `${draft.text} [attachment a1]` };
++     const parts = await draftToParts(withToken, "/w", SESSION, null);
++@@ -58,6 +58,19 @@ describe("quotes in the composer", () => {
++     expect(unresolvedPasteLabels("see [pasted text Quote: lost words]", [])).toEqual(["Quote: lost words"]);
++   });
++ 
+++  test("quote insertion leaves a blank line and expansion isolates adjacent text", () => {
+++    useComposerStateStore.getState().clearSession?.(SESSION);
+++    quoteIntoComposer(SESSION, "quoted");
+++    const part = composer()?.pasteParts[0];
+++    if (!part) throw new Error("missing quote");
+++    const token = `[pasted text ${part.label}]`;
+++    expect(composer()?.draft).toBe(`${token}\n\n`);
+++    expect(replacePastedTextPlaceholder(`before${token}after`, part)).toBe("before\n\n> quoted\n\nafter");
+++    expect(resolvePastedTextPlaceholders(`before${token}after`, [part])).toBe("before\n\n> quoted\n\nafter");
+++    expect(replacePastedTextPlaceholder(`${token}\n\nreply`, part)).toBe("> quoted\n\nreply");
+++    expect(replacePastedTextPlaceholder("a[pasted text ordinary]b", { label: "ordinary", text: "pasted" })).toBe("apastedb");
+++  });
+++
++   test("the label never cuts an emoji or accented letter in half", () => {
++     const text = `${"a".repeat(47)}👩‍👩‍👧 tail`;
++     expect(clipGraphemes(text, 48)).toBe(`${"a".repeat(47)}👩‍👩‍👧…`);
++diff --git a/apps/app/tests/side-panel-width-commit.test.tsx b/apps/app/tests/side-panel-width-commit.test.tsx
++new file mode 100644
++index 00000000..c326ba82
++--- /dev/null
+++++ b/apps/app/tests/side-panel-width-commit.test.tsx
++@@ -0,0 +1,137 @@
+++/** @jsxImportSource react */
+++import { expect, test } from "bun:test";
+++import { GlobalRegistrator } from "@happy-dom/global-registrator";
+++import { act, useEffect, useRef, useState } from "react";
+++import { createRoot } from "react-dom/client";
+++import * as RP from "react-resizable-panels";
+++
+++import { commitSidePanelWidth, scheduleSidePanelWidthCommit } from "../src/react-app/domains/session/chat/side-panel-width";
+++
+++const { Panel: ResizablePanel, Separator: ResizableHandle, Group: ResizablePanelGroup, usePanelRef } = RP as any;
+++
+++GlobalRegistrator.register({ url: "http://localhost/" });
+++
+++// happy-dom has no layout engine: derive a panel's width from the flex-grow the
+++// library writes, the way a real flexbox would.
+++const GROUP_WIDTH = 1000;
+++Object.defineProperty(HTMLElement.prototype, "offsetWidth", {
+++  configurable: true,
+++  get() {
+++    const el = this as HTMLElement;
+++    if (el.dataset?.testGroup === "1") return GROUP_WIDTH;
+++    if (el.getAttribute("data-panel") === "true") {
+++      const parent = el.parentElement;
+++      if (!parent) return 0;
+++      const panels = Array.from(parent.querySelectorAll(':scope > [data-panel="true"]')) as HTMLElement[];
+++      const grow = (node: HTMLElement) => Number.parseFloat(node.style.flexGrow || "0");
+++      const sum = panels.reduce((total, node) => total + grow(node), 0);
+++      return sum ? Math.round((grow(el) / sum) * GROUP_WIDTH) : 0;
+++    }
+++    return 0;
+++  },
+++});
+++if (typeof window !== "undefined") {
+++  (window as any).ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+++}
+++
+++test("a panel width is only committed once the panel has a real size", async () => {
+++  const container = document.createElement("div");
+++  document.body.appendChild(container);
+++  const committed: number[] = [];
+++  let api: any = null;
+++
+++  function App({ open }: { open: boolean }) {
+++    const panelRef = usePanelRef();
+++    // The page only re-reads the remembered width when the panel is closed.
+++    const [width, setWidth] = useState(560);
+++    const [defaultWidth, setDefaultWidth] = useState(560);
+++    const lastSize = useRef(0);
+++    const frameRef = useRef<number | null>(null);
+++    useEffect(() => {
+++      if (open) return;
+++      setDefaultWidth(width);
+++    }, [open, width]);
+++    useEffect(() => {
+++      api = { panelRef, defaultWidth };
+++    });
+++    return (
+++      <ResizablePanelGroup
+++        orientation="horizontal"
+++        data-test-group="1"
+++        onLayoutChanged={open ? () => {
+++          // Read on the next frame, like the page does: the callback itself
+++          // still sees the previous width.
+++          scheduleSidePanelWidthCommit(frameRef, () => {
+++            commitSidePanelWidth(panelRef, lastSize, (next) => {
+++              committed.push(next);
+++              setWidth(next);
+++            });
+++          }, { requestAnimationFrame: (cb) => Number(setTimeout(cb, 0)), cancelAnimationFrame: (id) => clearTimeout(id) } as any);
+++        } : undefined}
+++      >
+++        <ResizablePanel minSize="320px"><div /></ResizablePanel>
+++        {open ? (
+++          <>
+++            <ResizableHandle />
+++            <ResizablePanel panelRef={panelRef} defaultSize={`${defaultWidth}px`} minSize="320px" maxSize="70%">
+++              <div />
+++            </ResizablePanel>
+++          </>
+++        ) : null}
+++      </ResizablePanelGroup>
+++    );
+++  }
+++
+++  const root = createRoot(container);
+++  const render = async (open: boolean) => {
+++    act(() => { root.render(<App open={open} />); });
+++    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
+++  };
+++
+++  // Mount and remount cycles are where transient sizes used to leak in: the
+++  // panel reports 0 and a few pixels before it settles.
+++  await render(true);
+++  await render(false);
+++  await render(true);
+++  expect(committed.every((width) => width >= 320)).toBe(true);
+++  const settled = api.panelRef.current.getSize().inPixels;
+++  expect(settled).toBe(560);
+++
+++  // The user resizes the panel; that width is remembered. (happy-dom's flexbox
+++  // stand-in caps at 70% of the group, so the width comes from the library.)
+++  act(() => { api.panelRef.current.resize("68%"); });
+++  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
+++  const dragged = api.panelRef.current.getSize().inPixels;
+++  expect(dragged).toBeGreaterThan(0);
+++  expect(committed.length).toBeGreaterThan(0);
+++  expect(committed.at(-1)).toBe(dragged);
+++
+++  // Close and reopen: the panel comes back at the width the user chose, not at
+++  // a size that was captured while it was mounting.
+++  await render(false);
+++  committed.length = 0;
+++  await render(true);
+++});
+++
+++test("a transient size never becomes the remembered width", () => {
+++  const surface = (inPixels: number | null) => ({
+++    current: inPixels === null ? null : { getSize: () => ({ inPixels, asPercentage: 0 }) },
+++  });
+++  const last = { current: 0 };
+++  const commits: number[] = [];
+++  const commit = (next: number) => commits.push(next);
+++
+++  // A mounting panel reports 0 and then a few pixels before it settles.
+++  expect(commitSidePanelWidth(surface(0), last, commit)).toBe(false);
+++  expect(commitSidePanelWidth(surface(6), last, commit)).toBe(false);
+++  expect(commitSidePanelWidth(surface(319.4), last, commit)).toBe(false);
+++  expect(commitSidePanelWidth(surface(null), last, commit)).toBe(false);
+++  expect(commitSidePanelWidth(surface(Number.NaN), last, commit)).toBe(false);
+++  expect(commits).toEqual([]);
+++
+++  // A settled panel is committed once, not on every layout event.
+++  expect(commitSidePanelWidth(surface(640.2), last, commit)).toBe(true);
+++  expect(commitSidePanelWidth(surface(640.4), last, commit)).toBe(false);
+++  expect(commits).toEqual([640]);
+++  expect(last.current).toBe(640);
+++});
++diff --git a/evals/worlds/first-run.ts b/evals/worlds/first-run.ts
++index d088a3e2..8effffac 100644
++--- a/evals/worlds/first-run.ts
+++++ b/evals/worlds/first-run.ts
++@@ -343,6 +343,16 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
++           .some((node) => node.getBoundingClientRect().height > 0),
++       }));
++     },
+++    async artifactTreeWidth() {
+++      return seed.evalIn(base.app, () => document.querySelector<HTMLElement>("[data-workspace-file-tree]")?.getBoundingClientRect().width ?? 0);
+++    },
+++    async focusArtifactTreeSeparator() {
+++      return seed.evalIn(base.app, () => {
+++        const separator = document.querySelector<HTMLElement>('[aria-label="Resize workspace file tree"]');
+++        separator?.focus();
+++        return document.activeElement === separator;
+++      });
+++    },
++     async visibleArtifactCode() {
++       return seed.evalIn(base.app, () => {
++         const root = document.querySelector<HTMLElement>("[data-artifact-code-view]");
 diff --git a/fork/scripts/lib/git.mjs b/fork/scripts/lib/git.mjs
 new file mode 100644
 index 00000000..df604348
@@ -12939,10 +13652,10 @@ index 00000000..df604348
 +}
 diff --git a/fork/scripts/lib/patch-groups.mjs b/fork/scripts/lib/patch-groups.mjs
 new file mode 100644
-index 00000000..d527b1f3
+index 00000000..1f46af8d
 --- /dev/null
 +++ b/fork/scripts/lib/patch-groups.mjs
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,194 @@
 +// The port, split into patch files. Each group is a set of paths whose diff
 +// against upstream is stored under fork/patches; keeping them apart makes a
 +// conflict easy to locate ("0003 no longer applies" is one file, not five).
@@ -13112,6 +13825,24 @@ index 00000000..d527b1f3
 +    paths: [
 +      "apps/server/src/routes/files.ts",
 +      "apps/server/src/artifact-files.e2e.test.ts",
++    ],
++    addsOnly: false,
++  },
++  {
++    file: "0015-quote-and-artifact-tree.patch",
++    title: "quote boundaries and resizable artifact tree; retain side-panel fixes",
++    paths: [
++      "apps/app/src/components/chat/quote.ts",
++      "apps/app/src/react-app/domains/session/editor/chat-context.ts",
++      "apps/app/src/react-app/domains/session/chat/new-task-composer.tsx",
++      "apps/app/src/react-app/domains/session/chat/side-panel-width.ts",
++      "apps/app/src/react-app/domains/session/artifacts/workspace-file-tree.tsx",
++      "apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts",
++      "apps/app/tests/quote-send.test.ts",
++      "apps/app/tests/quote-expand-editor.test.tsx",
++      "apps/app/tests/artifact-header-path.test.ts",
++      "apps/app/tests/side-panel-width-commit.test.tsx",
++      "evals/worlds/first-run.ts",
 +    ],
 +    addsOnly: false,
 +  },

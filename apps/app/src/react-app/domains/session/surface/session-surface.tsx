@@ -67,7 +67,7 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { parseConnectSkillToken } from "./composer/connect-skill-token";
-import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, unresolvedPasteLabels } from "./composer/pasted-text";
+import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, replacePastedTextPlaceholder, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
 import {
   canAdmitNextQueuedItem,
   claimQueuedSend,
@@ -2165,7 +2165,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       if (pasteMatch) {
         const target = sourcePasteParts.find((item) => item.label === pasteMatch[1]);
         if (target) {
-          return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines } satisfies ComposerDraft["parts"][number]];
+          return [{ type: "paste", id: target.id, label: target.label, text: pastedTextWithBoundaries(target, segments[index - 1] ?? "", segments[index + 1] ?? ""), lines: target.lines } satisfies ComposerDraft["parts"][number]];
         }
       }
       const connectSkill = parseConnectSkillToken(segment);
@@ -2858,7 +2858,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const handleExpandPastedText = useCallback((id: string) => {
     const part = pasteParts.find((item) => item.id === id);
     if (!part) return;
-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, part.text));
+    setComposerDraft(props.sessionId, replacePastedTextPlaceholder(draft, part));
     setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
   }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
 

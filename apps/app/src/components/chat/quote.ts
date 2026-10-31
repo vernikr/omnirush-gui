@@ -45,5 +45,5 @@ export function quoteLabel(text: string): string {
 
 export function quoteIntoComposer(sessionId: string | null, text: string): ChatHandoffResult {
   if (!text.trim()) return { ok: false, reason: "Nothing to quote." }
-  return sendToChat(sessionId, "", [{ label: quoteLabel(text), text: quoteText(text) }])
+  return sendToChat(sessionId, "", [{ label: quoteLabel(text), text: quoteText(text) }], { block: true })
 }

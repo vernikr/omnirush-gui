@@ -10,3 +10,6 @@ Compared with `omnirush-ai/omnirush-gui`:
 - Saved desktop UI zoom (`Cmd+` / `Cmd-` / `Cmd+0`) is restored immediately on launch and preserved across route transitions.
 - Clicking a file named without its path (`` `report.md` ``) in chat opens the highest workspace file with that name ([omnirush-ai/omnirush-gui#351](https://github.com/omnirush-ai/omnirush-gui/issues/351)).
 - Full session/branch Markdown (`.md`) export — including model reasoning, tool call inputs/outputs/errors, and nested sub-agent transcripts — via the session header, sidebar menu, Command Palette, and `/export [filename]` ([omnirush-ai/omnirush-gui#349](https://github.com/omnirush-ai/omnirush-gui/issues/349)).
+- Quote chips expand without swallowing adjacent text and start the reply on a blank line ([omnirush-ai/omnirush-gui#354](https://github.com/omnirush-ai/omnirush-gui/issues/354)).
+- Resizable workspace tree in artifact previews ([omnirush-ai/omnirush-gui#355](https://github.com/omnirush-ai/omnirush-gui/issues/355)).
+- The session side-panel width is retained when reopened, and artifact headers show nested paths.

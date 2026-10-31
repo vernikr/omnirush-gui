@@ -343,6 +343,16 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
           .some((node) => node.getBoundingClientRect().height > 0),
       }));
     },
+    async artifactTreeWidth() {
+      return seed.evalIn(base.app, () => document.querySelector<HTMLElement>("[data-workspace-file-tree]")?.getBoundingClientRect().width ?? 0);
+    },
+    async focusArtifactTreeSeparator() {
+      return seed.evalIn(base.app, () => {
+        const separator = document.querySelector<HTMLElement>('[aria-label="Resize workspace file tree"]');
+        separator?.focus();
+        return document.activeElement === separator;
+      });
+    },
     async visibleArtifactCode() {
       return seed.evalIn(base.app, () => {
         const root = document.querySelector<HTMLElement>("[data-artifact-code-view]");

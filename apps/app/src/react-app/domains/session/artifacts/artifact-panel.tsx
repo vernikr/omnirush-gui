@@ -6,6 +6,7 @@ import { ChevronDown, ChevronUp, Download, Ellipsis, ExternalLink, FolderOpen, P
 import type { OmniRushServerClient, OmniRushWorkspaceCatalogEntry } from "@/app/lib/omnirush-server";
 import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
 import { Button } from "@/components/ui/button";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -113,6 +114,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [treeOpen, setTreeOpen] = useState(true);
+  const treeWidthRef = useRef(160);
   const [draft, setDraft] = useState("");
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
@@ -521,9 +523,11 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
           </div>
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1 overflow-hidden">
         {treeOpen ? (
-          <Suspense fallback={<div className="w-40 shrink-0 border-r border-border bg-muted/20" />}>
+          <>
+          <ResizablePanel id="artifact-file-tree" defaultSize={`${treeWidthRef.current}px`} minSize="100px" maxSize="65%" groupResizeBehavior="preserve-pixel-size" onResize={(size) => { if (size.inPixels >= 100) treeWidthRef.current = size.inPixels; }} className="min-h-0 min-w-0">
+          <Suspense fallback={<div className="h-full w-full bg-muted/20" />}>
             <WorkspaceFileTree
               client={client}
               workspaceId={workspaceId}
@@ -541,8 +545,12 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
               ]}
             />
           </Suspense>
+          </ResizablePanel>
+          <ResizableHandle aria-label="Resize workspace file tree" />
+          </>
         ) : null}
-        <div ref={previewContentRef} className="min-w-0 flex-1 overflow-hidden">
+        <ResizablePanel id="artifact-preview" minSize="120px" className="min-w-0">
+        <div ref={previewContentRef} className="h-full min-w-0 overflow-hidden">
           {isLoading || (data?.kind === "binary" && !binaryObjectUrl) ? (
           <PreviewLoading />
         ) : isError ? (
@@ -582,7 +590,8 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
           <PreviewUnavailable />
           )}
         </div>
-      </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }

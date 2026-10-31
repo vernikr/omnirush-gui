@@ -126,3 +126,7 @@ sync fetches that commit so `--3way` has the blobs it needs.
   macOS 13, so an Electron major bump is a decision, not a dependency update.
 - `apps/desktop/scripts/engine-release.json` deliberately still names upstream:
   the engine tarballs are pinned by sha256 in an upstream pre-release.
+
+Quote boundaries, the artifact file-tree splitter, and the retained side-panel
+width fix are downstream changes tracked in `0015-quote-and-artifact-tree.patch`
+(and in existing patch groups for shared files). See `FORK_DIFFS.md`.
