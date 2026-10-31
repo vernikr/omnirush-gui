@@ -113,7 +113,7 @@ type ComposerProps = {
   onPasteText: (text: string) => void;
   onUnsupportedFileLinks: (links: string[]) => void;
   pastedText: PastedTextChip[];
-  onExpandPastedText: (id: string) => void;
+  onExpandPastedText: (id: string, draft: string) => void;
   onRemovePastedText: (id: string) => void;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
@@ -786,10 +786,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     [props.attachments],
   );
 
-  const handleExpandPastedText = useCallback((label: string) => {
+  const handleExpandPastedText = useCallback((label: string, draft: string) => {
     const target = props.pastedText.find((item) => item.label === label);
     if (!target) return;
-    props.onExpandPastedText(target.id);
+    props.onExpandPastedText(target.id, draft);
   }, [props.onExpandPastedText, props.pastedText]);
 
   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;

@@ -67,7 +67,7 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
 import { parseConnectSkillToken } from "./composer/connect-skill-token";
-import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, replacePastedTextPlaceholder, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
+import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
 import {
   canAdmitNextQueuedItem,
   claimQueuedSend,
@@ -1169,7 +1169,6 @@ function composerSessionHasContent(state: ComposerSessionState | undefined) {
     state.draft
     || state.attachments.length
     || Object.keys(state.mentions).length
-    || state.pasteParts.length
     || state.revertMessageId
   ));
 }
@@ -2855,12 +2854,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
     setComposerDraft(props.sessionId, `${draft}[pasted text ${pasted.label}]`);
   }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
 
-  const handleExpandPastedText = useCallback((id: string) => {
-    const part = pasteParts.find((item) => item.id === id);
-    if (!part) return;
-    setComposerDraft(props.sessionId, replacePastedTextPlaceholder(draft, part));
-    setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
-  }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
+  const handleExpandPastedText = useCallback((id: string, nextDraft: string) => {
+    useComposerStateStore.getState().expandPastePart(props.sessionId, id, nextDraft);
+  }, [props.sessionId]);
 
   const handleRemovePastedText = useCallback((id: string) => {
     const target = pasteParts.find((item) => item.id === id);

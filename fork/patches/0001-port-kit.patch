@@ -136,10 +136,10 @@ index 00000000..5162bb6f
 +          fi
 diff --git a/fork/README.md b/fork/README.md
 new file mode 100644
-index 00000000..97b17366
+index 00000000..5347eb51
 --- /dev/null
 +++ b/fork/README.md
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,133 @@
 +# The Intel macOS port, as code
 +
 +This fork exists for one reason: upstream `omnirush-ai/omnirush-gui` ships
@@ -248,6 +248,7 @@ index 00000000..97b17366
 +| `0012-desktop-startup-zoom-restore.patch` | restore saved desktop UI zoom on launch and across `#` routes | when upstream edits desktop zoom or preload/main |
 +| `0013-session-markdown-export.patch` | export full session/branch (reasoning, tool calls, sub-agents) to `.md` | when upstream edits session commands, sidebar menu, or `session-route.tsx` |
 +| `0014-resolve-bare-file-names.patch` | a file named without its path (`` `report.md` ``) opens the highest workspace file with that name | when upstream edits the artifact resolve route or its journey spec |
++| `0015-quote-and-artifact-tree.patch` | quote boundaries and undo, artifact tree resizing and side-panel fixes | when upstream edits the composer, artifact tree or related tests |
 +
 +## Secrets
 +
@@ -3112,10 +3113,10 @@ index 00000000..577242b9
 + });
 diff --git a/fork/patches/0009-editor-scroll-find-select-all.patch b/fork/patches/0009-editor-scroll-find-select-all.patch
 new file mode 100644
-index 00000000..6e496c68
+index 00000000..190f0d54
 --- /dev/null
 +++ b/fork/patches/0009-editor-scroll-find-select-all.patch
-@@ -0,0 +1,876 @@
+@@ -0,0 +1,1064 @@
 +diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts b/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts
 +new file mode 100644
 +index 00000000..09fcd43b
@@ -3508,9 +3509,18 @@ index 00000000..6e496c68
 +   );
 + }
 +diff --git a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
-+index 76a2ff62..f9b718ea 100644
++index 76a2ff62..fa1507cf 100644
 +--- a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
++@@ -113,7 +113,7 @@ type ComposerProps = {
++   onPasteText: (text: string) => void;
++   onUnsupportedFileLinks: (links: string[]) => void;
++   pastedText: PastedTextChip[];
++-  onExpandPastedText: (id: string) => void;
+++  onExpandPastedText: (id: string, draft: string) => void;
++   onRemovePastedText: (id: string) => void;
++   isRemoteWorkspace: boolean;
++   isSandboxWorkspace: boolean;
 +@@ -747,10 +747,20 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 +     return undefined;
 +   }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
@@ -3536,6 +3546,19 @@ index 00000000..6e496c68
 +   const slashFiltered = useMemo(() => {
 +     if (!slashOpen) return [];
 +     if (!slashQuery) return slashItems.slice(0, 8);
++@@ -776,10 +786,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
++     [props.attachments],
++   );
++ 
++-  const handleExpandPastedText = useCallback((label: string) => {
+++  const handleExpandPastedText = useCallback((label: string, draft: string) => {
++     const target = props.pastedText.find((item) => item.label === label);
++     if (!target) return;
++-    props.onExpandPastedText(target.id);
+++    props.onExpandPastedText(target.id, draft);
++   }, [props.onExpandPastedText, props.pastedText]);
++ 
++   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
 +@@ -1199,6 +1209,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 +     // Oversized images are compressed at send time (see image-compression.ts)
 +     // so the chip appears instantly instead of blocking on canvas work here.
@@ -3553,18 +3576,32 @@ index 00000000..6e496c68
 + 
 +   const panelRoundedClass =
 +diff --git a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-+index 54262b60..6774d77b 100644
++index 54262b60..4b88d881 100644
 +--- a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-+@@ -12,7 +12,6 @@ import {
++@@ -8,12 +8,13 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin.js";
++ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin.js";
++ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext.js";
++ import {
+++  $addUpdateTag,
++   $applyNodeReplacement,
 +   $createRangeSelection,
 +   $createParagraphNode,
 +   $createTextNode,
 +-  $getNearestNodeFromDOMNode,
 +   $getRoot,
+++  $getNearestNodeFromDOMNode,
 +   $getSelection,
 +   $nodesOfType,
-+@@ -31,6 +30,7 @@ import {
++   $setSelection,
++@@ -27,17 +28,21 @@ import {
++   KEY_BACKSPACE_COMMAND,
++   KEY_ENTER_COMMAND,
++   PASTE_COMMAND,
+++  ParagraphNode,
+++  SELECTION_CHANGE_COMMAND,
+++  SKIP_SCROLL_INTO_VIEW_TAG,
++   type SerializedTextNode,
 +   type Spread,
 +   TextNode,
 +   type EditorConfig,
@@ -3572,7 +3609,25 @@ index 00000000..6e496c68
 +   type NodeKey,
 + } from "lexical";
 + import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
-+@@ -68,6 +68,7 @@ type EditorProps = {
++ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
++ import { parseConnectSkillToken } from "./connect-skill-token";
++-import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
++-import { insertPastedText } from "./pasted-text-insertion";
+++import { pastedTextWithBoundaries, shouldCollapsePastedText, splitPastedText } from "./pasted-text";
+++import { createPastedTextNodes, insertPastedText } from "./pasted-text-insertion";
++ import { padInsertion } from "@/app/lib/voice-core/text";
++ 
++ type PastedTextToken = { label: string; lines: number; text: string };
++@@ -58,7 +63,7 @@ type EditorProps = {
++   placeholder: string;
++   onChange: (value: string) => void;
++   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
++-  onExpandPastedText?: (label: string) => void;
+++  onExpandPastedText?: (label: string, draft: string) => void;
++   onRemoveAttachment?: (id: string) => void;
++   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
++   onPasteText?: (text: string) => void;
++@@ -68,6 +73,7 @@ type EditorProps = {
 + };
 + 
 + export type LexicalPromptEditorHandle = {
@@ -3580,7 +3635,7 @@ index 00000000..6e496c68
 +   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
 +   /** Voice dictation: marks the cursor with a live (dim) transcript placeholder. */
 +   voiceBegin: () => void;
-+@@ -469,6 +470,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
++@@ -469,6 +475,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
 +   const dom = document.createElement("span");
 +   dom.className = "relative mx-0.5 inline-flex h-10 max-w-[140px] shrink-0 items-center align-middle";
 +   dom.contentEditable = "false";
@@ -3589,7 +3644,7 @@ index 00000000..6e496c68
 +   dom.setAttribute("spellcheck", "false");
 +   dom.title = attachment.name;
 +   dom.dataset.attachmentId = attachment.id;
-+@@ -1122,20 +1125,6 @@ function pastedExpandButton(target: EventTarget | null) {
++@@ -1122,21 +1130,27 @@ function pastedExpandButton(target: EventTarget | null) {
 +   return button instanceof HTMLButtonElement ? button : null;
 + }
 + 
@@ -3605,12 +3660,32 @@ index 00000000..6e496c68
 +-    return insertPastedText(text);
 +-  }
 +-  return false;
-+-}
-+-
-+ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
+++const EXPAND_PASTED_TEXT_TAG = "composer-expand-pasted-text";
+++
+++/** Text around this actual node, not the first identical placeholder in the draft. */
+++function textAroundPastedNode(node: ComposerPastedTextNode): { before: string; after: string } | null {
+++  const root = $getRoot();
+++  const paragraph = node.getParent();
+++  if (!$isElementNode(paragraph) || paragraph.getParent() !== root) return null;
+++  const paragraphs = root.getChildren();
+++  const paragraphIndex = paragraphs.findIndex((item) => item.is(paragraph));
+++  if (paragraphIndex < 0) return null;
+++  const previousParagraphs = paragraphs.slice(0, paragraphIndex).map((item) => item.getTextContent());
+++  const nextParagraphs = paragraphs.slice(paragraphIndex + 1).map((item) => item.getTextContent());
+++  return {
+++    before: (previousParagraphs.length ? `${previousParagraphs.join("\n")}\n` : "")
+++      + node.getPreviousSiblings().map((item) => item.getTextContent()).join(""),
+++    after: node.getNextSiblings().map((item) => item.getTextContent()).join("")
+++      + (nextParagraphs.length ? `\n${nextParagraphs.join("\n")}` : ""),
+++  };
++ }
++ 
++-function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
+++function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string, draft: string) => void }) {
 +   const [editor] = useLexicalComposerContext();
 +   const pastedTextRef = useRef(props.pastedText);
-+@@ -1161,12 +1150,9 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
++   const onExpandPastedTextRef = useRef(props.onExpandPastedText);
++@@ -1161,12 +1175,22 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
 +       event.preventDefault();
 +       event.stopPropagation();
 +       const target = pastedTextRef.current?.find((item) => item.label === label);
@@ -3620,13 +3695,96 @@ index 00000000..6e496c68
 +-        });
 +-      }
 +-      onExpandPastedTextRef.current?.(label);
-++      // Expand through the draft once. Mutating Lexical and the external draft
-++      // simultaneously races the editor's change listener when text is adjacent.
-++      if (target) onExpandPastedTextRef.current?.(label);
+++      const onExpand = onExpandPastedTextRef.current;
+++      if (!target || !onExpand) return;
+++      let expandedDraft: string | null = null;
+++      editor.update(() => {
+++        const nearest = $getNearestNodeFromDOMNode(button);
+++        const node = nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label
+++          ? nearest : $nodesOfType(ComposerPastedTextNode).find((item) => item.getPastedLabel() === label);
+++        if (!node) return;
+++        const surrounding = textAroundPastedNode(node);
+++        if (!surrounding) return;
+++        const replacement = pastedTextWithBoundaries(target, surrounding.before, surrounding.after);
+++        for (const replacementNode of createPastedTextNodes(replacement)) node.insertBefore(replacementNode);
+++        node.remove();
+++        expandedDraft = serializePromptFromRoot();
+++      }, { discrete: true, tag: [EXPAND_PASTED_TEXT_TAG, SKIP_SCROLL_INTO_VIEW_TAG] });
+++      if (expandedDraft !== null) onExpand(label, expandedDraft);
 +     };
 + 
 +     return editor.registerRootListener((rootElement, previousRootElement) => {
-+@@ -1301,6 +1287,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
++@@ -1184,13 +1208,42 @@ function MentionChipNavigationPlugin() {
++   const [editor] = useLexicalComposerContext();
++ 
++   useEffect(() => {
+++    // Lexical's element-caret geometry can point at the wrong child beside a
+++    // non-editable chip. Its automatic scroll then jumps away from the caret.
+++    const skipChipBoundaryScroll = () => {
+++      const selection = $getSelection();
+++      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+++      const anchor = selection.anchor.getNode();
+++      if (anchor instanceof ComposerPastedTextNode) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
+++      else if ($isElementNode(anchor) && (
+++        anchor.getChildAtIndex(selection.anchor.offset - 1) instanceof ComposerPastedTextNode
+++        || anchor.getChildAtIndex(selection.anchor.offset) instanceof ComposerPastedTextNode
+++      )) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
+++      else if ($isTextNode(anchor) && selection.anchor.offset <= 1
+++        && anchor.getPreviousSibling() instanceof ComposerPastedTextNode) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
+++    };
+++    const unregisterSelection = editor.registerCommand(
+++      SELECTION_CHANGE_COMMAND,
+++      () => { skipChipBoundaryScroll(); return false; },
+++      COMMAND_PRIORITY_HIGH,
+++    );
+++    // Deleting the last adjacent character changes the selection as part of
+++    // a text mutation, without necessarily dispatching SELECTION_CHANGE.
+++    const unregisterParagraph = editor.registerNodeTransform(ParagraphNode, skipChipBoundaryScroll);
++     const unregisterBackspace = editor.registerCommand(
++       KEY_BACKSPACE_COMMAND,
++-      () => {
+++      (event) => {
++         const selection = $getSelection();
++         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
++         const anchorNode = selection.anchor.getNode();
++-
+++        // Chromium can report the caret just after a non-editable chip as an
+++        // offset at the end of the chip's token. Delete the whole chip, not
+++        // one character of the hidden placeholder.
+++        if (anchorNode instanceof ComposerPastedTextNode && selection.anchor.offset > 0) {
+++          event.preventDefault();
+++          anchorNode.remove();
+++          return true;
+++        }
++         // --- Slash command chip: atomic delete ---
++         // When cursor is in the text node right after a slash chip,
++         // remove the chip (and any trailing whitespace text) in one action.
++@@ -1225,6 +1278,7 @@ function MentionChipNavigationPlugin() {
++           const previous = anchorNode.getPreviousSibling();
++           if (isComposerInlineTokenNode(previous) && !(previous instanceof ComposerSlashCommandNode)) {
++             previous.remove();
+++            if (previous instanceof ComposerPastedTextNode) event.preventDefault();
++             return true;
++           }
++         }
++@@ -1233,6 +1287,7 @@ function MentionChipNavigationPlugin() {
++           const previous = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
++           if (isComposerInlineTokenNode(previous)) {
++             previous.remove();
+++            if (previous instanceof ComposerPastedTextNode) event.preventDefault();
++             return true;
++           }
++         }
++@@ -1288,6 +1343,8 @@ function MentionChipNavigationPlugin() {
++     );
++ 
++     return () => {
+++      unregisterSelection();
+++      unregisterParagraph();
++       unregisterBackspace();
++       unregisterLeft();
++       unregisterRight();
++@@ -1301,6 +1358,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
 +   const [editor] = useLexicalComposerContext();
 + 
 +   useImperativeHandle(props.editorRef, () => ({
@@ -3636,7 +3794,7 @@ index 00000000..6e496c68
 +     insertSkillAtSelection(skillName: string, skillToken?: string) {
 +       editor.update(() => insertSkillAtSelection(skillName, skillToken));
 +       editor.focus();
-+@@ -1332,6 +1321,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
++@@ -1332,6 +1392,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
 +   return null;
 + }
 + 
@@ -3718,7 +3876,23 @@ index 00000000..6e496c68
 + function attachmentRemoveButton(target: EventTarget | null) {
 +   if (!(target instanceof Element)) return null;
 +   const button = target.closest("button[data-attachment-remove-id]");
-+@@ -1454,6 +1518,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
++@@ -1402,12 +1537,13 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
++   );
++ 
++   const syncPromptFromEditorState = useCallback(
++-    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
+++    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0], _editor: LexicalEditor, tags: Set<string>) => {
++       state.read(() => {
++         const next = serializePromptFromRoot();
++         if (next === valueRef.current) return;
++         valueRef.current = next;
++-        onChangeRef.current(next);
+++        // Expand commits draft and chip metadata together through its callback.
+++        if (!tags.has(EXPAND_PASTED_TEXT_TAG)) onChangeRef.current(next);
++       });
++     },
++     [],
++@@ -1454,6 +1590,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
 +         <PasteChipPlugin onPasteText={props.onPasteText} />
 +         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
 +         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
@@ -3727,7 +3901,7 @@ index 00000000..6e496c68
 +         <ImperativeHandlePlugin editorRef={ref} />
 +       </div>
 +diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-+index e6a4472e..3f15a191 100644
++index e6a4472e..3f881530 100644
 +--- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 ++++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 +@@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
@@ -3745,7 +3919,7 @@ index 00000000..6e496c68
 + import { parseSlashCommandInvocation } from "./composer/slash-command";
 + import { parseConnectSkillToken } from "./composer/connect-skill-token";
 +-import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, unresolvedPasteLabels } from "./composer/pasted-text";
-++import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, replacePastedTextPlaceholder, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
+++import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
 + import {
 +   canAdmitNextQueuedItem,
 +   claimQueuedSend,
@@ -3758,7 +3932,15 @@ index 00000000..6e496c68
 +     >
 +       <Icon aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${iconClass}`} />
 +       <div className="min-w-0 flex-1">
-+@@ -2163,7 +2165,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++@@ -1167,7 +1169,6 @@ function composerSessionHasContent(state: ComposerSessionState | undefined) {
++     state.draft
++     || state.attachments.length
++     || Object.keys(state.mentions).length
++-    || state.pasteParts.length
++     || state.revertMessageId
++   ));
++ }
++@@ -2163,7 +2164,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 +       if (pasteMatch) {
 +         const target = sourcePasteParts.find((item) => item.label === pasteMatch[1]);
 +         if (target) {
@@ -3767,7 +3949,7 @@ index 00000000..6e496c68
 +         }
 +       }
 +       const connectSkill = parseConnectSkillToken(segment);
-+@@ -2312,10 +2314,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
++@@ -2312,10 +2313,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
 +     return true;
 +   }, [clearComposer, props.client, props.sessionId, props.workspaceId]);
 + 
@@ -3800,7 +3982,7 @@ index 00000000..6e496c68
 +     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
 +     const originalDraft = sourceComposer?.draft ?? draft;
 +     const sourceAttachments = sourceComposer?.attachments ?? attachments;
-+@@ -2434,7 +2458,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++@@ -2434,7 +2457,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 +     } finally {
 +       setAttachmentsUploading(false);
 +     }
@@ -3809,7 +3991,7 @@ index 00000000..6e496c68
 + 
 +   // A chat command from a button ("/review", "/fix 1, 3"): sent like a typed one, the composer's draft left alone.
 +   const runChatCommand = useCallback(async (text: string) => {
-+@@ -2486,6 +2510,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++@@ -2486,6 +2509,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 +   // sends it once the session reports idle.
 +   const handleQueue = useCallback(() => {
 +     if (askSideFromDraft(draft)) return;
@@ -3817,7 +3999,7 @@ index 00000000..6e496c68
 +     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
 +     const text = draft.trim();
 +     if (!text && attachments.length === 0) return;
-+@@ -2495,7 +2520,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++@@ -2495,7 +2519,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 +     if (draftHasLostPaste(queuedDraft)) { toast.error(LOST_PASTE_MESSAGE); return; }
 +     appendQueuedDraft(props.sessionId, queuedDraft);
 +     clearComposer();
@@ -3826,16 +4008,23 @@ index 00000000..6e496c68
 + 
 +   const removeQueuedDraft = useCallback((id: string) => {
 +     const target = queuedItems.find((item) => item.id === id);
-+@@ -2833,7 +2858,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
-+   const handleExpandPastedText = useCallback((id: string) => {
-+     const part = pasteParts.find((item) => item.id === id);
-+     if (!part) return;
-+-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, part.text));
-++    setComposerDraft(props.sessionId, replacePastedTextPlaceholder(draft, part));
-+     setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
++@@ -2830,12 +2854,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
++     setComposerDraft(props.sessionId, `${draft}[pasted text ${pasted.label}]`);
 +   }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
 + 
-+@@ -3061,6 +3086,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
++-  const handleExpandPastedText = useCallback((id: string) => {
++-    const part = pasteParts.find((item) => item.id === id);
++-    if (!part) return;
++-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, part.text));
++-    setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
++-  }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
+++  const handleExpandPastedText = useCallback((id: string, nextDraft: string) => {
+++    useComposerStateStore.getState().expandPastePart(props.sessionId, id, nextDraft);
+++  }, [props.sessionId]);
++ 
++   const handleRemovePastedText = useCallback((id: string) => {
++     const target = pasteParts.find((item) => item.id === id);
++@@ -3061,6 +3082,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
 +     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
 +     const mod = isMac ? event.metaKey : event.ctrlKey;
 +     if (!mod || event.shiftKey || event.altKey || event.key?.toLowerCase() !== "f") return;
@@ -3994,7 +4183,7 @@ index 00000000..6e496c68
 +       const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
 diff --git a/fork/patches/0010-upstream-compatibility.patch b/fork/patches/0010-upstream-compatibility.patch
 new file mode 100644
-index 00000000..46881383
+index 00000000..0e1aff2a
 --- /dev/null
 +++ b/fork/patches/0010-upstream-compatibility.patch
 @@ -0,0 +1,35 @@
@@ -4014,7 +4203,7 @@ index 00000000..46881383
 ++Fork difference registry: `FORK_DIFFS.md`. Keep updated.
 +diff --git a/FORK_DIFFS.md b/FORK_DIFFS.md
 +new file mode 100644
-+index 00000000..35e79e18
++index 00000000..2ef5e857
 +--- /dev/null
 ++++ b/FORK_DIFFS.md
 +@@ -0,0 +1,15 @@
@@ -4030,7 +4219,7 @@ index 00000000..46881383
 ++- Saved desktop UI zoom (`Cmd+` / `Cmd-` / `Cmd+0`) is restored immediately on launch and preserved across route transitions.
 ++- Clicking a file named without its path (`` `report.md` ``) in chat opens the highest workspace file with that name ([omnirush-ai/omnirush-gui#351](https://github.com/omnirush-ai/omnirush-gui/issues/351)).
 ++- Full session/branch Markdown (`.md`) export — including model reasoning, tool call inputs/outputs/errors, and nested sub-agent transcripts — via the session header, sidebar menu, Command Palette, and `/export [filename]` ([omnirush-ai/omnirush-gui#349](https://github.com/omnirush-ai/omnirush-gui/issues/349)).
-++- Quote chips expand without swallowing adjacent text and start the reply on a blank line ([omnirush-ai/omnirush-gui#354](https://github.com/omnirush-ai/omnirush-gui/issues/354)).
+++- Quote chips preserve the editor scroll and caret, expand without swallowing adjacent text, start the reply on a blank line, and remain functional through undo ([omnirush-ai/omnirush-gui#354](https://github.com/omnirush-ai/omnirush-gui/issues/354)).
 ++- Resizable workspace tree in artifact previews ([omnirush-ai/omnirush-gui#355](https://github.com/omnirush-ai/omnirush-gui/issues/355)).
 ++- The session side-panel width is retained when reopened, and artifact headers show nested paths.
 diff --git a/fork/patches/0011-github-favicon-theme.patch b/fork/patches/0011-github-favicon-theme.patch
@@ -13113,10 +13302,10 @@ index 00000000..e8cc5c8c
 +     const previous = results.get(key);
 diff --git a/fork/patches/0015-quote-and-artifact-tree.patch b/fork/patches/0015-quote-and-artifact-tree.patch
 new file mode 100644
-index 00000000..3760ea23
+index 00000000..5a1737d7
 --- /dev/null
 +++ b/fork/patches/0015-quote-and-artifact-tree.patch
-@@ -0,0 +1,478 @@
+@@ -0,0 +1,572 @@
 +diff --git a/apps/app/src/components/chat/quote.ts b/apps/app/src/components/chat/quote.ts
 +index 4187fda9..fcbfec50 100644
 +--- a/apps/app/src/components/chat/quote.ts
@@ -13142,26 +13331,24 @@ index 00000000..3760ea23
 +       data-workspace-file-count={entries.length}
 +     >
 +diff --git a/apps/app/src/react-app/domains/session/chat/new-task-composer.tsx b/apps/app/src/react-app/domains/session/chat/new-task-composer.tsx
-+index ef2fbe98..b0cc816d 100644
++index ef2fbe98..d21054cd 100644
 +--- a/apps/app/src/react-app/domains/session/chat/new-task-composer.tsx
 ++++ b/apps/app/src/react-app/domains/session/chat/new-task-composer.tsx
-+@@ -25,6 +25,7 @@ import { clearSessionDraft, getSessionDraft, saveSessionDraft } from "@/react-ap
-+ import { toast } from "@/components/ui/sonner";
-+ import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
-+ import {
-++  replacePastedTextPlaceholder,
-+   createPastedTextChip,
-+   resolvePastedTextPlaceholders,
-+   type PastedTextChip,
-+@@ -347,7 +348,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
-+   const handleExpandPastedText = (id: string) => {
++@@ -344,11 +344,11 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
++     updateDraft(`${continuationHolderRef.current.state.draft}[pasted text ${pasted.label}]`);
++   };
++ 
++-  const handleExpandPastedText = (id: string) => {
+++  const handleExpandPastedText = (id: string, nextDraft: string) => {
 +     const pasted = continuationHolderRef.current.state.pasteParts.find((item) => item.id === id);
 +     if (!pasted) return;
 +-    updateDraft(continuationHolderRef.current.state.draft.replace(`[pasted text ${pasted.label}]`, pasted.text));
-++    updateDraft(replacePastedTextPlaceholder(continuationHolderRef.current.state.draft, pasted));
-+     updatePasteParts(continuationHolderRef.current.state.pasteParts.filter((item) => item.id !== id));
++-    updatePasteParts(continuationHolderRef.current.state.pasteParts.filter((item) => item.id !== id));
+++    // Keep the part so undo can restore a functional chip.
+++    updateDraft(nextDraft);
 +   };
 + 
++   const handleRemovePastedText = (id: string) => {
 +diff --git a/apps/app/src/react-app/domains/session/chat/side-panel-width.ts b/apps/app/src/react-app/domains/session/chat/side-panel-width.ts
 +new file mode 100644
 +index 00000000..7e24c855
@@ -13255,11 +13442,52 @@ index 00000000..3760ea23
 +   // The chat panel opens if it was folded away, and the composer takes the focus.
 +   useEditorStore.getState().setIdeChatCollapsed(false);
 +   window.setTimeout(() => window.dispatchEvent(new Event("omnirush:focusPrompt")), 50);
++diff --git a/apps/app/src/react-app/domains/session/surface/composer-state-store.ts b/apps/app/src/react-app/domains/session/surface/composer-state-store.ts
++index 6920c469..e2943d51 100644
++--- a/apps/app/src/react-app/domains/session/surface/composer-state-store.ts
+++++ b/apps/app/src/react-app/domains/session/surface/composer-state-store.ts
++@@ -54,6 +54,7 @@ export type ComposerStateStore = {
++   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
++   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
++   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
+++  expandPastePart: (sessionId: string, id: string, draft: string) => void;
++   appendHistory: (sessionId: string, text: string) => void;
++   appendQueuedDraft: (sessionId: string, draft: ComposerDraft) => void;
++   removeQueuedDraft: (sessionId: string, id: string) => void;
++@@ -185,6 +186,15 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
++     if (current.pasteParts === pasteParts) return state;
++     return { sessions: { ...state.sessions, [sessionId]: { ...current, pasteParts } } };
++   }),
+++  expandPastePart: (sessionId, id, draft) => set((state) => {
+++    const current = state.sessions[sessionId];
+++    if (!current || !current.pasteParts.some((part) => part.id === id)) return state;
+++    // Retain the part for Lexical undo: undo can restore the chip after an
+++    // expansion. It is only sent when its placeholder is present in the draft.
+++    return { sessions: { ...state.sessions, [sessionId]: {
+++      ...current, draft, revertMessageId: draft ? current.revertMessageId : null,
+++    } } };
+++  }),
++   appendHistory: (sessionId, text) => set((state) => {
++     const trimmed = text.trim();
++     if (!trimmed) return state;
++diff --git a/apps/app/src/react-app/domains/session/surface/composer/pasted-text-insertion.ts b/apps/app/src/react-app/domains/session/surface/composer/pasted-text-insertion.ts
++index bb671bf8..1ada3ef9 100644
++--- a/apps/app/src/react-app/domains/session/surface/composer/pasted-text-insertion.ts
+++++ b/apps/app/src/react-app/domains/session/surface/composer/pasted-text-insertion.ts
++@@ -8,7 +8,7 @@ import {
++ } from "lexical";
++ import { splitPastedText } from "./pasted-text";
++ 
++-function createPastedTextNodes(text: string) {
+++export function createPastedTextNodes(text: string) {
++   const nodes: LexicalNode[] = [];
++   for (const segment of splitPastedText(text)) {
++     if (segment.kind === "line-break") {
 +diff --git a/apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts b/apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts
-+index 6871f484..ec3d416f 100644
++index 6871f484..a4bf4fa8 100644
 +--- a/apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts
 ++++ b/apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts
-+@@ -34,11 +34,28 @@ export function createPastedTextChip(text: string): PastedTextChip {
++@@ -34,11 +34,31 @@ export function createPastedTextChip(text: string): PastedTextChip {
 +   };
 + }
 + 
@@ -13278,7 +13506,10 @@ index 00000000..3760ea23
 ++  const isQuote = part.label.startsWith("Quote: ") && part.text.split(/\r?\n/).every((line) => line.startsWith(">"));
 ++  if (!isQuote) return part.text;
 ++  const left = before && !before.endsWith("\n") ? "\n\n" : "";
-++  const right = after && !after.startsWith("\n") ? "\n\n" : "";
+++  // A single newline still allows Markdown's lazy blockquote continuation.
+++  // Keep an existing blank line; otherwise separate following text from it.
+++  const right = after && !after.startsWith("\n") ? "\n\n"
+++    : /^\n(?!\n)/.test(after) ? "\n" : "";
 ++  return left + part.text + right;
 ++}
 ++
@@ -13331,14 +13562,46 @@ index 00000000..3760ea23
 ++  const url = target("https://omnirush.ai/docs/quick-start?x=1", "quick-start", "url");
 ++  expect(artifactHeaderPath(url)).toBe("https://omnirush.ai/docs/quick-start?x=1");
 ++});
++diff --git a/apps/app/tests/composer-state-store.test.ts b/apps/app/tests/composer-state-store.test.ts
++index 5c41fa25..ddab2b44 100644
++--- a/apps/app/tests/composer-state-store.test.ts
+++++ b/apps/app/tests/composer-state-store.test.ts
++@@ -38,6 +38,27 @@ function queuedTexts(sessionId: string) {
++ describe("composer state store", () => {
++   beforeEach(reset);
++ 
+++  test("expansion updates one session atomically and retains metadata for undo", () => {
+++    const part = { id: "quote-1", label: "Quote: hello", text: "> hello", lines: 1 };
+++    const store = useComposerStateStore.getState();
+++    store.setDraft("session-a", `[pasted text ${part.label}]reply`);
+++    store.setPasteParts("session-a", [part]);
+++    store.setDraft("session-b", "unrelated");
+++    const observed: ComposerSessionState[] = [];
+++    const unsubscribe = useComposerStateStore.subscribe((state) => observed.push(state.sessions["session-a"]!));
+++    try {
+++      store.expandPastePart("session-a", part.id, "> hello\n\nreply");
+++      expect(observed).toHaveLength(1);
+++      expect(observed[0]?.draft).toBe("> hello\n\nreply");
+++      expect(observed[0]?.pasteParts).toEqual([part]);
+++      expect(useComposerStateStore.getState().sessions["session-b"]?.draft).toBe("unrelated");
+++      store.expandPastePart("session-a", "missing", "must not replace");
+++      expect(observed).toHaveLength(1);
+++      store.clearSession("session-a");
+++      expect(useComposerStateStore.getState().sessions["session-a"]).toBeUndefined();
+++    } finally { unsubscribe(); }
+++  });
+++
++   test("scopes queued drafts by session", () => {
++     const { appendQueuedDraft } = useComposerStateStore.getState();
++     appendQueuedDraft("session-a", draft("queued in A"));
 +diff --git a/apps/app/tests/quote-expand-editor.test.tsx b/apps/app/tests/quote-expand-editor.test.tsx
 +new file mode 100644
-+index 00000000..83019596
++index 00000000..2aa24e4d
 +--- /dev/null
 ++++ b/apps/app/tests/quote-expand-editor.test.tsx
-+@@ -0,0 +1,52 @@
++@@ -0,0 +1,69 @@
 ++/** @jsxImportSource react */
-++import { expect, mock, test } from "bun:test";
+++import { afterAll, expect, mock, test } from "bun:test";
 ++import { GlobalRegistrator } from "@happy-dom/global-registrator";
 ++import { createRequire } from "node:module";
 ++import { act, useState } from "react";
@@ -13356,41 +13619,58 @@ index 00000000..3760ea23
 ++}
 ++const registered = !globalThis.document;
 ++if (registered) GlobalRegistrator.register({ url: "http://localhost/" });
+++afterAll(async () => { if (registered) await GlobalRegistrator.unregister(); });
 ++const { LexicalPromptEditor } = await import("../src/react-app/domains/session/surface/composer/editor");
-++const { replacePastedTextPlaceholder } = await import("../src/react-app/domains/session/surface/composer/pasted-text");
 ++
-++test("Expand replaces a quote with text on both sides without losing either", async () => {
-++  const part = { label: "Quote: quoted", text: "> quoted", lines: 1 };
-++  let observed = "";
-++  function TestEditor() {
-++    const [value, setValue] = useState(`before[pasted text ${part.label}]after`);
-++    const [chips, setChips] = useState([part]);
-++    observed = value;
-++    return <LexicalPromptEditor value={value} mentions={{}} pastedText={chips} submitDisabled={false} placeholder="Message"
-++      onChange={setValue} onSubmit={() => {}} onExpandPastedText={() => {
-++        setValue((draft) => replacePastedTextPlaceholder(draft, part));
-++        setChips([]);
-++      }} />;
-++  }
-++  const container = document.createElement("div");
-++  document.body.append(container);
-++  const root = createRoot(container);
-++  try {
-++    await act(async () => { root.render(<TestEditor />); });
-++    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Expand pasted text in composer"]');
-++    expect(button).not.toBeNull();
-++    await act(async () => { button?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
-++    expect(observed).toBe("before\n\n> quoted\n\nafter");
-++    expect(container.querySelector('button[aria-label="Expand pasted text in composer"]')).toBeNull();
-++    expect(container.querySelector('[contenteditable="true"]')?.textContent).toContain("> quoted");
-++  } finally {
-++    await act(async () => { root.unmount(); });
-++    container.remove();
-++    if (registered) await GlobalRegistrator.unregister();
+++test("Expand updates only the selected chip, including after an external edit", async () => {
+++  const quote = { label: "Quote: quoted", text: "> quoted", lines: 1 };
+++  const other = { label: "Quote: other", text: "> other", lines: 1 };
+++  const paste = { label: "plain", text: "one\ntwo\tthree", lines: 2 };
+++  const q = `[pasted text ${quote.label}]`;
+++  const o = `[pasted text ${other.label}]`;
+++  const p = `[pasted text ${paste.label}]`;
+++  const cases = [
+++    { initial: `${q}after`, edit: `before${q}after`, parts: [quote], click: 0, expected: "before\n\n> quoted\n\nafter", remaining: 0 },
+++    { initial: `${q}\nreply`, parts: [quote], click: 0, expected: "> quoted\n\nreply", remaining: 0 },
+++    { initial: `${q} and ${o} tail`, parts: [quote, other], click: 1, expected: `${q} and \n\n> other\n\n tail`, remaining: 1 },
+++    { initial: `before${p}after`, parts: [paste], click: 0, expected: "beforeone\ntwo\tthreeafter", remaining: 0 },
+++  ];
+++  {
+++    for (const example of cases) {
+++      let observed = "";
+++      let edit = (_value: string) => {};
+++      let expansions = 0;
+++      let changes = 0;
+++      function TestEditor() {
+++        const [value, setValue] = useState(example.initial);
+++        observed = value;
+++        edit = setValue;
+++        return <LexicalPromptEditor value={value} mentions={{}} pastedText={example.parts} submitDisabled={false} placeholder="Message"
+++          onChange={(next) => { changes += 1; setValue(next); }} onSubmit={() => {}}
+++          onExpandPastedText={(_label, draft) => { expansions += 1; setValue(draft); }} />;
+++      }
+++      const container = document.createElement("div");
+++      document.body.append(container);
+++      const root = createRoot(container);
+++      try {
+++        await act(async () => { root.render(<TestEditor />); });
+++        if (example.edit) await act(async () => { edit(example.edit!); });
+++        const buttons = container.querySelectorAll<HTMLButtonElement>('button[aria-label="Expand pasted text in composer"]');
+++        expect(buttons.length).toBe(example.parts.length);
+++        await act(async () => { buttons[example.click]?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+++        expect(observed).toBe(example.expected);
+++        expect(expansions).toBe(1);
+++        expect(changes).toBe(0);
+++        expect(container.querySelectorAll('button[aria-label="Expand pasted text in composer"]').length).toBe(example.remaining);
+++      } finally {
+++        await act(async () => { root.unmount(); });
+++        container.remove();
+++      }
+++    }
 ++  }
 ++});
 +diff --git a/apps/app/tests/quote-send.test.ts b/apps/app/tests/quote-send.test.ts
-+index 84e13874..50dbef69 100644
++index 84e13874..94fc769d 100644
 +--- a/apps/app/tests/quote-send.test.ts
 ++++ b/apps/app/tests/quote-send.test.ts
 +@@ -7,7 +7,7 @@ if (registered) GlobalRegistrator.register();
@@ -13411,7 +13691,7 @@ index 00000000..3760ea23
 +     // With an attachment token the parts are built token by token (draft-parts.ts): each chip by its own label.
 +     const withToken = { ...draft, text: `${draft.text} [attachment a1]` };
 +     const parts = await draftToParts(withToken, "/w", SESSION, null);
-+@@ -58,6 +58,19 @@ describe("quotes in the composer", () => {
++@@ -58,6 +58,22 @@ describe("quotes in the composer", () => {
 +     expect(unresolvedPasteLabels("see [pasted text Quote: lost words]", [])).toEqual(["Quote: lost words"]);
 +   });
 + 
@@ -13425,6 +13705,9 @@ index 00000000..3760ea23
 ++    expect(replacePastedTextPlaceholder(`before${token}after`, part)).toBe("before\n\n> quoted\n\nafter");
 ++    expect(resolvePastedTextPlaceholders(`before${token}after`, [part])).toBe("before\n\n> quoted\n\nafter");
 ++    expect(replacePastedTextPlaceholder(`${token}\n\nreply`, part)).toBe("> quoted\n\nreply");
+++    expect(replacePastedTextPlaceholder(`${token}\nreply`, part)).toBe("> quoted\n\nreply");
+++    expect(replacePastedTextPlaceholder(`${token}\n`, part)).toBe("> quoted\n\n");
+++    expect(resolvePastedTextPlaceholders(`${token}\nreply`, [part])).toBe("> quoted\n\nreply");
 ++    expect(replacePastedTextPlaceholder("a[pasted text ordinary]b", { label: "ordinary", text: "pasted" })).toBe("apastedb");
 ++  });
 ++
@@ -13652,10 +13935,10 @@ index 00000000..df604348
 +}
 diff --git a/fork/scripts/lib/patch-groups.mjs b/fork/scripts/lib/patch-groups.mjs
 new file mode 100644
-index 00000000..1f46af8d
+index 00000000..d841a942
 --- /dev/null
 +++ b/fork/scripts/lib/patch-groups.mjs
-@@ -0,0 +1,194 @@
+@@ -0,0 +1,197 @@
 +// The port, split into patch files. Each group is a set of paths whose diff
 +// against upstream is stored under fork/patches; keeping them apart makes a
 +// conflict easy to locate ("0003 no longer applies" is one file, not five).
@@ -13838,6 +14121,9 @@ index 00000000..1f46af8d
 +      "apps/app/src/react-app/domains/session/chat/side-panel-width.ts",
 +      "apps/app/src/react-app/domains/session/artifacts/workspace-file-tree.tsx",
 +      "apps/app/src/react-app/domains/session/surface/composer/pasted-text.ts",
++      "apps/app/src/react-app/domains/session/surface/composer/pasted-text-insertion.ts",
++      "apps/app/src/react-app/domains/session/surface/composer-state-store.ts",
++      "apps/app/tests/composer-state-store.test.ts",
 +      "apps/app/tests/quote-send.test.ts",
 +      "apps/app/tests/quote-expand-editor.test.tsx",
 +      "apps/app/tests/artifact-header-path.test.ts",

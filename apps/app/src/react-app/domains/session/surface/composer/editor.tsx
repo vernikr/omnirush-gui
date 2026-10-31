@@ -8,11 +8,13 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin.js";
 import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin.js";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext.js";
 import {
+  $addUpdateTag,
   $applyNodeReplacement,
   $createRangeSelection,
   $createParagraphNode,
   $createTextNode,
   $getRoot,
+  $getNearestNodeFromDOMNode,
   $getSelection,
   $nodesOfType,
   $setSelection,
@@ -26,6 +28,9 @@ import {
   KEY_BACKSPACE_COMMAND,
   KEY_ENTER_COMMAND,
   PASTE_COMMAND,
+  ParagraphNode,
+  SELECTION_CHANGE_COMMAND,
+  SKIP_SCROLL_INTO_VIEW_TAG,
   type SerializedTextNode,
   type Spread,
   TextNode,
@@ -36,8 +41,8 @@ import {
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
 import { parseConnectSkillToken } from "./connect-skill-token";
-import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
-import { insertPastedText } from "./pasted-text-insertion";
+import { pastedTextWithBoundaries, shouldCollapsePastedText, splitPastedText } from "./pasted-text";
+import { createPastedTextNodes, insertPastedText } from "./pasted-text-insertion";
 import { padInsertion } from "@/app/lib/voice-core/text";
 
 type PastedTextToken = { label: string; lines: number; text: string };
@@ -58,7 +63,7 @@ type EditorProps = {
   placeholder: string;
   onChange: (value: string) => void;
   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
-  onExpandPastedText?: (label: string) => void;
+  onExpandPastedText?: (label: string, draft: string) => void;
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
   onPasteText?: (text: string) => void;
@@ -1125,7 +1130,27 @@ function pastedExpandButton(target: EventTarget | null) {
   return button instanceof HTMLButtonElement ? button : null;
 }
 
-function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
+const EXPAND_PASTED_TEXT_TAG = "composer-expand-pasted-text";
+
+/** Text around this actual node, not the first identical placeholder in the draft. */
+function textAroundPastedNode(node: ComposerPastedTextNode): { before: string; after: string } | null {
+  const root = $getRoot();
+  const paragraph = node.getParent();
+  if (!$isElementNode(paragraph) || paragraph.getParent() !== root) return null;
+  const paragraphs = root.getChildren();
+  const paragraphIndex = paragraphs.findIndex((item) => item.is(paragraph));
+  if (paragraphIndex < 0) return null;
+  const previousParagraphs = paragraphs.slice(0, paragraphIndex).map((item) => item.getTextContent());
+  const nextParagraphs = paragraphs.slice(paragraphIndex + 1).map((item) => item.getTextContent());
+  return {
+    before: (previousParagraphs.length ? `${previousParagraphs.join("\n")}\n` : "")
+      + node.getPreviousSiblings().map((item) => item.getTextContent()).join(""),
+    after: node.getNextSiblings().map((item) => item.getTextContent()).join("")
+      + (nextParagraphs.length ? `\n${nextParagraphs.join("\n")}` : ""),
+  };
+}
+
+function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string, draft: string) => void }) {
   const [editor] = useLexicalComposerContext();
   const pastedTextRef = useRef(props.pastedText);
   const onExpandPastedTextRef = useRef(props.onExpandPastedText);
@@ -1150,9 +1175,22 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
       event.preventDefault();
       event.stopPropagation();
       const target = pastedTextRef.current?.find((item) => item.label === label);
-      // Expand through the draft once. Mutating Lexical and the external draft
-      // simultaneously races the editor's change listener when text is adjacent.
-      if (target) onExpandPastedTextRef.current?.(label);
+      const onExpand = onExpandPastedTextRef.current;
+      if (!target || !onExpand) return;
+      let expandedDraft: string | null = null;
+      editor.update(() => {
+        const nearest = $getNearestNodeFromDOMNode(button);
+        const node = nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label
+          ? nearest : $nodesOfType(ComposerPastedTextNode).find((item) => item.getPastedLabel() === label);
+        if (!node) return;
+        const surrounding = textAroundPastedNode(node);
+        if (!surrounding) return;
+        const replacement = pastedTextWithBoundaries(target, surrounding.before, surrounding.after);
+        for (const replacementNode of createPastedTextNodes(replacement)) node.insertBefore(replacementNode);
+        node.remove();
+        expandedDraft = serializePromptFromRoot();
+      }, { discrete: true, tag: [EXPAND_PASTED_TEXT_TAG, SKIP_SCROLL_INTO_VIEW_TAG] });
+      if (expandedDraft !== null) onExpand(label, expandedDraft);
     };
 
     return editor.registerRootListener((rootElement, previousRootElement) => {
@@ -1170,13 +1208,42 @@ function MentionChipNavigationPlugin() {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
+    // Lexical's element-caret geometry can point at the wrong child beside a
+    // non-editable chip. Its automatic scroll then jumps away from the caret.
+    const skipChipBoundaryScroll = () => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
+      const anchor = selection.anchor.getNode();
+      if (anchor instanceof ComposerPastedTextNode) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
+      else if ($isElementNode(anchor) && (
+        anchor.getChildAtIndex(selection.anchor.offset - 1) instanceof ComposerPastedTextNode
+        || anchor.getChildAtIndex(selection.anchor.offset) instanceof ComposerPastedTextNode
+      )) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
+      else if ($isTextNode(anchor) && selection.anchor.offset <= 1
+        && anchor.getPreviousSibling() instanceof ComposerPastedTextNode) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
+    };
+    const unregisterSelection = editor.registerCommand(
+      SELECTION_CHANGE_COMMAND,
+      () => { skipChipBoundaryScroll(); return false; },
+      COMMAND_PRIORITY_HIGH,
+    );
+    // Deleting the last adjacent character changes the selection as part of
+    // a text mutation, without necessarily dispatching SELECTION_CHANGE.
+    const unregisterParagraph = editor.registerNodeTransform(ParagraphNode, skipChipBoundaryScroll);
     const unregisterBackspace = editor.registerCommand(
       KEY_BACKSPACE_COMMAND,
-      () => {
+      (event) => {
         const selection = $getSelection();
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
         const anchorNode = selection.anchor.getNode();
-
+        // Chromium can report the caret just after a non-editable chip as an
+        // offset at the end of the chip's token. Delete the whole chip, not
+        // one character of the hidden placeholder.
+        if (anchorNode instanceof ComposerPastedTextNode && selection.anchor.offset > 0) {
+          event.preventDefault();
+          anchorNode.remove();
+          return true;
+        }
         // --- Slash command chip: atomic delete ---
         // When cursor is in the text node right after a slash chip,
         // remove the chip (and any trailing whitespace text) in one action.
@@ -1211,6 +1278,7 @@ function MentionChipNavigationPlugin() {
           const previous = anchorNode.getPreviousSibling();
           if (isComposerInlineTokenNode(previous) && !(previous instanceof ComposerSlashCommandNode)) {
             previous.remove();
+            if (previous instanceof ComposerPastedTextNode) event.preventDefault();
             return true;
           }
         }
@@ -1219,6 +1287,7 @@ function MentionChipNavigationPlugin() {
           const previous = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
           if (isComposerInlineTokenNode(previous)) {
             previous.remove();
+            if (previous instanceof ComposerPastedTextNode) event.preventDefault();
             return true;
           }
         }
@@ -1274,6 +1343,8 @@ function MentionChipNavigationPlugin() {
     );
 
     return () => {
+      unregisterSelection();
+      unregisterParagraph();
       unregisterBackspace();
       unregisterLeft();
       unregisterRight();
@@ -1466,12 +1537,13 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   );
 
   const syncPromptFromEditorState = useCallback(
-    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
+    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0], _editor: LexicalEditor, tags: Set<string>) => {
       state.read(() => {
         const next = serializePromptFromRoot();
         if (next === valueRef.current) return;
         valueRef.current = next;
-        onChangeRef.current(next);
+        // Expand commits draft and chip metadata together through its callback.
+        if (!tags.has(EXPAND_PASTED_TEXT_TAG)) onChangeRef.current(next);
       });
     },
     [],

@@ -25,7 +25,6 @@ import { clearSessionDraft, getSessionDraft, saveSessionDraft } from "@/react-ap
 import { toast } from "@/components/ui/sonner";
 import { encodeComposerMentionValue, type ComposerMentionKind } from "@/react-app/domains/session/surface/composer/mention-encoding";
 import {
-  replacePastedTextPlaceholder,
   createPastedTextChip,
   resolvePastedTextPlaceholders,
   type PastedTextChip,
@@ -345,11 +344,11 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
     updateDraft(`${continuationHolderRef.current.state.draft}[pasted text ${pasted.label}]`);
   };
 
-  const handleExpandPastedText = (id: string) => {
+  const handleExpandPastedText = (id: string, nextDraft: string) => {
     const pasted = continuationHolderRef.current.state.pasteParts.find((item) => item.id === id);
     if (!pasted) return;
-    updateDraft(replacePastedTextPlaceholder(continuationHolderRef.current.state.draft, pasted));
-    updatePasteParts(continuationHolderRef.current.state.pasteParts.filter((item) => item.id !== id));
+    // Keep the part so undo can restore a functional chip.
+    updateDraft(nextDraft);
   };
 
   const handleRemovePastedText = (id: string) => {

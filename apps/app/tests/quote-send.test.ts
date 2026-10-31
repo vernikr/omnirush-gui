@@ -68,6 +68,9 @@ describe("quotes in the composer", () => {
     expect(replacePastedTextPlaceholder(`before${token}after`, part)).toBe("before\n\n> quoted\n\nafter");
     expect(resolvePastedTextPlaceholders(`before${token}after`, [part])).toBe("before\n\n> quoted\n\nafter");
     expect(replacePastedTextPlaceholder(`${token}\n\nreply`, part)).toBe("> quoted\n\nreply");
+    expect(replacePastedTextPlaceholder(`${token}\nreply`, part)).toBe("> quoted\n\nreply");
+    expect(replacePastedTextPlaceholder(`${token}\n`, part)).toBe("> quoted\n\n");
+    expect(resolvePastedTextPlaceholders(`${token}\nreply`, [part])).toBe("> quoted\n\nreply");
     expect(replacePastedTextPlaceholder("a[pasted text ordinary]b", { label: "ordinary", text: "pasted" })).toBe("apastedb");
   });
 

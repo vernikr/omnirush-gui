@@ -106,6 +106,7 @@ sync fetches that commit so `--3way` has the blobs it needs.
 | `0012-desktop-startup-zoom-restore.patch` | restore saved desktop UI zoom on launch and across `#` routes | when upstream edits desktop zoom or preload/main |
 | `0013-session-markdown-export.patch` | export full session/branch (reasoning, tool calls, sub-agents) to `.md` | when upstream edits session commands, sidebar menu, or `session-route.tsx` |
 | `0014-resolve-bare-file-names.patch` | a file named without its path (`` `report.md` ``) opens the highest workspace file with that name | when upstream edits the artifact resolve route or its journey spec |
+| `0015-quote-and-artifact-tree.patch` | quote boundaries and undo, artifact tree resizing and side-panel fixes | when upstream edits the composer, artifact tree or related tests |
 
 ## Secrets
 

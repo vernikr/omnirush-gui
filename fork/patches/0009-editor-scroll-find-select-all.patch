@@ -390,9 +390,18 @@ index 738adbc6..f3831367 100644
    );
  }
 diff --git a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
-index 76a2ff62..f9b718ea 100644
+index 76a2ff62..fa1507cf 100644
 --- a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
+@@ -113,7 +113,7 @@ type ComposerProps = {
+   onPasteText: (text: string) => void;
+   onUnsupportedFileLinks: (links: string[]) => void;
+   pastedText: PastedTextChip[];
+-  onExpandPastedText: (id: string) => void;
++  onExpandPastedText: (id: string, draft: string) => void;
+   onRemovePastedText: (id: string) => void;
+   isRemoteWorkspace: boolean;
+   isSandboxWorkspace: boolean;
 @@ -747,10 +747,20 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
      return undefined;
    }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
@@ -418,6 +427,19 @@ index 76a2ff62..f9b718ea 100644
    const slashFiltered = useMemo(() => {
      if (!slashOpen) return [];
      if (!slashQuery) return slashItems.slice(0, 8);
+@@ -776,10 +786,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
+     [props.attachments],
+   );
+ 
+-  const handleExpandPastedText = useCallback((label: string) => {
++  const handleExpandPastedText = useCallback((label: string, draft: string) => {
+     const target = props.pastedText.find((item) => item.label === label);
+     if (!target) return;
+-    props.onExpandPastedText(target.id);
++    props.onExpandPastedText(target.id, draft);
+   }, [props.onExpandPastedText, props.pastedText]);
+ 
+   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
 @@ -1199,6 +1209,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
      // Oversized images are compressed at send time (see image-compression.ts)
      // so the chip appears instantly instead of blocking on canvas work here.
@@ -435,18 +457,32 @@ index 76a2ff62..f9b718ea 100644
  
    const panelRoundedClass =
 diff --git a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-index 54262b60..6774d77b 100644
+index 54262b60..4b88d881 100644
 --- a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
-@@ -12,7 +12,6 @@ import {
+@@ -8,12 +8,13 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin.js";
+ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin.js";
+ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext.js";
+ import {
++  $addUpdateTag,
+   $applyNodeReplacement,
    $createRangeSelection,
    $createParagraphNode,
    $createTextNode,
 -  $getNearestNodeFromDOMNode,
    $getRoot,
++  $getNearestNodeFromDOMNode,
    $getSelection,
    $nodesOfType,
-@@ -31,6 +30,7 @@ import {
+   $setSelection,
+@@ -27,17 +28,21 @@ import {
+   KEY_BACKSPACE_COMMAND,
+   KEY_ENTER_COMMAND,
+   PASTE_COMMAND,
++  ParagraphNode,
++  SELECTION_CHANGE_COMMAND,
++  SKIP_SCROLL_INTO_VIEW_TAG,
+   type SerializedTextNode,
    type Spread,
    TextNode,
    type EditorConfig,
@@ -454,7 +490,25 @@ index 54262b60..6774d77b 100644
    type NodeKey,
  } from "lexical";
  import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
-@@ -68,6 +68,7 @@ type EditorProps = {
+ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
+ import { parseConnectSkillToken } from "./connect-skill-token";
+-import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
+-import { insertPastedText } from "./pasted-text-insertion";
++import { pastedTextWithBoundaries, shouldCollapsePastedText, splitPastedText } from "./pasted-text";
++import { createPastedTextNodes, insertPastedText } from "./pasted-text-insertion";
+ import { padInsertion } from "@/app/lib/voice-core/text";
+ 
+ type PastedTextToken = { label: string; lines: number; text: string };
+@@ -58,7 +63,7 @@ type EditorProps = {
+   placeholder: string;
+   onChange: (value: string) => void;
+   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
+-  onExpandPastedText?: (label: string) => void;
++  onExpandPastedText?: (label: string, draft: string) => void;
+   onRemoveAttachment?: (id: string) => void;
+   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
+   onPasteText?: (text: string) => void;
+@@ -68,6 +73,7 @@ type EditorProps = {
  };
  
  export type LexicalPromptEditorHandle = {
@@ -462,7 +516,7 @@ index 54262b60..6774d77b 100644
    insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
    /** Voice dictation: marks the cursor with a live (dim) transcript placeholder. */
    voiceBegin: () => void;
-@@ -469,6 +470,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
+@@ -469,6 +475,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
    const dom = document.createElement("span");
    dom.className = "relative mx-0.5 inline-flex h-10 max-w-[140px] shrink-0 items-center align-middle";
    dom.contentEditable = "false";
@@ -471,7 +525,7 @@ index 54262b60..6774d77b 100644
    dom.setAttribute("spellcheck", "false");
    dom.title = attachment.name;
    dom.dataset.attachmentId = attachment.id;
-@@ -1122,20 +1125,6 @@ function pastedExpandButton(target: EventTarget | null) {
+@@ -1122,21 +1130,27 @@ function pastedExpandButton(target: EventTarget | null) {
    return button instanceof HTMLButtonElement ? button : null;
  }
  
@@ -487,12 +541,32 @@ index 54262b60..6774d77b 100644
 -    return insertPastedText(text);
 -  }
 -  return false;
--}
--
- function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
++const EXPAND_PASTED_TEXT_TAG = "composer-expand-pasted-text";
++
++/** Text around this actual node, not the first identical placeholder in the draft. */
++function textAroundPastedNode(node: ComposerPastedTextNode): { before: string; after: string } | null {
++  const root = $getRoot();
++  const paragraph = node.getParent();
++  if (!$isElementNode(paragraph) || paragraph.getParent() !== root) return null;
++  const paragraphs = root.getChildren();
++  const paragraphIndex = paragraphs.findIndex((item) => item.is(paragraph));
++  if (paragraphIndex < 0) return null;
++  const previousParagraphs = paragraphs.slice(0, paragraphIndex).map((item) => item.getTextContent());
++  const nextParagraphs = paragraphs.slice(paragraphIndex + 1).map((item) => item.getTextContent());
++  return {
++    before: (previousParagraphs.length ? `${previousParagraphs.join("\n")}\n` : "")
++      + node.getPreviousSiblings().map((item) => item.getTextContent()).join(""),
++    after: node.getNextSiblings().map((item) => item.getTextContent()).join("")
++      + (nextParagraphs.length ? `\n${nextParagraphs.join("\n")}` : ""),
++  };
+ }
+ 
+-function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
++function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string, draft: string) => void }) {
    const [editor] = useLexicalComposerContext();
    const pastedTextRef = useRef(props.pastedText);
-@@ -1161,12 +1150,9 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
+   const onExpandPastedTextRef = useRef(props.onExpandPastedText);
+@@ -1161,12 +1175,22 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
        event.preventDefault();
        event.stopPropagation();
        const target = pastedTextRef.current?.find((item) => item.label === label);
@@ -502,13 +576,96 @@ index 54262b60..6774d77b 100644
 -        });
 -      }
 -      onExpandPastedTextRef.current?.(label);
-+      // Expand through the draft once. Mutating Lexical and the external draft
-+      // simultaneously races the editor's change listener when text is adjacent.
-+      if (target) onExpandPastedTextRef.current?.(label);
++      const onExpand = onExpandPastedTextRef.current;
++      if (!target || !onExpand) return;
++      let expandedDraft: string | null = null;
++      editor.update(() => {
++        const nearest = $getNearestNodeFromDOMNode(button);
++        const node = nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label
++          ? nearest : $nodesOfType(ComposerPastedTextNode).find((item) => item.getPastedLabel() === label);
++        if (!node) return;
++        const surrounding = textAroundPastedNode(node);
++        if (!surrounding) return;
++        const replacement = pastedTextWithBoundaries(target, surrounding.before, surrounding.after);
++        for (const replacementNode of createPastedTextNodes(replacement)) node.insertBefore(replacementNode);
++        node.remove();
++        expandedDraft = serializePromptFromRoot();
++      }, { discrete: true, tag: [EXPAND_PASTED_TEXT_TAG, SKIP_SCROLL_INTO_VIEW_TAG] });
++      if (expandedDraft !== null) onExpand(label, expandedDraft);
      };
  
      return editor.registerRootListener((rootElement, previousRootElement) => {
-@@ -1301,6 +1287,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
+@@ -1184,13 +1208,42 @@ function MentionChipNavigationPlugin() {
+   const [editor] = useLexicalComposerContext();
+ 
+   useEffect(() => {
++    // Lexical's element-caret geometry can point at the wrong child beside a
++    // non-editable chip. Its automatic scroll then jumps away from the caret.
++    const skipChipBoundaryScroll = () => {
++      const selection = $getSelection();
++      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
++      const anchor = selection.anchor.getNode();
++      if (anchor instanceof ComposerPastedTextNode) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
++      else if ($isElementNode(anchor) && (
++        anchor.getChildAtIndex(selection.anchor.offset - 1) instanceof ComposerPastedTextNode
++        || anchor.getChildAtIndex(selection.anchor.offset) instanceof ComposerPastedTextNode
++      )) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
++      else if ($isTextNode(anchor) && selection.anchor.offset <= 1
++        && anchor.getPreviousSibling() instanceof ComposerPastedTextNode) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
++    };
++    const unregisterSelection = editor.registerCommand(
++      SELECTION_CHANGE_COMMAND,
++      () => { skipChipBoundaryScroll(); return false; },
++      COMMAND_PRIORITY_HIGH,
++    );
++    // Deleting the last adjacent character changes the selection as part of
++    // a text mutation, without necessarily dispatching SELECTION_CHANGE.
++    const unregisterParagraph = editor.registerNodeTransform(ParagraphNode, skipChipBoundaryScroll);
+     const unregisterBackspace = editor.registerCommand(
+       KEY_BACKSPACE_COMMAND,
+-      () => {
++      (event) => {
+         const selection = $getSelection();
+         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+         const anchorNode = selection.anchor.getNode();
+-
++        // Chromium can report the caret just after a non-editable chip as an
++        // offset at the end of the chip's token. Delete the whole chip, not
++        // one character of the hidden placeholder.
++        if (anchorNode instanceof ComposerPastedTextNode && selection.anchor.offset > 0) {
++          event.preventDefault();
++          anchorNode.remove();
++          return true;
++        }
+         // --- Slash command chip: atomic delete ---
+         // When cursor is in the text node right after a slash chip,
+         // remove the chip (and any trailing whitespace text) in one action.
+@@ -1225,6 +1278,7 @@ function MentionChipNavigationPlugin() {
+           const previous = anchorNode.getPreviousSibling();
+           if (isComposerInlineTokenNode(previous) && !(previous instanceof ComposerSlashCommandNode)) {
+             previous.remove();
++            if (previous instanceof ComposerPastedTextNode) event.preventDefault();
+             return true;
+           }
+         }
+@@ -1233,6 +1287,7 @@ function MentionChipNavigationPlugin() {
+           const previous = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
+           if (isComposerInlineTokenNode(previous)) {
+             previous.remove();
++            if (previous instanceof ComposerPastedTextNode) event.preventDefault();
+             return true;
+           }
+         }
+@@ -1288,6 +1343,8 @@ function MentionChipNavigationPlugin() {
+     );
+ 
+     return () => {
++      unregisterSelection();
++      unregisterParagraph();
+       unregisterBackspace();
+       unregisterLeft();
+       unregisterRight();
+@@ -1301,6 +1358,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
    const [editor] = useLexicalComposerContext();
  
    useImperativeHandle(props.editorRef, () => ({
@@ -518,7 +675,7 @@ index 54262b60..6774d77b 100644
      insertSkillAtSelection(skillName: string, skillToken?: string) {
        editor.update(() => insertSkillAtSelection(skillName, skillToken));
        editor.focus();
-@@ -1332,6 +1321,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
+@@ -1332,6 +1392,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
    return null;
  }
  
@@ -600,7 +757,23 @@ index 54262b60..6774d77b 100644
  function attachmentRemoveButton(target: EventTarget | null) {
    if (!(target instanceof Element)) return null;
    const button = target.closest("button[data-attachment-remove-id]");
-@@ -1454,6 +1518,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
+@@ -1402,12 +1537,13 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
+   );
+ 
+   const syncPromptFromEditorState = useCallback(
+-    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
++    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0], _editor: LexicalEditor, tags: Set<string>) => {
+       state.read(() => {
+         const next = serializePromptFromRoot();
+         if (next === valueRef.current) return;
+         valueRef.current = next;
+-        onChangeRef.current(next);
++        // Expand commits draft and chip metadata together through its callback.
++        if (!tags.has(EXPAND_PASTED_TEXT_TAG)) onChangeRef.current(next);
+       });
+     },
+     [],
+@@ -1454,6 +1590,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
          <PasteChipPlugin onPasteText={props.onPasteText} />
          <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
          <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
@@ -609,7 +782,7 @@ index 54262b60..6774d77b 100644
          <ImperativeHandlePlugin editorRef={ref} />
        </div>
 diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-index e6a4472e..3f15a191 100644
+index e6a4472e..3f881530 100644
 --- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 @@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
@@ -627,7 +800,7 @@ index e6a4472e..3f15a191 100644
  import { parseSlashCommandInvocation } from "./composer/slash-command";
  import { parseConnectSkillToken } from "./composer/connect-skill-token";
 -import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, unresolvedPasteLabels } from "./composer/pasted-text";
-+import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, replacePastedTextPlaceholder, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
++import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
  import {
    canAdmitNextQueuedItem,
    claimQueuedSend,
@@ -640,7 +813,15 @@ index e6a4472e..3f15a191 100644
      >
        <Icon aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${iconClass}`} />
        <div className="min-w-0 flex-1">
-@@ -2163,7 +2165,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+@@ -1167,7 +1169,6 @@ function composerSessionHasContent(state: ComposerSessionState | undefined) {
+     state.draft
+     || state.attachments.length
+     || Object.keys(state.mentions).length
+-    || state.pasteParts.length
+     || state.revertMessageId
+   ));
+ }
+@@ -2163,7 +2164,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
        if (pasteMatch) {
          const target = sourcePasteParts.find((item) => item.label === pasteMatch[1]);
          if (target) {
@@ -649,7 +830,7 @@ index e6a4472e..3f15a191 100644
          }
        }
        const connectSkill = parseConnectSkillToken(segment);
-@@ -2312,10 +2314,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
+@@ -2312,10 +2313,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
      return true;
    }, [clearComposer, props.client, props.sessionId, props.workspaceId]);
  
@@ -682,7 +863,7 @@ index e6a4472e..3f15a191 100644
      if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
      const originalDraft = sourceComposer?.draft ?? draft;
      const sourceAttachments = sourceComposer?.attachments ?? attachments;
-@@ -2434,7 +2458,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+@@ -2434,7 +2457,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
      } finally {
        setAttachmentsUploading(false);
      }
@@ -691,7 +872,7 @@ index e6a4472e..3f15a191 100644
  
    // A chat command from a button ("/review", "/fix 1, 3"): sent like a typed one, the composer's draft left alone.
    const runChatCommand = useCallback(async (text: string) => {
-@@ -2486,6 +2510,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+@@ -2486,6 +2509,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
    // sends it once the session reports idle.
    const handleQueue = useCallback(() => {
      if (askSideFromDraft(draft)) return;
@@ -699,7 +880,7 @@ index e6a4472e..3f15a191 100644
      if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
      const text = draft.trim();
      if (!text && attachments.length === 0) return;
-@@ -2495,7 +2520,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+@@ -2495,7 +2519,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
      if (draftHasLostPaste(queuedDraft)) { toast.error(LOST_PASTE_MESSAGE); return; }
      appendQueuedDraft(props.sessionId, queuedDraft);
      clearComposer();
@@ -708,16 +889,23 @@ index e6a4472e..3f15a191 100644
  
    const removeQueuedDraft = useCallback((id: string) => {
      const target = queuedItems.find((item) => item.id === id);
-@@ -2833,7 +2858,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
-   const handleExpandPastedText = useCallback((id: string) => {
-     const part = pasteParts.find((item) => item.id === id);
-     if (!part) return;
--    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, part.text));
-+    setComposerDraft(props.sessionId, replacePastedTextPlaceholder(draft, part));
-     setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
+@@ -2830,12 +2854,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
+     setComposerDraft(props.sessionId, `${draft}[pasted text ${pasted.label}]`);
    }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
  
-@@ -3061,6 +3086,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+-  const handleExpandPastedText = useCallback((id: string) => {
+-    const part = pasteParts.find((item) => item.id === id);
+-    if (!part) return;
+-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, part.text));
+-    setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
+-  }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
++  const handleExpandPastedText = useCallback((id: string, nextDraft: string) => {
++    useComposerStateStore.getState().expandPastePart(props.sessionId, id, nextDraft);
++  }, [props.sessionId]);
+ 
+   const handleRemovePastedText = useCallback((id: string) => {
+     const target = pasteParts.find((item) => item.id === id);
+@@ -3061,6 +3082,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
      const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
      const mod = isMac ? event.metaKey : event.ctrlKey;
      if (!mod || event.shiftKey || event.altKey || event.key?.toLowerCase() !== "f") return;

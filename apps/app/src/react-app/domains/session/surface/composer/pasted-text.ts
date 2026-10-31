@@ -49,7 +49,10 @@ export function pastedTextWithBoundaries(part: Pick<PastedTextChip, "label" | "t
   const isQuote = part.label.startsWith("Quote: ") && part.text.split(/\r?\n/).every((line) => line.startsWith(">"));
   if (!isQuote) return part.text;
   const left = before && !before.endsWith("\n") ? "\n\n" : "";
-  const right = after && !after.startsWith("\n") ? "\n\n" : "";
+  // A single newline still allows Markdown's lazy blockquote continuation.
+  // Keep an existing blank line; otherwise separate following text from it.
+  const right = after && !after.startsWith("\n") ? "\n\n"
+    : /^\n(?!\n)/.test(after) ? "\n" : "";
   return left + part.text + right;
 }
 
