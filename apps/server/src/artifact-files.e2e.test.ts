@@ -27,6 +27,17 @@ async function createWorkspaceRoot() {
   await writeFile(join(root, "reports", "artifact-eval.ts"), "export const artifact = true;\n", "utf8");
   await mkdir(join(root, "node_modules", "hidden-package"), { recursive: true });
   await writeFile(join(root, "node_modules", "hidden-package", "index.ts"), "export {};\n", "utf8");
+  // The same file name at several depths: a transcript that says `deep-report.md`
+  // must open the highest one, not the first one a directory walk stumbles on.
+  await writeFile(join(root, "deep-report.md"), "# Root report\n", "utf8");
+  await mkdir(join(root, "reports", "archive"), { recursive: true });
+  await writeFile(join(root, "reports", "deep-report.md"), "# Reports copy\n", "utf8");
+  await writeFile(join(root, "reports", "archive", "deep-report.md"), "# Archived copy\n", "utf8");
+  await mkdir(join(root, "docs", "guides"), { recursive: true });
+  await writeFile(join(root, "docs", "guides", "nested-only.md"), "# Nested only\n", "utf8");
+  await mkdir(join(root, "src", "components"), { recursive: true });
+  await writeFile(join(root, "src", "components", "button.tsx"), "export const Button = true;\n", "utf8");
+  await writeFile(join(root, "components-notes.ts"), "export const notes = true;\n", "utf8");
   await writeFile(join(root, "reports", "artifact-eval.xlsx"), new Uint8Array([80, 75, 3, 4, 1, 2, 3, 4]));
   await writeFile(join(root, "reports", "artifact-eval.pptx"), new Uint8Array([80, 75, 3, 4, 5, 6, 7, 8]));
   await writeFile(join(root, "reports", "artifact-eval.docx"), new Uint8Array([80, 75, 3, 4, 9, 10, 11, 12]));
@@ -122,6 +133,51 @@ describe("artifact file routes", () => {
     const xlsxDownload = await fetch(`${base}/workspace/ws_1/files/raw?path=${encodeURIComponent("reports/artifact-eval.xlsx")}`, { headers: auth(token) });
     expect(xlsxDownload.status).toBe(200);
     expect(Array.from(new Uint8Array(await xlsxDownload.arrayBuffer()))).toEqual([80, 75, 9, 9]);
+  });
+
+  test("a bare file name opens the highest workspace file with that name", async () => {
+    const root = await createWorkspaceRoot();
+    const { base, token } = await startOmniRushServer(root);
+
+    // One target per reference, answered in request order: an item's `value` is
+    // the path the server resolved, which is the point of the check.
+    const resolve = async (value: string) => {
+      const response = await fetch(`${base}/workspace/ws_1/artifacts/resolve`, {
+        method: "POST",
+        headers: auth(token),
+        body: JSON.stringify({ targets: [{ kind: "file", value, confidence: 80, reason: "message" }] }),
+      });
+      expect(response.status).toBe(200);
+      const resolved = await response.json() as { items: Array<any> };
+      return resolved.items[0];
+    };
+
+    const rootCopy = await resolve("deep-report.md");
+    const reportsCopy = await resolve("reports/deep-report.md");
+    const archivedCopy = await resolve("reports/archive/deep-report.md");
+    const nestedOnly = await resolve("nested-only.md");
+    const partialPath = await resolve("components/button.tsx");
+    const missing = await resolve("docs/guides/missing.md");
+    const directory = await resolve("coverage");
+
+    // The root copy wins over the deeper copies, and the deeper names keep
+    // resolving exactly as written.
+    expect(rootCopy).toMatchObject({ exists: true, value: "deep-report.md", preview: "markdown", name: "deep-report.md" });
+    expect(reportsCopy).toMatchObject({ exists: true, value: "reports/deep-report.md", preview: "markdown" });
+    expect(archivedCopy).toMatchObject({ exists: true, value: "reports/archive/deep-report.md", preview: "markdown" });
+
+    // A name that only exists deep opens the one file that has it, and a
+    // partial path resolves to the highest file whose path ends with it.
+    expect(nestedOnly).toMatchObject({ exists: true, value: "docs/guides/nested-only.md", name: "nested-only.md" });
+    expect(partialPath).toMatchObject({ exists: true, value: "src/components/button.tsx", preview: "code" });
+
+    // Nothing with that name is still not a file, and a directory is not one either.
+    expect(missing).toMatchObject({ exists: false, value: "docs/guides/missing.md" });
+    expect(directory).toMatchObject({ exists: false, value: "coverage" });
+
+    // The resolved path is what the preview then reads.
+    const read = await fetch(`${base}/workspace/ws_1/files/content?path=${encodeURIComponent("docs/guides/nested-only.md")}`, { headers: auth(token) });
+    expect(await read.json()).toMatchObject({ content: "# Nested only\n" });
   });
 
   test("lists code artifacts while excluding heavy directories", async () => {

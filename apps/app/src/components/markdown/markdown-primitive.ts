@@ -13,7 +13,7 @@ import {
 } from "@shikijs/transformers";
 import { bundledLanguages, codeToHtml } from "shiki";
 
-import { faviconUrlForHref } from "@/lib/favicon";
+import { faviconUrlForHref, isGitHubHost } from "@/lib/favicon";
 
 import { markdownMath } from "./markdown-math";
 
@@ -171,7 +171,7 @@ function chatCodeBlockHtml(text: string, lang: string | undefined) {
 }
 
 function surfaceCodeBlockHtml(text: string, lang: string | undefined) {
-  return `<pre class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 px-4 py-3 text-xs leading-6 text-muted-foreground"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`;
+  return `<div data-omnirush-code-block="" class="my-4 overflow-hidden rounded-[18px] border border-dls-border/70 text-xs leading-6"><pre class="m-0 overflow-x-auto bg-transparent px-4 py-3"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre></div>`;
 }
 
 function isMermaidLanguage(lang: string | undefined) {
@@ -275,6 +275,7 @@ function sanitizeMarkdownHtml(value: string) {
       "data-omnirush-inline-code-path",
       "data-omnirush-link-href",
       "data-omnirush-link-chevron",
+      "data-omnirush-favicon",
       "data-omnirush-shiki",
       "decoding",
       "disabled",
@@ -307,8 +308,8 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
       imagePresentation: "simple",
       tableHeaderClassName: "border border-dls-border bg-dls-hover p-2 text-left",
       tableCellClassName: "border border-dls-border p-2 align-top",
-      shikiContainer: `<div data-omnirush-shiki="true" class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 p-4 text-xs leading-6">%s</div>`,
-      shikiTheme: { kind: "single", theme: "github-light" },
+      shikiContainer: `<div data-omnirush-code-block="" data-omnirush-shiki="true" class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 p-4 text-xs leading-6">%s</div>`,
+      shikiTheme: { kind: "dual", light: "github-light", dark: "github-dark" },
     };
   }
 
@@ -361,8 +362,12 @@ function renderLink(profile: MarkdownProfile, href: string, title: string | null
     }
 
     const favicon = faviconUrlForHref(href);
+    let faviconAttr = "";
+    try {
+      if (isGitHubHost(new URL(href).hostname)) faviconAttr = ' data-omnirush-favicon="github"';
+    } catch {}
     const faviconHtml = favicon
-      ? `<img src="${escapeAttribute(favicon)}" alt="" aria-hidden="true" loading="lazy" decoding="async" class="me-1 inline-block size-3.5 rounded-[3px] align-[-2px]" />`
+      ? `<img src="${escapeAttribute(favicon)}" alt="" aria-hidden="true" loading="lazy" decoding="async" class="me-1 inline-block size-3.5 rounded-[3px] align-[-2px]"${faviconAttr} />`
       : "";
 
     return `<a href="${safe}" data-omnirush-link-href="${originalHref}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-[var(--omnirush-link,var(--indigo-10))] no-underline transition-colors hover:text-[var(--omnirush-link-hover,var(--indigo-8))]">${faviconHtml}${text}</a>`;

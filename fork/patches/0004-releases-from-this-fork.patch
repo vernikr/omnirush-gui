@@ -1,0 +1,1075 @@
+diff --git a/apps/desktop/electron/main.mjs b/apps/desktop/electron/main.mjs
+index 0e3aa710..32a14ecf 100644
+--- a/apps/desktop/electron/main.mjs
++++ b/apps/desktop/electron/main.mjs
+@@ -25,6 +25,7 @@ import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./run
+ import { installAppRequestSecret } from "./app-request-secret.mjs";
+ import { registerUpdaterIpc, updatesTurnedOff } from "./updater.mjs";
+ import { initialWindowSize } from "./window-size.mjs";
++import { createWindowZoomController } from "./window-zoom.mjs";
+ import {
+   browserActApproval,
+   browserPermissionMode,
+@@ -47,6 +48,7 @@ import { applyBrandAppName } from "./brand-app-name.mjs";
+ import { createBrowserLoginSync } from "./browser-login-sync.mjs";
+ import { createBrowserPanel } from "./browser-panel.mjs";
+ import { applyBackgroundRenderingSwitches } from "./background-rendering.mjs";
++import { handleSaveFileDialog } from "./save-file.mjs";
+ import { createWorkspaceStore } from "./workspace-store.mjs";
+ import {
+   START_REPORT_FILE,
+@@ -216,14 +218,15 @@ if (BLANK_SLATE_LAUNCH.enabled || process.env.OMNIRUSH_ELECTRON_USE_MOCK_KEYCHAI
+   // system keychain normally.
+   app.commandLine.appendSwitch("use-mock-keychain");
+ }
+-const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/omnirush-ai/omnirush-gui/releases/latest/download";
+-const RELEASE_PAGE_URL = "https://github.com/omnirush-ai/omnirush-gui/releases/latest";
+-const DOCS_PAGE_URL = "https://github.com/omnirush-ai/omnirush-gui#readme";
++const RELEASE_DOWNLOAD_BASE_URL = "https://github.com/vernikr/omnirush-gui/releases/latest/download";
++const RELEASE_PAGE_URL = "https://github.com/vernikr/omnirush-gui/releases/latest";
++const DOCS_PAGE_URL = "https://github.com/vernikr/omnirush-gui#readme";
+ const applicationMenu = createApplicationMenu({
+   appName: DISPLAY_APP_NAME,
+   docsUrl: DOCS_PAGE_URL,
+   getWindow: () => createMainWindow(),
+ });
++const windowZoom = createWindowZoomController();
+ 
+ let browserPanel = null;
+ 
+@@ -2613,12 +2616,18 @@ const desktopCommandHandlers = {
+   },
+   "saveFile": async (event, ...args) => {
+       const options = args[0] ?? {};
+-      const result = await dialog.showSaveDialog(activeWindowFromEvent(event), {
+-        title: options.title,
+-        defaultPath: options.defaultPath,
+-        filters: options.filters,
++      let downloadsDir = null;
++      try {
++        downloadsDir = app.getPath("downloads");
++      } catch {
++        downloadsDir = null;
++      }
++      return handleSaveFileDialog({
++        dialog,
++        parentWindow: activeWindowFromEvent(event),
++        downloadsDir,
++        options,
+       });
+-      return result.canceled ? null : (result.filePath ?? null);
+   },
+   "importSkill": async (event, ...args) => {
+       const projectDir = String(args[0] ?? "").trim();
+@@ -2943,11 +2952,7 @@ const desktopCommandHandlers = {
+   "__setZoomFactor": async (event, ...args) => {
+       const factor = Number(args[0]);
+       const window = activeWindowFromEvent(event);
+-      if (!window || !Number.isFinite(factor) || factor <= 0) {
+-        return false;
+-      }
+-      window.webContents.setZoomFactor(factor);
+-      return true;
++      return windowZoom.setFactor(window, factor);
+   },
+   "__setNativeTheme": async (event, ...args) => {
+       return applyNativeTheme(String(args[0]));
+@@ -3164,6 +3169,7 @@ async function createMainWindow() {
+     await applyCachedBrandIcon(cachedBrandImage, bootSourceUrl);
+   }
+   applicationMenu.applyVisibility(mainWindow);
++  windowZoom.attach(mainWindow);
+   // Sponsored placements: the page's viewability timer stops while the window is blurred, minimized or hidden.
+   watchWindowForPlacements(mainWindow);
+ 
+diff --git a/apps/desktop/electron/preload.mjs b/apps/desktop/electron/preload.mjs
+index 4956f8fa..efab6111 100644
+--- a/apps/desktop/electron/preload.mjs
++++ b/apps/desktop/electron/preload.mjs
+@@ -1,4 +1,4 @@
+-import { contextBridge, ipcRenderer, webUtils } from "electron";
++import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
+ 
+ const NATIVE_DEEP_LINK_EVENT = "omnirush:deep-link-native";
+ const NATIVE_MENU_OPEN_SETTINGS_EVENT = "omnirush:native-menu:open-settings";
+@@ -7,6 +7,54 @@ const NATIVE_MENU_CHECK_UPDATES_EVENT = "omnirush:native-menu:check-updates";
+ const NATIVE_MENU_ZOOM_EVENT = "omnirush:native-menu:zoom";
+ const AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT = "omnirush:automation-runner:credential-rejected";
+ const FINISH_GUARD_EVENT = "omnirush:finish-guard:finish";
++const DESKTOP_FONT_ZOOM_STORAGE_KEY = "omnirush.desktop-font-zoom.v1";
++const MIN_DESKTOP_FONT_ZOOM = 0.8;
++const MAX_DESKTOP_FONT_ZOOM = 1.6;
++const DESKTOP_FONT_ZOOM_STEP = 0.1;
++
++/**
++ * @param {number} value
++ */
++function normalizeDesktopZoomFactor(value) {
++  if (!Number.isFinite(value)) return 1;
++  const clamped = Math.min(MAX_DESKTOP_FONT_ZOOM, Math.max(MIN_DESKTOP_FONT_ZOOM, value));
++  const snapped = Math.round(clamped / DESKTOP_FONT_ZOOM_STEP) * DESKTOP_FONT_ZOOM_STEP;
++  return Number(snapped.toFixed(2));
++}
++
++/**
++ * @param {number} value
++ */
++function applyRendererZoomFactor(value) {
++  const factor = Number(value);
++  if (!Number.isFinite(factor) || factor <= 0) return false;
++  try {
++    webFrame.setZoomFactor(factor);
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++function readInitialStoredZoomFactor() {
++  if (typeof window === "undefined" || !window.localStorage) return null;
++  if (window.location?.href === "about:blank") return null;
++  const raw = window.localStorage.getItem(DESKTOP_FONT_ZOOM_STORAGE_KEY);
++  if (raw == null || raw === "") return null;
++  const parsed = Number.parseFloat(raw);
++  if (!Number.isFinite(parsed)) return null;
++  return normalizeDesktopZoomFactor(parsed);
++}
++
++function applyInitialStoredZoomFactor() {
++  try {
++    const factor = readInitialStoredZoomFactor();
++    if (factor === null) return false;
++    return applyRendererZoomFactor(factor);
++  } catch {
++    return false;
++  }
++}
+ 
+ function normalizePlatform(value) {
+   if (value === "darwin" || value === "linux") return value;
+@@ -23,6 +71,12 @@ function applyShellDocumentMarkers() {
+     root.classList.add("omnirush-electron");
+     if (process.platform === "darwin") {
+       root.classList.add("omnirush-platform-mac");
++      // This fork ships an Intel build next to upstream's Apple Silicon one, and
++      // some window-sized effects are priced for an Apple GPU. The stylesheet
++      // keys those decisions off the architecture of the running binary.
++      if (process.arch === "x64") {
++        root.classList.add("omnirush-platform-mac-intel");
++      }
+     } else if (process.platform === "win32") {
+       root.classList.add("omnirush-platform-windows");
+     } else if (process.platform === "linux") {
+@@ -113,6 +167,21 @@ contextBridge.exposeInMainWorld("__OMNIRUSH_ELECTRON__", {
+       return webUtils.getPathForFile(file);
+     },
+   },
++  zoom: {
++    getFactor() {
++      try {
++        return webFrame.getZoomFactor();
++      } catch {
++        return 1;
++      }
++    },
++    /**
++     * @param {number} factor
++     */
++    setFactor(factor) {
++      return applyRendererZoomFactor(factor);
++    },
++  },
+   shell: {
+     openExternal(url) {
+       return ipcRenderer.invoke("omnirush:shell:openExternal", url);
+@@ -415,6 +484,11 @@ if (!applyShellDocumentMarkers() && typeof document !== "undefined") {
+   document.addEventListener("DOMContentLoaded", applyShellDocumentMarkers, { once: true });
+ }
+ 
++applyInitialStoredZoomFactor();
++if (typeof document !== "undefined" && document.readyState === "loading") {
++  document.addEventListener("DOMContentLoaded", applyInitialStoredZoomFactor, { once: true });
++}
++
+ if (!installMenuOverlayDismissListeners() && typeof document !== "undefined") {
+   document.addEventListener("DOMContentLoaded", installMenuOverlayDismissListeners, { once: true });
+ }
+diff --git a/apps/desktop/electron/recovery.mjs b/apps/desktop/electron/recovery.mjs
+index 3b7906a8..ed094f1a 100644
+--- a/apps/desktop/electron/recovery.mjs
++++ b/apps/desktop/electron/recovery.mjs
+@@ -103,7 +103,7 @@ function validRecoveryArtifactIdentity(artifact) {
+   } catch {
+     return false;
+   }
+-  const prefix = `/omnirush-ai/omnirush-gui/releases/download/v${version}/`;
++  const prefix = `/vernikr/omnirush-gui/releases/download/v${version}/`;
+   if (url.protocol !== "https:" || url.hostname !== "github.com" || !url.pathname.startsWith(prefix)) return false;
+   const assetArch = artifact.platform === "linux" && artifact.arch === "x64" ? "x86_64" : artifact.arch;
+   const platformSlug = artifact.platform === "darwin" ? "mac" : artifact.platform === "win32" ? "win" : "linux";
+@@ -124,10 +124,10 @@ export function selectRecoveryArtifact(files, { version, platform, arch, distrib
+     && typeof file.sha512 === "string"
+     && file.sha512.trim(),
+   );
+-  const baseUrl = `https://github.com/omnirush-ai/omnirush-gui/releases/download/v${normalizedVersion}/`;
++  const baseUrl = `https://github.com/vernikr/omnirush-gui/releases/download/v${normalizedVersion}/`;
+   for (const selected of matching) {
+     const url = new URL(selected.url, baseUrl);
+-    if (url.origin !== "https://github.com" || !url.pathname.startsWith(`/omnirush-ai/omnirush-gui/releases/download/v${normalizedVersion}/`)) {
++    if (url.origin !== "https://github.com" || !url.pathname.startsWith(`/vernikr/omnirush-gui/releases/download/v${normalizedVersion}/`)) {
+       continue;
+     }
+     const artifact = {
+diff --git a/apps/desktop/electron/save-file.mjs b/apps/desktop/electron/save-file.mjs
+new file mode 100644
+index 00000000..75714387
+--- /dev/null
++++ b/apps/desktop/electron/save-file.mjs
+@@ -0,0 +1,241 @@
++import { randomBytes } from "node:crypto";
++import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
++import { mkdir, rename, unlink, writeFile } from "node:fs/promises";
++import os from "node:os";
++import path from "node:path";
++
++/**
++ * Find the deepest ancestor of `targetPath` that already exists on disk so we
++ * can resolve symlinks before creating any missing parent directories.
++ *
++ * @param {string} targetPath
++ * @returns {string}
++ */
++function deepestExistingAncestor(targetPath) {
++  let current = path.resolve(targetPath);
++  while (!existsSync(current)) {
++    const parent = path.dirname(current);
++    if (parent === current) break;
++    current = parent;
++  }
++  return current;
++}
++
++/**
++ * True when `childPath` is strictly inside `rootPath` (not equal to root, not
++ * traversing above root, and not crossing Windows drive letters).
++ *
++ * @param {string} rootPath
++ * @param {string} childPath
++ * @returns {boolean}
++ */
++function isStrictlyInsideDirectory(rootPath, childPath) {
++  const rel = path.relative(rootPath, childPath);
++  return Boolean(rel) && rel !== "." && !rel.startsWith("..") && !path.isAbsolute(rel);
++}
++
++/**
++ * Resolve a collision-free file path inside `directory` by appending ` (1)`,
++ * ` (2)`, etc. before the file extension when a file with the same name
++ * already exists (matching standard browser / macOS Downloads behavior).
++ *
++ * @param {string} directory
++ * @param {string} fileName
++ * @returns {string}
++ */
++export function resolveUniqueDownloadPath(directory, fileName) {
++  const cleanLeaf = path.basename(String(fileName || "").trim()) || "omnirush-chat.md";
++  const ext = path.extname(cleanLeaf);
++  const stem = ext ? cleanLeaf.slice(0, -ext.length) : cleanLeaf;
++  const resolvedDir = path.resolve(directory);
++
++  for (let suffix = 0; suffix < 10_000; suffix += 1) {
++    const candidateLeaf = suffix === 0 ? cleanLeaf : `${stem} (${suffix})${ext}`;
++    const candidatePath = path.join(resolvedDir, candidateLeaf);
++    try {
++      lstatSync(candidatePath);
++    } catch (error) {
++      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
++        return candidatePath;
++      }
++      throw error;
++    }
++  }
++  return path.join(resolvedDir, `${stem}-${Date.now()}${ext}`);
++}
++
++/**
++ * Resolve a relative export target inside `workspaceRoot`, refusing path
++ * traversal, symlink escapes, and overwriting existing files (matching
++ * FreeBuff's `/export <filename>` safety guarantees).
++ *
++ * @param {{ workspaceRoot: string; relativePath: string }} input
++ * @returns {string}
++ */
++export function resolveDirectExportPath({ workspaceRoot, relativePath }) {
++  const rootTrimmed = typeof workspaceRoot === "string" ? workspaceRoot.trim() : "";
++  const relTrimmed = typeof relativePath === "string" ? relativePath.trim() : "";
++  if (!rootTrimmed) {
++    throw new Error("Project folder is not available for relative export paths");
++  }
++  if (!relTrimmed || relTrimmed.includes("\0")) {
++    throw new Error("Invalid export filename");
++  }
++  if (path.isAbsolute(relTrimmed) || /^[a-zA-Z]:[\\/]/.test(relTrimmed)) {
++    throw new Error("Refusing to write outside the project folder");
++  }
++
++  const resolvedRoot = path.resolve(rootTrimmed);
++  let rootReal;
++  try {
++    const rootStat = statSync(resolvedRoot);
++    if (!rootStat.isDirectory()) {
++      throw new Error("Project folder is not a local directory");
++    }
++    rootReal = realpathSync(resolvedRoot);
++  } catch (error) {
++    if (error instanceof Error && error.message === "Project folder is not a local directory") {
++      throw error;
++    }
++    throw new Error("Project folder is not accessible on disk");
++  }
++
++  const candidate = path.resolve(resolvedRoot, relTrimmed);
++  if (!isStrictlyInsideDirectory(resolvedRoot, candidate)) {
++    throw new Error("Refusing to write outside the project folder");
++  }
++
++  const existingAncestor = deepestExistingAncestor(path.dirname(candidate));
++  const existingAncestorReal = realpathSync(existingAncestor);
++  if (existingAncestorReal !== rootReal && !isStrictlyInsideDirectory(rootReal, existingAncestorReal)) {
++    throw new Error("Refusing to write outside the project folder");
++  }
++
++  try {
++    lstatSync(candidate);
++    throw new Error(`${relTrimmed} already exists — pass a new filename`);
++  } catch (error) {
++    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
++      return candidate;
++    }
++    throw error;
++  }
++}
++
++/**
++ * Write UTF-8 text atomically via a sibling temporary file + rename.
++ *
++ * @param {string} filePath
++ * @param {string} content
++ */
++export async function writeTextFileAtomically(filePath, content) {
++  const resolved = path.resolve(filePath);
++  const dir = path.dirname(resolved);
++  await mkdir(dir, { recursive: true });
++  const nonce = randomBytes(6).toString("hex");
++  const tempPath = path.join(dir, `.${path.basename(resolved)}.${process.pid}.${nonce}.tmp`);
++  try {
++    await writeFile(tempPath, content, "utf8");
++    await rename(tempPath, resolved);
++  } catch (error) {
++    await unlink(tempPath).catch(() => {});
++    throw error;
++  }
++}
++
++/**
++ * Resolve a sensible initial path for Electron's native Save dialog when a
++ * bare filename is supplied.
++ *
++ * @param {{ defaultPath?: string; workspaceRoot?: string; downloadsDir?: string | null }} input
++ * @returns {string | undefined}
++ */
++export function resolveDialogDefaultPath({ defaultPath, workspaceRoot, downloadsDir }) {
++  const trimmed = typeof defaultPath === "string" ? defaultPath.trim() : "";
++  if (!trimmed) return undefined;
++  if (path.isAbsolute(trimmed)) return trimmed;
++
++  if (typeof downloadsDir === "string" && downloadsDir.trim()) {
++    return path.join(downloadsDir.trim(), trimmed);
++  }
++  const rootTrimmed = typeof workspaceRoot === "string" ? workspaceRoot.trim() : "";
++  if (rootTrimmed) {
++    try {
++      if (statSync(rootTrimmed).isDirectory()) {
++        return path.join(rootTrimmed, trimmed);
++      }
++    } catch {
++      // Ignore missing workspaceRoot.
++    }
++  }
++  return trimmed;
++}
++
++/**
++ * Handle the renderer `saveFile` IPC request:
++ * - Direct save into `Downloads` when `saveToDownloads: true` is passed
++ * - Direct relative workspace write when `relativePath` is provided
++ * - Interactive native Save dialog otherwise (writing `content` atomically when supplied)
++ *
++ * @param {{
++ *   dialog: { showSaveDialog: (win: any, options: any) => Promise<{ canceled: boolean; filePath?: string }> };
++ *   parentWindow?: any;
++ *   downloadsDir?: string | null;
++ *   options?: {
++ *     title?: string;
++ *     defaultPath?: string;
++ *     filters?: { name: string; extensions: string[] }[];
++ *     content?: string;
++ *     workspaceRoot?: string;
++ *     relativePath?: string;
++ *     saveToDownloads?: boolean;
++ *   };
++ * }} params
++ * @returns {Promise<string | null>}
++ */
++export async function handleSaveFileDialog({ dialog, parentWindow, downloadsDir, options = {} }) {
++  if (options.saveToDownloads === true) {
++    if (typeof options.content !== "string") {
++      throw new Error("content is required when saveToDownloads is true");
++    }
++    const targetDir =
++      (typeof downloadsDir === "string" && downloadsDir.trim()) ||
++      path.join(os.homedir(), "Downloads");
++    await mkdir(targetDir, { recursive: true });
++    const targetPath = resolveUniqueDownloadPath(targetDir, options.defaultPath ?? "omnirush-chat.md");
++    await writeTextFileAtomically(targetPath, options.content);
++    return targetPath;
++  }
++
++  if (typeof options.relativePath === "string" && options.relativePath.trim()) {
++    if (typeof options.content !== "string") {
++      throw new Error("content is required when saving to relativePath");
++    }
++    const targetPath = resolveDirectExportPath({
++      workspaceRoot: options.workspaceRoot ?? "",
++      relativePath: options.relativePath,
++    });
++    await writeTextFileAtomically(targetPath, options.content);
++    return targetPath;
++  }
++
++  const resolvedDefaultPath = resolveDialogDefaultPath({
++    defaultPath: options.defaultPath,
++    workspaceRoot: options.workspaceRoot,
++    downloadsDir,
++  });
++
++  const dialogOptions = {
++    title: options.title,
++    defaultPath: resolvedDefaultPath,
++    filters: options.filters,
++  };
++  const result = await dialog.showSaveDialog(parentWindow, dialogOptions);
++  if (result.canceled || !result.filePath) {
++    return null;
++  }
++  if (typeof options.content === "string") {
++    await writeTextFileAtomically(result.filePath, options.content);
++  }
++  return result.filePath;
++}
+diff --git a/apps/desktop/electron/save-file.test.mjs b/apps/desktop/electron/save-file.test.mjs
+new file mode 100644
+index 00000000..6ccebd88
+--- /dev/null
++++ b/apps/desktop/electron/save-file.test.mjs
+@@ -0,0 +1,160 @@
++import assert from "node:assert/strict";
++import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import test from "node:test";
++
++import {
++  handleSaveFileDialog,
++  resolveDialogDefaultPath,
++  resolveDirectExportPath,
++  resolveUniqueDownloadPath,
++} from "./save-file.mjs";
++
++test("saveToDownloads writes directly into Downloads and deduplicates collisions without opening dialog", async () => {
++  const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-downloads-"));
++  try {
++    const first = await handleSaveFileDialog({
++      dialog: {
++        showSaveDialog: async () => {
++          throw new Error("dialog must not open when saveToDownloads is true");
++        },
++      },
++      downloadsDir: downloads,
++      options: {
++        saveToDownloads: true,
++        defaultPath: "omnirush-chat.md",
++        content: "# First export\n",
++      },
++    });
++    assert.equal(first, path.join(downloads, "omnirush-chat.md"));
++    assert.equal(readFileSync(first, "utf8"), "# First export\n");
++
++    const second = await handleSaveFileDialog({
++      dialog: {
++        showSaveDialog: async () => {
++          throw new Error("dialog must not open when saveToDownloads is true");
++        },
++      },
++      downloadsDir: downloads,
++      options: {
++        saveToDownloads: true,
++        defaultPath: "omnirush-chat.md",
++        content: "# Second export\n",
++      },
++    });
++    assert.equal(second, path.join(downloads, "omnirush-chat (1).md"));
++    assert.equal(readFileSync(second, "utf8"), "# Second export\n");
++    assert.equal(resolveUniqueDownloadPath(downloads, "omnirush-chat.md"), path.join(downloads, "omnirush-chat (2).md"));
++  } finally {
++    rmSync(downloads, { recursive: true, force: true });
++  }
++});
++
++test("handleSaveFileDialog writes UTF-8 content atomically when user picks a save path", async () => {
++  const dir = mkdtempSync(path.join(os.tmpdir(), "omnirush-save-file-"));
++  const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-save-dl-"));
++  try {
++    const picked = path.join(dir, "exports", "thread.md");
++    const saved = await handleSaveFileDialog({
++      dialog: {
++        showSaveDialog: async (_win, opts) => {
++          assert.equal(opts.defaultPath, path.join(downloads, "omnirush-chat.md"));
++          return { canceled: false, filePath: picked };
++        },
++      },
++      parentWindow: null,
++      downloadsDir: downloads,
++      options: {
++        title: "Export chat as Markdown",
++        defaultPath: "omnirush-chat.md",
++        workspaceRoot: dir,
++        content: "# Session\n\n> _Reasoning_\n> привет мир\n",
++      },
++    });
++
++    assert.equal(saved, picked);
++    assert.equal(readFileSync(picked, "utf8"), "# Session\n\n> _Reasoning_\n> привет мир\n");
++  } finally {
++    rmSync(dir, { recursive: true, force: true });
++    rmSync(downloads, { recursive: true, force: true });
++  }
++});
++
++test("handleSaveFileDialog returns null without writing when canceled", async () => {
++  const saved = await handleSaveFileDialog({
++    dialog: {
++      showSaveDialog: async () => ({ canceled: true, filePath: undefined }),
++    },
++    options: {
++      defaultPath: "chat.md",
++      content: "# Ignored",
++    },
++  });
++  assert.equal(saved, null);
++});
++
++test("resolveDirectExportPath refuses traversal, symlink escapes, and overwriting existing files", async () => {
++  const base = mkdtempSync(path.join(os.tmpdir(), "omnirush-direct-export-"));
++  const outside = mkdtempSync(path.join(os.tmpdir(), "omnirush-outside-"));
++  try {
++    assert.throws(
++      () => resolveDirectExportPath({ workspaceRoot: base, relativePath: "../escape.md" }),
++      /outside the project folder/,
++    );
++    assert.throws(
++      () => resolveDirectExportPath({ workspaceRoot: base, relativePath: "/etc/passwd" }),
++      /outside the project folder/,
++    );
++
++    const escapeLink = path.join(base, "linked-out");
++    symlinkSync(outside, escapeLink);
++    assert.throws(
++      () => resolveDirectExportPath({ workspaceRoot: base, relativePath: "linked-out/secret.md" }),
++      /outside the project folder/,
++    );
++
++    const existing = path.join(base, "already.md");
++    writeFileSync(existing, "keep me", "utf8");
++    assert.throws(
++      () => resolveDirectExportPath({ workspaceRoot: base, relativePath: "already.md" }),
++      /already exists/,
++    );
++
++    const nestedSaved = await handleSaveFileDialog({
++      dialog: {
++        showSaveDialog: async () => {
++          throw new Error("dialog must not open for relativePath");
++        },
++      },
++      options: {
++        workspaceRoot: base,
++        relativePath: "notes/chat-export.md",
++        content: "# Direct export\n",
++      },
++    });
++    assert.equal(nestedSaved, path.join(base, "notes", "chat-export.md"));
++    assert.equal(readFileSync(nestedSaved, "utf8"), "# Direct export\n");
++  } finally {
++    rmSync(base, { recursive: true, force: true });
++    rmSync(outside, { recursive: true, force: true });
++  }
++});
++
++test("resolveDialogDefaultPath prefers downloadsDir and falls back to workspaceRoot when downloadsDir is absent", () => {
++  const downloads = mkdtempSync(path.join(os.tmpdir(), "omnirush-dl-"));
++  try {
++    const sub = path.join(downloads, "project");
++    mkdirSync(sub);
++    assert.equal(
++      resolveDialogDefaultPath({ defaultPath: "chat.md", workspaceRoot: sub, downloadsDir: downloads }),
++      path.join(downloads, "chat.md"),
++    );
++    assert.equal(
++      resolveDialogDefaultPath({ defaultPath: "chat.md", workspaceRoot: sub, downloadsDir: null }),
++      path.join(sub, "chat.md"),
++    );
++  } finally {
++    rmSync(downloads, { recursive: true, force: true });
++  }
++});
+diff --git a/apps/desktop/electron/updater.mjs b/apps/desktop/electron/updater.mjs
+index 3d9a71b1..0ec1c039 100644
+--- a/apps/desktop/electron/updater.mjs
++++ b/apps/desktop/electron/updater.mjs
+@@ -67,7 +67,7 @@ function resolveAppVersion(app) {
+ // The public distribution reads `latest*.yml` from the latest GitHub release.
+ // There is no public Alpha feed: the Alpha channel exists only when a
+ // distribution ships its own feed directory (see updaterFeedOptions).
+-const GITHUB_RELEASES_URL = "https://github.com/omnirush-ai/omnirush-gui/releases";
++const GITHUB_RELEASES_URL = "https://github.com/vernikr/omnirush-gui/releases";
+ export const STABLE_UPDATER_FEED_URL = `${GITHUB_RELEASES_URL}/latest/download`;
+ 
+ /**
+@@ -241,7 +241,7 @@ export function targetedStableUpdaterFeed(currentVersion, targetVersion, allowOl
+       ? "Recovery target version must differ from the installed version."
+       : "Target update version must be newer than the installed version.");
+   }
+-  return `https://github.com/omnirush-ai/omnirush-gui/releases/download/v${normalizedTarget}`;
++  return `https://github.com/vernikr/omnirush-gui/releases/download/v${normalizedTarget}`;
+ }
+ 
+ function updaterChannelState(app, channel, targetVersion, feedOptions) {
+@@ -439,7 +439,7 @@ function installerAssetArch(arch) {
+ export function releaseAssetDirectory(feedUrl, version) {
+   const base = typeof feedUrl === "string" ? feedUrl.replace(/\/+$/, "") : "";
+   if (base === STABLE_UPDATER_FEED_URL && typeof version === "string" && /^\d+\.\d+\.\d+/.test(version)) {
+-    return `https://github.com/omnirush-ai/omnirush-gui/releases/download/v${version}`;
++    return `https://github.com/vernikr/omnirush-gui/releases/download/v${version}`;
+   }
+   return base;
+ }
+@@ -991,7 +991,7 @@ export function registerUpdaterIpc({
+   async function resolveRecoveryArtifact(version) {
+     if (!electronNet?.fetch) return null;
+     try {
+-      const manifestUrl = `https://github.com/omnirush-ai/omnirush-gui/releases/download/v${version}/${recoveryManifestName(platform, arch, distribution)}`;
++      const manifestUrl = `https://github.com/vernikr/omnirush-gui/releases/download/v${version}/${recoveryManifestName(platform, arch, distribution)}`;
+       const response = await electronNet.fetch(manifestUrl, { headers: { Accept: "text/yaml, text/plain, */*" } });
+       if (!response.ok) return null;
+       return selectRecoveryArtifact(parseRecoveryManifest(await response.text()), {
+diff --git a/apps/desktop/electron/updater.test.mjs b/apps/desktop/electron/updater.test.mjs
+index 59ab2de4..8123cf74 100644
+--- a/apps/desktop/electron/updater.test.mjs
++++ b/apps/desktop/electron/updater.test.mjs
+@@ -34,7 +34,7 @@ import {
+ } from "./recovery.mjs";
+ 
+ const fakeApp = { getPath: (key) => (key === "home" ? "/Users/test" : `/Users/test/${key}`) };
+-const STABLE_FEED = "https://github.com/omnirush-ai/omnirush-gui/releases/latest/download";
++const STABLE_FEED = "https://github.com/vernikr/omnirush-gui/releases/latest/download";
+ const ALPHA_FEED = "https://updates.example.com/alpha";
+ 
+ // Unpackaged builds resolve their version from package.json, so release bumps
+@@ -160,7 +160,7 @@ describe("targetedStableUpdaterFeed", () => {
+   it("builds a fixed GitHub release feed from a strict stable version", () => {
+     assert.equal(
+       targetedStableUpdaterFeed("0.17.22", "0.17.23"),
+-      "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.23",
++      "https://github.com/vernikr/omnirush-gui/releases/download/v0.17.23",
+     );
+   });
+ 
+@@ -189,7 +189,7 @@ describe("targetedStableUpdaterFeed", () => {
+   it("allows only an explicit exact recovery downgrade", () => {
+     assert.equal(
+       targetedStableUpdaterFeed("0.17.23", "0.17.22", true),
+-      "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.22",
++      "https://github.com/vernikr/omnirush-gui/releases/download/v0.17.22",
+     );
+     assert.throws(
+       () => targetedStableUpdaterFeed("0.17.23", "0.17.23", true),
+@@ -278,7 +278,7 @@ describe("recovery metadata and candidates", () => {
+       platform: "darwin",
+       arch: "arm64",
+       distribution: "public",
+-      url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3/omnirush-mac-arm64-1.2.3.dmg",
++      url: "https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3/omnirush-mac-arm64-1.2.3.dmg",
+       sha512: "verified",
+     });
+     assert.equal(selectRecoveryArtifact(files, {
+@@ -299,7 +299,7 @@ describe("recovery metadata and candidates", () => {
+       const files = [{ url: fileName, sha512: `${distribution}-checksum` }];
+       assert.equal(selectRecoveryArtifact(files, {
+         version: "1.2.3", platform: "darwin", arch: "arm64", distribution,
+-      })?.url, `https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3/${fileName}`);
++      })?.url, `https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3/${fileName}`);
+       for (const otherDistribution of Object.keys(artifacts).filter((flavor) => flavor !== distribution)) {
+         assert.equal(selectRecoveryArtifact(files, {
+           version: "1.2.3", platform: "darwin", arch: "arm64", distribution: otherDistribution,
+@@ -342,7 +342,7 @@ releaseDate: '2026-08-11T00:00:00.000Z'
+       await assert.rejects(
+         cacheVerifiedRecoveryArtifact({
+           app: { getPath: () => userData },
+-          artifact: { url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3/omnirush.dmg", sha512: "invalid" },
++          artifact: { url: "https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3/omnirush.dmg", sha512: "invalid" },
+           fetchArtifact: async () => new Response("tampered"),
+         }),
+         /checksum did not match/,
+@@ -361,7 +361,7 @@ releaseDate: '2026-08-11T00:00:00.000Z'
+       platform: "darwin",
+       arch: "arm64",
+       distribution: "public",
+-      url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3/omnirush-mac-arm64-1.2.3.dmg",
++      url: "https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3/omnirush-mac-arm64-1.2.3.dmg",
+       sha512: createHash("sha512").update(bytes).digest("base64"),
+     };
+     try {
+@@ -397,7 +397,7 @@ releaseDate: '2026-08-11T00:00:00.000Z'
+       platform: "darwin",
+       arch: "arm64",
+       distribution: "public",
+-      url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.18.18/omnirush-mac-arm64-0.18.18.dmg",
++      url: "https://github.com/vernikr/omnirush-gui/releases/download/v0.18.18/omnirush-mac-arm64-0.18.18.dmg",
+       sha512: createHash("sha512").update(bytes).digest("base64"),
+     };
+     const expected = { platform: "darwin", arch: "arm64", distribution: "public" };
+@@ -429,7 +429,7 @@ releaseDate: '2026-08-11T00:00:00.000Z'
+       platform: "darwin",
+       arch: "arm64",
+       distribution: "public",
+-      url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.9.0/omnirush-mac-arm64-1.9.0.dmg",
++      url: "https://github.com/vernikr/omnirush-gui/releases/download/v1.9.0/omnirush-mac-arm64-1.9.0.dmg",
+       sha512: createHash("sha512").update(bytes).digest("base64"),
+     };
+     const handlers = new Map();
+@@ -712,7 +712,7 @@ describe("macOS code signature detection", () => {
+   });
+ });
+ 
+-const RELEASE_123 = "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3";
++const RELEASE_123 = "https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3";
+ 
+ describe("manual installer artifacts", () => {
+   const files = [
+@@ -791,7 +791,7 @@ describe("macOS manual installer fallback", () => {
+       assert.equal(checked.installMode, "manual-dmg");
+ 
+       assert.deepEqual(await download(), { ok: true, mode: "manual-dmg" });
+-      assert.deepEqual(fetched, ["https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.1/omnirush-mac-arm64-0.17.1.dmg"]);
++      assert.deepEqual(fetched, ["https://github.com/vernikr/omnirush-gui/releases/download/v0.17.1/omnirush-mac-arm64-0.17.1.dmg"]);
+       assert.deepEqual(calls, [], "electron-updater's zip download must not run");
+       const progress = sent.filter((event) => event.channel === "omnirush:updater:download-progress");
+       assert.equal(progress.at(-1)?.data.transferred, bytes.length);
+@@ -929,7 +929,7 @@ describe("release channel changes", () => {
+       // Windows differential download: single ranges (GitHub answers multi-range
+       // requests with 501) and the installed version's blockmap from its own release.
+       assert.equal(feeds.at(-1)?.useMultipleRangeRequest, false);
+-      assert.equal(updater.previousBlockmapBaseUrlOverride, "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.0");
++      assert.equal(updater.previousBlockmapBaseUrlOverride, "https://github.com/vernikr/omnirush-gui/releases/download/v0.17.0");
+ 
+       const selected = await setChannel(null, "alpha");
+       assert.equal(selected.channel, "stable");
+@@ -1342,7 +1342,7 @@ describe("dev update feed override", () => {
+   });
+ });
+ 
+-const RELEASE_0171 = "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.1";
++const RELEASE_0171 = "https://github.com/vernikr/omnirush-gui/releases/download/v0.17.1";
+ const sha512Of = (bytes) => createHash("sha512").update(bytes).digest("base64");
+ const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+ 
+diff --git a/apps/desktop/electron/window-zoom.mjs b/apps/desktop/electron/window-zoom.mjs
+new file mode 100644
+index 00000000..606a062d
+--- /dev/null
++++ b/apps/desktop/electron/window-zoom.mjs
+@@ -0,0 +1,124 @@
++/**
++ * Keeps each BrowserWindow's desired UI zoom factor synchronized without
++ * calling webContents.setZoomFactor while the window is still hidden before
++ * ready-to-show (electron#51972) or losing zoom across file:// #hash route
++ * transitions on Electron <43.3 (electron#54381).
++ *
++ * @typedef {{
++ *   isDestroyed?: () => boolean;
++ *   getZoomFactor?: () => number;
++ *   setZoomFactor?: (factor: number) => void;
++ *   on?: (event: string, listener: () => void) => unknown;
++ * }} ZoomableWebContents
++ *
++ * @typedef {{
++ *   isDestroyed?: () => boolean;
++ *   isVisible?: () => boolean;
++ *   on?: (event: string, listener: () => void) => unknown;
++ *   webContents?: ZoomableWebContents | null;
++ * }} ZoomableWindow
++ */
++
++/**
++ * @param {ZoomableWindow | null | undefined} win
++ * @returns {win is ZoomableWindow}
++ */
++function isUsableWindow(win) {
++  return Boolean(win && (typeof win.isDestroyed !== "function" || !win.isDestroyed()));
++}
++
++/**
++ * @param {ZoomableWindow | null | undefined} win
++ */
++function isWindowVisible(win) {
++  if (!isUsableWindow(win)) return false;
++  return typeof win.isVisible === "function" ? Boolean(win.isVisible()) : true;
++}
++
++export function createWindowZoomController() {
++  /** @type {WeakMap<ZoomableWindow, number>} */
++  const desiredFactors = new WeakMap();
++  /** @type {WeakSet<ZoomableWindow>} */
++  const attachedWindows = new WeakSet();
++  /** @type {WeakSet<ZoomableWindow>} */
++  const pendingWindows = new WeakSet();
++
++  /**
++   * @param {ZoomableWindow | null | undefined} win
++   */
++  function syncVisibleWindowZoom(win) {
++    if (!isUsableWindow(win) || !isWindowVisible(win)) return false;
++    const factor = desiredFactors.get(win);
++    if (typeof factor !== "number" || !Number.isFinite(factor) || factor <= 0) {
++      return false;
++    }
++    const contents = win.webContents;
++    if (!contents || (typeof contents.isDestroyed === "function" && contents.isDestroyed())) {
++      return false;
++    }
++    const pending = pendingWindows.delete(win);
++    if (!pending && typeof contents.getZoomFactor === "function") {
++      const current = contents.getZoomFactor();
++      if (Number.isFinite(current) && Math.abs(current - factor) <= 1e-3) {
++        return true;
++      }
++    }
++    contents.setZoomFactor?.(factor);
++    return true;
++  }
++
++  /**
++   * @param {ZoomableWindow | null | undefined} win
++   */
++  function attach(win) {
++    if (!isUsableWindow(win) || attachedWindows.has(win)) return;
++    attachedWindows.add(win);
++    const resync = () => {
++      syncVisibleWindowZoom(win);
++    };
++    if (typeof win.on === "function") {
++      win.on("show", resync);
++      win.on("restore", resync);
++    }
++    const contents = win.webContents;
++    if (contents && typeof contents.on === "function") {
++      contents.on("did-finish-load", resync);
++      contents.on("did-navigate-in-page", resync);
++    }
++  }
++
++  /**
++   * @param {ZoomableWindow | null | undefined} win
++   * @param {number} rawFactor
++   */
++  function setFactor(win, rawFactor) {
++    const factor = Number(rawFactor);
++    if (!isUsableWindow(win) || !Number.isFinite(factor) || factor <= 0) {
++      return false;
++    }
++    attach(win);
++    desiredFactors.set(win, factor);
++    if (!isWindowVisible(win)) {
++      pendingWindows.add(win);
++      return true;
++    }
++    pendingWindows.delete(win);
++    win.webContents?.setZoomFactor?.(factor);
++    return true;
++  }
++
++  /**
++   * @param {ZoomableWindow | null | undefined} win
++   */
++  function getDesiredFactor(win) {
++    if (!isUsableWindow(win)) return null;
++    return desiredFactors.get(win) ?? null;
++  }
++
++  return {
++    attach,
++    setFactor,
++    getDesiredFactor,
++    syncVisibleWindowZoom,
++  };
++}
+diff --git a/apps/desktop/electron/window-zoom.test.mjs b/apps/desktop/electron/window-zoom.test.mjs
+new file mode 100644
+index 00000000..0168e6a4
+--- /dev/null
++++ b/apps/desktop/electron/window-zoom.test.mjs
+@@ -0,0 +1,143 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { createWindowZoomController } from "./window-zoom.mjs";
++
++/**
++ * @param {{ visible?: boolean; initialZoom?: number }} [options]
++ */
++function createFakeWindow(options = {}) {
++  let visible = options.visible ?? false;
++  let zoomFactor = options.initialZoom ?? 1;
++  let destroyed = false;
++  /** @type {Map<string, Array<() => void>>} */
++  const windowListeners = new Map();
++  /** @type {Map<string, Array<() => void>>} */
++  const contentsListeners = new Map();
++  /** @type {number[]} */
++  const setCalls = [];
++
++  /**
++   * @param {Map<string, Array<() => void>>} registry
++   * @param {string} event
++   * @param {() => void} listener
++   */
++  const addListener = (registry, event, listener) => {
++    const list = registry.get(event) ?? [];
++    list.push(listener);
++    registry.set(event, list);
++  };
++
++  /**
++   * @param {Map<string, Array<() => void>>} registry
++   * @param {string} event
++   */
++  const emit = (registry, event) => {
++    for (const listener of registry.get(event) ?? []) {
++      listener();
++    }
++  };
++
++  const win = {
++    isDestroyed: () => destroyed,
++    isVisible: () => visible,
++    /**
++     * @param {string} event
++     * @param {() => void} listener
++     */
++    on(event, listener) {
++      addListener(windowListeners, event, listener);
++      return win;
++    },
++    webContents: {
++      isDestroyed: () => destroyed,
++      getZoomFactor: () => zoomFactor,
++      /**
++       * @param {number} factor
++       */
++      setZoomFactor(factor) {
++        zoomFactor = factor;
++        setCalls.push(factor);
++      },
++      /**
++       * @param {string} event
++       * @param {() => void} listener
++       */
++      on(event, listener) {
++        addListener(contentsListeners, event, listener);
++        return win.webContents;
++      },
++    },
++    show() {
++      visible = true;
++      emit(windowListeners, "show");
++    },
++    emitInPageNavigation(resetZoomTo = zoomFactor) {
++      zoomFactor = resetZoomTo;
++      emit(contentsListeners, "did-navigate-in-page");
++    },
++    destroy() {
++      destroyed = true;
++    },
++    get setCalls() {
++      return setCalls;
++    },
++  };
++
++  return win;
++}
++
++describe("window zoom controller", () => {
++  it("defers webContents.setZoomFactor while the window is hidden until show", () => {
++    const controller = createWindowZoomController();
++    const win = createFakeWindow({ visible: false, initialZoom: 1 });
++
++    assert.equal(controller.setFactor(win, 1.3), true);
++    assert.equal(controller.getDesiredFactor(win), 1.3);
++    assert.deepEqual(win.setCalls, []);
++
++    win.show();
++    assert.deepEqual(win.setCalls, [1.3]);
++    assert.equal(win.webContents.getZoomFactor(), 1.3);
++  });
++
++  it("forces pending zoom sync on show even if HostZoomMap reported the same cached factor", () => {
++    const controller = createWindowZoomController();
++    const win = createFakeWindow({ visible: false, initialZoom: 1.3 });
++
++    assert.equal(controller.setFactor(win, 1.3), true);
++    assert.deepEqual(win.setCalls, []);
++
++    win.show();
++    assert.deepEqual(win.setCalls, [1.3]);
++  });
++
++  it("restores zoom when a file:// in-page hash navigation resets WebContents zoom to 1", () => {
++    const controller = createWindowZoomController();
++    const win = createFakeWindow({ visible: true, initialZoom: 1 });
++
++    assert.equal(controller.setFactor(win, 1.4), true);
++    assert.deepEqual(win.setCalls, [1.4]);
++
++    // Unchanged zoom on hash navigation avoids redundant setZoomFactor calls.
++    win.emitInPageNavigation(1.4);
++    assert.deepEqual(win.setCalls, [1.4]);
++
++    // A fragment-keyed HostZoomMap reset to 1.0 is immediately corrected.
++    win.emitInPageNavigation(1.0);
++    assert.deepEqual(win.setCalls, [1.4, 1.4]);
++    assert.equal(win.webContents.getZoomFactor(), 1.4);
++  });
++
++  it("rejects invalid zoom values and destroyed windows", () => {
++    const controller = createWindowZoomController();
++    const win = createFakeWindow({ visible: true });
++
++    assert.equal(controller.setFactor(win, 0), false);
++    assert.equal(controller.setFactor(win, -1), false);
++    assert.equal(controller.setFactor(win, Number.NaN), false);
++    assert.equal(controller.setFactor(null, 1.2), false);
++
++    win.destroy();
++    assert.equal(controller.setFactor(win, 1.2), false);
++  });
++});

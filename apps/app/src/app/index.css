@@ -236,6 +236,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+.markdown-content [data-omnirush-code-block] {
+  background-color: var(--omnirush-code-bg, var(--gray-2, var(--dls-surface)));
+  color: var(--omnirush-code-fg, var(--dls-text-primary));
+}
+
 .markdown-content [data-omnirush-code-block] pre {
   margin: 0;
   background: transparent !important;
@@ -263,8 +268,8 @@ body {
 }
 
 /* Theme presets and custom themes (html[data-omnirush-palette], set by app/theme.ts):
-   chat code blocks use the theme's code background and syntax colours. Shiki
-   writes GitHub colours inline; each one maps to its syntax role. */
+   chat and document-preview code blocks use the theme's code background and
+   syntax colours. Shiki writes GitHub colours inline; each one maps to its syntax role. */
 html[data-omnirush-palette] .markdown-content [data-omnirush-code-block] {
   background-color: var(--omnirush-code-bg);
   color: var(--omnirush-code-fg);
@@ -605,6 +610,34 @@ select:disabled {
     color: rgb(var(--dls-secondary-rgb) / 0.7);
     animation: none;
   }
+}
+
+/* Marker on the two session panes (`chat/session-page.tsx`); the blur itself
+   comes from their `mac:backdrop-blur-2xl mac:backdrop-saturate-150` classes.
+
+   That pane is the app's only window-sized backdrop filter, and the macOS
+   window is transparent (`backgroundColor: #00000001`) with a vibrancy
+   material behind it. So the backdrop is not another layer of ours: Chromium
+   has to sample the native material and run the filter every time the pane is
+   recomposited, and the pane is recomposited for as long as anything inside it
+   animates — the working shimmer, the paused dots, streaming text. On Apple
+   Silicon that is invisible; on Intel the pass is the most expensive frame
+   work the app does and lands in the GPU process as CPU time for the whole
+   duration of a run. Intel builds of this fork skip the filter (the 15% of
+   vibrancy the pane lets through is a smooth material already — nothing
+   readable changes), and every build honours the system "Reduce transparency"
+   setting, which is the one-switch way to take it out everywhere. */
+@media (prefers-reduced-transparency: reduce) {
+  .ow-pane-blur {
+    background-color: var(--dls-surface);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+html.omnirush-electron.omnirush-platform-mac-intel .ow-pane-blur {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 /* Quiet, small dot ticker (`:: :: ::`). Each dot pulses briefly in sequence,

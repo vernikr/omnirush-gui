@@ -38,6 +38,27 @@ function queuedTexts(sessionId: string) {
 describe("composer state store", () => {
   beforeEach(reset);
 
+  test("expansion updates one session atomically and retains metadata for undo", () => {
+    const part = { id: "quote-1", label: "Quote: hello", text: "> hello", lines: 1 };
+    const store = useComposerStateStore.getState();
+    store.setDraft("session-a", `[pasted text ${part.label}]reply`);
+    store.setPasteParts("session-a", [part]);
+    store.setDraft("session-b", "unrelated");
+    const observed: ComposerSessionState[] = [];
+    const unsubscribe = useComposerStateStore.subscribe((state) => observed.push(state.sessions["session-a"]!));
+    try {
+      store.expandPastePart("session-a", part.id, "> hello\n\nreply");
+      expect(observed).toHaveLength(1);
+      expect(observed[0]?.draft).toBe("> hello\n\nreply");
+      expect(observed[0]?.pasteParts).toEqual([part]);
+      expect(useComposerStateStore.getState().sessions["session-b"]?.draft).toBe("unrelated");
+      store.expandPastePart("session-a", "missing", "must not replace");
+      expect(observed).toHaveLength(1);
+      store.clearSession("session-a");
+      expect(useComposerStateStore.getState().sessions["session-a"]).toBeUndefined();
+    } finally { unsubscribe(); }
+  });
+
   test("scopes queued drafts by session", () => {
     const { appendQueuedDraft } = useComposerStateStore.getState();
     appendQueuedDraft("session-a", draft("queued in A"));

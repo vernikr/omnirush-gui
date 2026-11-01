@@ -1,0 +1,455 @@
+diff --git a/apps/app/src/components/chat/reasoning-block.tsx b/apps/app/src/components/chat/reasoning-block.tsx
+index fd4ddec8..ab0391c5 100644
+--- a/apps/app/src/components/chat/reasoning-block.tsx
++++ b/apps/app/src/components/chat/reasoning-block.tsx
+@@ -23,7 +23,7 @@ type ReasoningBlockProps = {
+  * when the user opens it.
+  */
+ export function ReasoningBlock({ text, isStreaming, className }: ReasoningBlockProps) {
+-  const [open, setOpen] = useState(true)
++  const [open, setOpen] = useState(false)
+ 
+   return (
+     <Collapsible open={open} onOpenChange={setOpen} className={cn("w-full", className)} data-reasoning-block="">
+@@ -37,13 +37,16 @@ export function ReasoningBlock({ text, isStreaming, className }: ReasoningBlockP
+         />
+       </CollapsibleTrigger>
+       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+-        <MessageContent
+-          markdown
+-          isStreaming={isStreaming}
+-          className="text-muted-foreground prose mt-1 w-full min-w-0 rounded-lg bg-transparent p-0 text-sm"
+-        >
+-          {text}
+-        </MessageContent>
++        {open ? (
++          <MessageContent
++            markdown
++            isStreaming={isStreaming}
++            data-reasoning-trace-content=""
++            className="text-muted-foreground prose mt-1 w-full min-w-0 rounded-lg bg-transparent p-0 text-sm"
++          >
++            {text}
++          </MessageContent>
++        ) : null}
+       </CollapsibleContent>
+     </Collapsible>
+   )
+diff --git a/apps/app/src/components/markdown/markdown-primitive.ts b/apps/app/src/components/markdown/markdown-primitive.ts
+index 00858afa..d07f1528 100644
+--- a/apps/app/src/components/markdown/markdown-primitive.ts
++++ b/apps/app/src/components/markdown/markdown-primitive.ts
+@@ -13,7 +13,7 @@ import {
+ } from "@shikijs/transformers";
+ import { bundledLanguages, codeToHtml } from "shiki";
+ 
+-import { faviconUrlForHref } from "@/lib/favicon";
++import { faviconUrlForHref, isGitHubHost } from "@/lib/favicon";
+ 
+ import { markdownMath } from "./markdown-math";
+ 
+@@ -171,7 +171,7 @@ function chatCodeBlockHtml(text: string, lang: string | undefined) {
+ }
+ 
+ function surfaceCodeBlockHtml(text: string, lang: string | undefined) {
+-  return `<pre class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 px-4 py-3 text-xs leading-6 text-muted-foreground"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre>`;
++  return `<div data-omnirush-code-block="" class="my-4 overflow-hidden rounded-[18px] border border-dls-border/70 text-xs leading-6"><pre class="m-0 overflow-x-auto bg-transparent px-4 py-3"><code${codeLanguageClass(lang)}>${escapeHtml(text)}</code></pre></div>`;
+ }
+ 
+ function isMermaidLanguage(lang: string | undefined) {
+@@ -275,6 +275,7 @@ function sanitizeMarkdownHtml(value: string) {
+       "data-omnirush-inline-code-path",
+       "data-omnirush-link-href",
+       "data-omnirush-link-chevron",
++      "data-omnirush-favicon",
+       "data-omnirush-shiki",
+       "decoding",
+       "disabled",
+@@ -307,8 +308,8 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
+       imagePresentation: "simple",
+       tableHeaderClassName: "border border-dls-border bg-dls-hover p-2 text-left",
+       tableCellClassName: "border border-dls-border p-2 align-top",
+-      shikiContainer: `<div data-omnirush-shiki="true" class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 bg-gray-1/80 p-4 text-xs leading-6">%s</div>`,
+-      shikiTheme: { kind: "single", theme: "github-light" },
++      shikiContainer: `<div data-omnirush-code-block="" data-omnirush-shiki="true" class="my-4 overflow-x-auto rounded-[18px] border border-dls-border/70 p-4 text-xs leading-6">%s</div>`,
++      shikiTheme: { kind: "dual", light: "github-light", dark: "github-dark" },
+     };
+   }
+ 
+@@ -361,8 +362,12 @@ function renderLink(profile: MarkdownProfile, href: string, title: string | null
+     }
+ 
+     const favicon = faviconUrlForHref(href);
++    let faviconAttr = "";
++    try {
++      if (isGitHubHost(new URL(href).hostname)) faviconAttr = ' data-omnirush-favicon="github"';
++    } catch {}
+     const faviconHtml = favicon
+-      ? `<img src="${escapeAttribute(favicon)}" alt="" aria-hidden="true" loading="lazy" decoding="async" class="me-1 inline-block size-3.5 rounded-[3px] align-[-2px]" />`
++      ? `<img src="${escapeAttribute(favicon)}" alt="" aria-hidden="true" loading="lazy" decoding="async" class="me-1 inline-block size-3.5 rounded-[3px] align-[-2px]"${faviconAttr} />`
+       : "";
+ 
+     return `<a href="${safe}" data-omnirush-link-href="${originalHref}"${titleAttr} target="_blank" rel="noreferrer noopener" class="text-[var(--omnirush-link,var(--indigo-10))] no-underline transition-colors hover:text-[var(--omnirush-link-hover,var(--indigo-8))]">${faviconHtml}${text}</a>`;
+diff --git a/apps/app/src/components/markdown/markdown.tsx b/apps/app/src/components/markdown/markdown.tsx
+index 51ebcf97..2dbdabee 100644
+--- a/apps/app/src/components/markdown/markdown.tsx
++++ b/apps/app/src/components/markdown/markdown.tsx
+@@ -25,6 +25,7 @@ import {
+ import { LinkActionMenu } from "./link-action-menu";
+ import { useMermaidEnhancer } from "./mermaid";
+ import { useSelectionStableValue } from "./selection-stability";
++import { useStreamingRenderPace } from "./use-streaming-render-pace";
+ 
+ export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
+ 
+@@ -130,16 +131,26 @@ function MarkdownBlockInner({
+   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
+   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
+   const [streamingRenderer] = useState(() => createStreamingMarkdownRenderer("chat"));
+-  const streamedBlocks = useMemo(
+-    () => (streaming ? streamingRenderer.render(text) : null),
+-    [streaming, streamingRenderer, text],
+-  );
++  // A long block (a reasoning trace is usually one paragraph) costs a full lex,
++  // sanitize and layout per frame if it follows the token rate. The pacer keeps
++  // short answers on the per-frame path and stretches the period of long ones
++  // by what the last render actually cost, so the renderer stays inside a
++  // fixed slice of a core however far the block grows.
++  const lastRenderCostMs = useRef(0);
++  const renderedText = useStreamingRenderPace(text, streaming === true, lastRenderCostMs.current);
++  const streamedBlocks = useMemo(() => {
++    if (!streaming) return null;
++    const started = performance.now();
++    const blocks = streamingRenderer.render(renderedText);
++    lastRenderCostMs.current = performance.now() - started;
++    return blocks;
++  }, [renderedText, streaming, streamingRenderer]);
+   useEffect(() => {
+     if (!streaming) streamingRenderer.reset();
+   }, [streaming, streamingRenderer]);
+   const syncHtml = useMemo(
+-    () => (streamedBlocks ? "" : renderMarkdownHtml(text)),
+-    [streamedBlocks, text],
++    () => (streamedBlocks ? "" : renderMarkdownHtml(renderedText)),
++    [renderedText, streamedBlocks],
+   );
+   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
+ 
+diff --git a/apps/app/src/components/markdown/use-streaming-render-pace.ts b/apps/app/src/components/markdown/use-streaming-render-pace.ts
+new file mode 100644
+index 00000000..295b8352
+--- /dev/null
++++ b/apps/app/src/components/markdown/use-streaming-render-pace.ts
+@@ -0,0 +1,83 @@
++/** @jsxImportSource react */
++import { useEffect, useRef, useState } from "react";
++
++/**
++ * A streaming answer re-lexes, re-parses and re-sanitizes only the blocks that
++ * are still growing, so a short answer can follow the token rate and keep the
++ * typing feel for free.
++ *
++ * A long answer is a different shape. Models write their reasoning as one
++ * paragraph, so the `STREAMING_RELEX_TAIL` window of
++ * `createStreamingMarkdownRenderer` collapses to that single block and every
++ * render costs the whole text so far — a full lexer pass, a full inline parse,
++ * a full DOMPurify pass and the layout of the resulting HTML. That cost grows
++ * linearly with the block, which makes rendering it on every frame quadratic
++ * over the turn: at 60 KB of one-paragraph text a single pass already takes
++ * tens of milliseconds, i.e. several CPU-seconds per second of streaming.
++ *
++ * So above `STREAMING_RENDER_EAGER_CHARS` the text is published on a timer
++ * whose period is derived from the measured cost of the last render: the
++ * renderer is allowed to spend roughly `STREAMING_RENDER_BUDGET` of a core on
++ * itself and no more. A short block still updates ~12 times a second; a very
++ * long one slows down to about once a second, which is what a trace that size
++ * looks like anyway. The eye reads text that arrives while scrolling, and the
++ * write is always complete and in order — nothing is dropped.
++ */
++export const STREAMING_RENDER_EAGER_CHARS = 2_048;
++
++/** Never publish slower than this while a block is streaming. */
++export const STREAMING_RENDER_MIN_INTERVAL_MS = 80;
++
++/** …and never slower than this, however expensive one render gets. */
++export const STREAMING_RENDER_MAX_INTERVAL_MS = 1_500;
++
++/** Share of one core the markdown renderer may use while a block streams. */
++export const STREAMING_RENDER_BUDGET = 0.1;
++
++/**
++ * The text a streaming markdown block should render right now.
++ *
++ * `renderCostMs` is how long the caller's last render of this block took; the
++ * hook turns it into the publish period. Short text is returned unchanged, so
++ * callers that never grow this large pay nothing.
++ */
++export function useStreamingRenderPace(text: string, streaming: boolean, renderCostMs: number): string {
++  const paced = streaming && text.length > STREAMING_RENDER_EAGER_CHARS;
++  const [published, setPublished] = useState(text);
++  const latest = useRef(text);
++  const cost = useRef(renderCostMs);
++  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
++  latest.current = text;
++  cost.current = renderCostMs;
++
++  // Deliberately no dependency list: this runs after every render, keeps at
++  // most one publish scheduled while text is arriving, and hands the real text
++  // back as soon as the block stops being paced. A block that stops growing
++  // fires the pending publish once and then schedules nothing more.
++  useEffect(() => {
++    if (!paced) {
++      if (timer.current !== null) {
++        clearTimeout(timer.current);
++        timer.current = null;
++      }
++      if (published !== text) setPublished(text);
++      return;
++    }
++    if (timer.current !== null) return;
++    const budgeted = Math.round(cost.current / STREAMING_RENDER_BUDGET);
++    const interval = Math.min(
++      STREAMING_RENDER_MAX_INTERVAL_MS,
++      Math.max(STREAMING_RENDER_MIN_INTERVAL_MS, budgeted),
++    );
++    timer.current = setTimeout(() => {
++      timer.current = null;
++      setPublished(latest.current);
++    }, interval);
++  });
++
++  useEffect(() => () => {
++    if (timer.current !== null) clearTimeout(timer.current);
++  }, []);
++
++  return paced ? published : text;
++}
+diff --git a/apps/app/src/react-app/domains/session/status/session-progress.ts b/apps/app/src/react-app/domains/session/status/session-progress.ts
+index aac67914..0502af03 100644
+--- a/apps/app/src/react-app/domains/session/status/session-progress.ts
++++ b/apps/app/src/react-app/domains/session/status/session-progress.ts
+@@ -54,6 +54,27 @@ function partFingerprint(part: UIMessage["parts"][number], value: () => unknown)
+   return next;
+ }
+ 
++/**
++ * A text part that is still streaming arrives as a new object on every flush,
++ * so the identity cache above can never hit for it: hashing its `text` meant
++ * stringifying and walking the whole answer-so-far on every animation frame,
++ * and a long reasoning trace made that quadratic in the length of the turn.
++ *
++ * Streaming text only ever appends, so its length plus a short tail identifies
++ * the revision. This value only decides whether the transcript changed since
++ * the previous flush (it feeds "last activity" bookkeeping and the activity
++ * label), so a bounded window is enough — and it is O(1) per flush.
++ */
++const STREAMING_TEXT_TAIL_CHARS = 32;
++function streamingTextFingerprint(part: { type: string; state?: unknown; text: string }): string {
++  return fingerprint([
++    part.type,
++    part.state,
++    part.text.length,
++    part.text.slice(-STREAMING_TEXT_TAIL_CHARS),
++  ]);
++}
++
+ /** Only content and lifecycle changes count. Never hash polling/timing metadata. */
+ export function transcriptProgress(messages: UIMessage[], previousParts: Record<string, string> = {}): Progress {
+   const parts: Record<string, string> = {};
+@@ -66,7 +87,7 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
+       const key = `${message.id}:${isToolUIPart(part) ? part.toolCallId : index}`;
+       let activity: string;
+       if ((part.type === "text" || part.type === "reasoning") && part.text.trim()) {
+-        parts[key] = partFingerprint(part, () => [part.type, part.text, part.state]);
++        parts[key] = streamingTextFingerprint(part);
+         activity = part.type === "text" ? "Response updated" : "Reasoning activity received";
+       } else if (isToolUIPart(part)) {
+         parts[key] = partFingerprint(part, () => [part.state, part.input,
+diff --git a/docs/intel-mac-performance.md b/docs/intel-mac-performance.md
+new file mode 100644
+index 00000000..357dc5b5
+--- /dev/null
++++ b/docs/intel-mac-performance.md
+@@ -0,0 +1,116 @@
++# Why a thinking run used to burn a core, and what changed
++
++A run that only *thinks* — `Reasoning trace…`, no tool calls, no answer text
++yet — used to push an Intel Mac's CPU to a constant high load for as long as
++the model kept reasoning, with the app completely idle the rest of the time.
++This note records what caused it, what this fork changed, and how to check the
++change on a real machine.
++
++## What was happening
++
++Three costs stacked up, all of them proportional to *how much the model has
++written so far*, and all of them paid on every animation frame.
++
++### 1. The reasoning trace rendered as markdown on every frame
++
++`ReasoningBlock` documented "collapsed by default" but opened itself with
++`useState(true)`, so the whole trace was live markdown from the first token.
++
++`createStreamingMarkdownRenderer` keeps the previous frame's top-level blocks
++and re-lexes only the last `STREAMING_RELEX_TAIL = 2` of them. That works when
++an answer is a sequence of short blocks. Reasoning is usually **one paragraph**,
++so the tail window collapses to that single block and every frame re-runs the
++full path: lexer → inline parse → DOMPurify → `innerHTML` replacement → layout.
++Rendering a single growing paragraph is linear in the trace, which makes
++streaming it quadratic over the turn.
++
++Measured with the app's own parser (`bun`, no DOM, so DOMPurify is inert and
++the real numbers are *worse*):
++
++| trace length | one render |
++| --- | --- |
++| 4 KB | 3.8 ms |
++| 8 KB | 6.4 ms |
++| 16 KB | 13.5 ms |
++| 32 KB | 26 ms |
++| 64 KB | 55 ms |
++
++At 60 frames per second a 16 KB trace already asks for ~80 % of a core just to
++parse its own markdown, and it keeps climbing. A simulated 90-second reasoning
++stream (216 KB of one paragraph) spent **407 CPU-seconds** rendering, i.e. more
++than four cores' worth per second of wall clock — the renderer simply cannot
++keep up, every frame is late, and the machine stays pinned until the model
++stops. Note the same text split into many blocks costs 0.4–1.7 ms per render:
++the block shape, not the length, is what explodes.
++
++### 2. The transcript progress fingerprint re-hashed the whole trace
++
++`transcriptProgress` runs after every coalesced flush (once per frame while a
++turn streams). Its object-identity cache cannot hit for the part that is still
++growing, because the flush rebuilds that part object every frame — so it
++`JSON.stringify`-ed the entire text and walked every character in an FNV loop.
++Same quadratic shape, smaller constant: 170 ms of pure hashing for a
++90-second trace, against 1.3 ms after the fix.
++
++### 3. The window-sized backdrop blur, twice per frame
++
++The session pane carries the app's only `backdrop-blur-2xl`
++(`chat/session-page.tsx`). macOS windows here are transparent
++(`backgroundColor: #00000001`) with a vibrancy material behind them, so the
++backdrop is the *native* window material: Chromium has to sample it and run the
++filter every time the pane is recomposited. Upstream already knows this — the
++`<main>` element carries a comment saying a second backdrop filter "forces an
++extra full-pane blur pass every frame the transcript repaints".
++
++While a run is live the transcript repaints continuously (streaming text, the
++`ow-text-shimmer` working lines, the paused dots), so that pass runs at frame
++rate for the whole turn. On Apple Silicon it is invisible; on Intel's iGPU a
++40 px blur over a full window is the most expensive frame operation the app
++performs, and it shows up as GPU-process CPU time.
++
++That is also why the load appeared only while the agent worked: at rest nothing
++animates, the pane is not recomposited, and no blur runs.
++
++## What changed
++
++| | where |
++| --- | --- |
++| Reasoning is collapsed by default, and a closed panel keeps its markdown out of the tree entirely | `apps/app/src/components/chat/reasoning-block.tsx` |
++| Streaming markdown is paced against its own measured cost instead of the token rate | `apps/app/src/components/markdown/use-streaming-render-pace.ts`, `markdown.tsx` |
++| Progress fingerprint is O(1) per flush (length + 32-char tail) | `apps/app/src/react-app/domains/session/status/session-progress.ts` |
++| Intel macOS builds drop the pane's backdrop blur; every build honours the system "Reduce transparency" setting | `apps/app/src/app/index.css`, `preload.mjs` (`omnirush-platform-mac-intel`) |
++
++The pacing rule: below 2 KB a block still renders on every frame, exactly as
++before. Above it, the next publish happens after
++`max(80 ms, lastRenderCost / 0.1)` — the renderer may spend about a tenth of a
++core on itself and no more, so the period stretches as the block grows: ~12
++updates per second at 10 KB, ~1 per second at 60 KB. The text is never dropped
++or reordered; when the stream ends the full text is rendered immediately.
++
++Same 90-second simulation as above, with the pacer:
++
++| strategy | renders | render CPU | per second of streaming |
++| --- | --- | --- | --- |
++| every frame (before) | 4 479 | 407 s | 4 517 ms |
++| fixed 12.5 Hz | 1 080 | 102 s | 1 130 ms |
++| measured-cost pacing at 10 % of a core (after) | 192 | 8.9 s | 99 ms |
++
++And with the trace collapsed — the default — the number is zero: nothing is
++parsed while the panel is closed, no matter how much the model writes.
++
++## How to verify on a machine
++
++1. Open a session, send a prompt that makes the model think for a while
++   (a hard question or a large repo task).
++2. Activity Monitor → CPU, grouped by process, during the reasoning phase.
++   Before: `OmniRush Helper (Renderer)` plus `OmniRush Helper (GPU)` climbing to
++   a large share of the machine. After: both largely quiet, with `opencode`
++   (the engine itself) left as the main consumer.
++3. Expand `Reasoning trace…` mid-run to see the paced path: the trace updates a
++   few times per second, the CPU stays low.
++4. For an A/B on the blur alone: System Settings → Accessibility → Display →
++   Reduce transparency. That now removes the pane blur on any Mac as well, so
++   toggling it isolates the compositor cost from the parser cost.
++   `ELECTRON_ENABLE_LOGGING=1` plus Chrome DevTools (Performance panel, port
++   9223–9227) shows `Recalculate Style`, `Layout`, `marked` lexer frames and the
++   GPU process' `Compositing` rows.
+diff --git a/evals/specs/streamed-markdown-answer.e2e.test.ts b/evals/specs/streamed-markdown-answer.e2e.test.ts
+index 74c644bb..93d53bfd 100644
+--- a/evals/specs/streamed-markdown-answer.e2e.test.ts
++++ b/evals/specs/streamed-markdown-answer.e2e.test.ts
+@@ -21,6 +21,7 @@ const blockSentinels = [
+ const rawSyntax = ["## Streamed", "**bold emphasis**", "`inline-code.ts`", "- alpha", "| gamma row", "```"];
+ 
+ const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1;
++const reasoningControl = { role: "button", label: /^(Thinking…|Thought|Reasoning trace…|Reasoning trace)$/ } as const;
+ 
+ function expectSettledDocument(visibleText: string) {
+   for (const sentinel of blockSentinels) expect(occurrences(visibleText, sentinel)).toBe(1);
+@@ -69,20 +70,28 @@ test("a streaming answer renders as markdown block by block and settles to the s
+ 
+   await step("finished blocks render as markdown while later blocks are still arriving", async () => {
+     await user.see({ text: headingText }, { timeoutMs: 90_000 });
++    await user.see({ text: "Writing a response" });
+     await user.notSee({ text: closingText });
+     await user.notSee({ text: "## Streamed" });
+     await user.notSee({ text: streamedMarkdownReasoning });
++    expect(await probe.eval(() => {
++      const status = document.querySelector<HTMLElement>('[data-testid="session-run-status"]');
++      const composer = document.querySelector<HTMLElement>("[data-composer-panel]");
++      return Boolean(status && composer && Math.abs(status.getBoundingClientRect().width - composer.getBoundingClientRect().width) < 2);
++    })).toBe(true);
++    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(0);
+   });
+ 
+   await step("live reasoning can be inspected before any reload while the answer is still streaming", async () => {
+-    const reasoningControl = { role: "button", label: /^(Thinking…|Thought)$/ } as const;
+     await user.see(reasoningControl);
+     await user.click(reasoningControl);
+     await user.see({ text: streamedMarkdownReasoning });
++    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(1);
+     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
+     await user.notSee({ text: closingText });
+     await user.click(reasoningControl);
+     await user.notSee({ text: streamedMarkdownReasoning });
++    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(0);
+   });
+ 
+   await step("sent text and finished blocks stay visible before reloading the active stream", async () => {
+@@ -106,8 +115,10 @@ test("a streaming answer renders as markdown block by block and settles to the s
+   });
+ 
+   await step("the settled reasoning is collapsed and can be inspected separately", async () => {
+-    await user.click({ role: "button", label: "Thought" });
++    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(0);
++    await user.click(reasoningControl);
+     await user.see({ text: streamedMarkdownReasoning });
++    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(1);
+     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
+     expectSettledDocument(await probe.text());
+   });
+@@ -149,8 +160,10 @@ test("a streaming answer renders as markdown block by block and settles to the s
+   });
+ 
+   await step("reloaded reasoning stays collapsed until inspected separately", async () => {
+-    await user.click({ role: "button", label: "Thought" });
++    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(0);
++    await user.click(reasoningControl);
+     await user.see({ text: streamedMarkdownReasoning });
++    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(1);
+     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
+     expectSettledDocument(await probe.text());
+   });

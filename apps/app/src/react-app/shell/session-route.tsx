@@ -27,6 +27,8 @@ import { isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
 import { createClientV2 } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, setSessionArchived, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { getNativeSessionMessages } from "@/app/lib/opencode-session-native";
+import { ExportSessionMarkdownModal } from "@/react-app/domains/session/commands/export-session-markdown-modal";
+import { openExportMarkdownModal } from "@/react-app/domains/session/commands/export-session-markdown-store";
 import { copySessionId } from "@/react-app/domains/session/sidebar/copy-session-id";
 import { useSessionManagementStore as sessionManagementStore } from "@/react-app/domains/session/sidebar/session-management-store";
 import { getSessionDescendantIds } from "@/react-app/domains/session/sidebar/utils";
@@ -3172,6 +3174,47 @@ export function SessionRoute() {
     selectedWorkspaceId,
   ]);
 
+  const handleExportSession = useCallback((workspaceId: string, sessionId: string) => {
+    const ownerId =
+      workspaceId.trim() ||
+      workspaceSessionGroups.find((group) =>
+        group.sessions.some((session) => session?.id === sessionId),
+      )?.workspace.id;
+    const ownerWorkspace = workspaces.find((workspace) => workspace.id === ownerId) ?? selectedWorkspace;
+    const endpoint = endpointForWorkspace(ownerWorkspace);
+    if (!ownerWorkspace || !endpoint) {
+      toast.error(t("session.export_markdown_failed"));
+      return;
+    }
+    openExportMarkdownModal({
+      workspaceId: ownerWorkspace.id,
+      serverWorkspaceId: endpoint.workspaceId,
+      sessionId,
+      opencodeBaseUrl: endpoint.opencodeBaseUrl,
+      token: endpoint.token,
+      workspaceRoot: endpoint.isRemote ? "" : (ownerWorkspace.path ?? ""),
+      serverClient: endpoint.client,
+    });
+  }, [endpointForWorkspace, selectedWorkspace, workspaceSessionGroups, workspaces]);
+
+  const exportSessionMarkdownPaletteItem = useMemo<PaletteItem | null>(() => {
+    const targetSessionId = focusedSession?.sessionId?.trim();
+    const targetWorkspaceId = focusedSession?.workspaceId?.trim();
+    if (!targetSessionId || !targetWorkspaceId) return null;
+    return {
+      id: "session.export-markdown",
+      title: t("session.cmd_export_markdown_title"),
+      detail: t("session.cmd_export_markdown_detail"),
+      meta: "Session",
+      group: "actions",
+      searchText: "export markdown md chat conversation thread transcript reasoning tool calls freebuff",
+      action: () => {
+        setCommandPaletteOpen(false);
+        void handleExportSession(targetWorkspaceId, targetSessionId);
+      },
+    };
+  }, [focusedSession?.sessionId, focusedSession?.workspaceId, handleExportSession]);
+
   const copySessionIdPaletteItem = useMemo(() => buildCopySessionIdPaletteItem(focusedSession?.sessionId, (sessionId) => {
     setCommandPaletteOpen(false);
     void copySessionId(sessionId);
@@ -4072,6 +4115,7 @@ export function SessionRoute() {
           : undefined
       }
       onArchiveSession={opencodeClient ? handleArchiveSession : undefined}
+      onExportSession={handleExportSession}
       archiveDisabledReason={archiveDisabledReason}
       statusBar={{
         // No per-session loading state here: the account row renders only
@@ -4210,7 +4254,7 @@ export function SessionRoute() {
       currentSessionForGroupMove={currentSessionForGroupMove}
       currentSessionGroupId={currentSessionGroupId}
       onMoveCurrentSessionToGroup={handleMoveCurrentSessionToGroup}
-      extraItems={[...currentSessionActionPaletteItems, ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...tasksPaletteItems, ...layoutPaletteItems, ...terminalPaletteItems, ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]), ...(copySessionIdPaletteItem ? [copySessionIdPaletteItem] : []), diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
+      extraItems={[...currentSessionActionPaletteItems, ...(exportSessionMarkdownPaletteItem ? [exportSessionMarkdownPaletteItem] : []), ...(sessionFindPaletteItem ? [sessionFindPaletteItem] : []), sessionSearchPaletteItem, ...tasksPaletteItems, ...layoutPaletteItems, ...terminalPaletteItems, ...(checkDesktopRestriction({ restriction: "allowControlSettings" }) ? [] : [developerModePaletteItem]), ...(copySessionIdPaletteItem ? [copySessionIdPaletteItem] : []), diagnosticsCopyPaletteItem, diagnosticsExportPaletteItem, nextSessionTabPaletteItem, prevSessionTabPaletteItem, reloadConfigPaletteItem]}
       listAgents={listAgents}
       selectedAgent={selectedAgent}
       onSelectAgent={setSelectedAgent}
@@ -4222,6 +4266,7 @@ export function SessionRoute() {
       fetchMessages={sessionSearchFetcher}
       onOpenSession={(workspaceId, sessionId) => navigateToWorkspaceSession(workspaceId, sessionId)}
     />
+    <ExportSessionMarkdownModal />
     <ModelPickerModal
       open={modelPicker.open}
       options={pickerOptions}

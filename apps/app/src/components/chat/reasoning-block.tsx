@@ -23,7 +23,7 @@ type ReasoningBlockProps = {
  * when the user opens it.
  */
 export function ReasoningBlock({ text, isStreaming, className }: ReasoningBlockProps) {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className={cn("w-full", className)} data-reasoning-block="">
@@ -37,13 +37,16 @@ export function ReasoningBlock({ text, isStreaming, className }: ReasoningBlockP
         />
       </CollapsibleTrigger>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-        <MessageContent
-          markdown
-          isStreaming={isStreaming}
-          className="text-muted-foreground prose mt-1 w-full min-w-0 rounded-lg bg-transparent p-0 text-sm"
-        >
-          {text}
-        </MessageContent>
+        {open ? (
+          <MessageContent
+            markdown
+            isStreaming={isStreaming}
+            data-reasoning-trace-content=""
+            className="text-muted-foreground prose mt-1 w-full min-w-0 rounded-lg bg-transparent p-0 text-sm"
+          >
+            {text}
+          </MessageContent>
+        ) : null}
       </CollapsibleContent>
     </Collapsible>
   )

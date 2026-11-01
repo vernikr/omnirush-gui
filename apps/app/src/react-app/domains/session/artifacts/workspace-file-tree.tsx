@@ -123,7 +123,7 @@ export function WorkspaceFileTree({ client, workspaceId, workspaceName, selected
 
   return (
     <aside
-      className="flex h-full min-h-0 w-40 shrink-0 flex-col border-r border-border bg-muted/20"
+      className="flex h-full min-h-0 min-w-0 w-full flex-col bg-muted/20"
       data-workspace-file-tree
       data-workspace-file-count={entries.length}
     >
