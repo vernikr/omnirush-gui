@@ -3065,6 +3065,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const sessionScroll = useSessionScrollController({
     selectedSessionId: props.sessionId,
+    isStreaming: chatStreaming,
     renderedMessages,
     containerRef: scrollRef,
     contentRef,

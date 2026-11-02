@@ -21,6 +21,7 @@ const MANUAL_BROWSE_UPWARD_THRESHOLD_PX = 16;
 
 type SessionScrollControllerOptions = {
   selectedSessionId: string | null;
+  isStreaming: boolean;
   renderedMessages: unknown;
   containerRef: RefObject<HTMLDivElement | null>;
   contentRef: RefObject<HTMLDivElement | null>;
@@ -40,6 +41,9 @@ function messageIdForElement(element: HTMLElement) {
 }
 
 function latestMessageElement(container: HTMLElement) {
+  const markedLatest = container.querySelector("[data-message-last]");
+  if (markedLatest instanceof HTMLElement) return markedLatest;
+
   const messageEls = container.querySelectorAll("[data-message-id]");
   for (let index = messageEls.length - 1; index >= 0; index -= 1) {
     const element = messageEls.item(index);
@@ -84,6 +88,8 @@ export function useSessionScrollController(
   const programmaticScrollRef = useRef(false);
   const programmaticScrollResetRafARef = useRef<number | undefined>(undefined);
   const programmaticScrollResetRafBRef = useRef<number | undefined>(undefined);
+  const autoScrollRafRef = useRef<number | undefined>(undefined);
+  const scrollPositionRafRef = useRef<number | undefined>(undefined);
   const observedContentHeightRef = useRef(0);
   const lastGestureAtRef = useRef(0);
   const previousSessionIdRef = useRef<string | null>(null);
@@ -136,11 +142,12 @@ export function useSessionScrollController(
   }, [clearProgrammaticScrollReset]);
 
   const refreshTopClippedMessage = useCallback(() => {
+    if (options.isStreaming) return null;
     const container = options.containerRef.current;
     const nextId = container ? latestMessageTopClippedId(container) : null;
     setTopClippedMessageId(selectedSessionId, nextId);
     return nextId;
-  }, [options.containerRef, selectedSessionId, setTopClippedMessageId]);
+  }, [options.containerRef, options.isStreaming, selectedSessionId, setTopClippedMessageId]);
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = "auto") => {
@@ -151,6 +158,10 @@ export function useSessionScrollController(
       programmaticScrollRef.current = true;
 
       if (behavior === "smooth") {
+        if (autoScrollRafRef.current !== undefined) {
+          window.cancelAnimationFrame(autoScrollRafRef.current);
+          autoScrollRafRef.current = undefined;
+        }
         container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
         releaseProgrammaticScrollSoon();
         return;
@@ -158,7 +169,9 @@ export function useSessionScrollController(
 
       container.scrollTop = container.scrollHeight;
       lastKnownScrollTopRef.current = container.scrollTop;
-      window.requestAnimationFrame(() => {
+      if (autoScrollRafRef.current !== undefined) return;
+      autoScrollRafRef.current = window.requestAnimationFrame(() => {
+        autoScrollRafRef.current = undefined;
         const next = options.containerRef.current;
         if (!next) {
           programmaticScrollRef.current = false;
@@ -166,16 +179,16 @@ export function useSessionScrollController(
         }
         next.scrollTop = next.scrollHeight;
         lastKnownScrollTopRef.current = next.scrollTop;
-        refreshTopClippedMessage();
+        if (!options.isStreaming) refreshTopClippedMessage();
         releaseProgrammaticScrollSoon();
       });
     },
-    [options.containerRef, refreshTopClippedMessage, releaseProgrammaticScrollSoon, selectedSessionId, setStickyBottom],
+    [options.containerRef, options.isStreaming, refreshTopClippedMessage, releaseProgrammaticScrollSoon, selectedSessionId, setStickyBottom],
   );
 
   const saveScrollPosition = useCallback(
     (container: HTMLDivElement) => {
-      const nextTopClippedMessageId = latestMessageTopClippedId(container);
+      const nextTopClippedMessageId = options.isStreaming ? null : latestMessageTopClippedId(container);
       if (isExactlyAtBottom(container)) {
         setStickyBottom(selectedSessionId, nextTopClippedMessageId);
       } else {
@@ -183,8 +196,16 @@ export function useSessionScrollController(
       }
       return nextTopClippedMessageId;
     },
-    [selectedSessionId, setManualScroll, setStickyBottom],
+    [options.isStreaming, selectedSessionId, setManualScroll, setStickyBottom],
   );
+
+  const scheduleScrollPositionSave = useCallback((container: HTMLDivElement) => {
+    if (scrollPositionRafRef.current !== undefined) return;
+    scrollPositionRafRef.current = window.requestAnimationFrame(() => {
+      scrollPositionRafRef.current = undefined;
+      saveScrollPosition(container);
+    });
+  }, [saveScrollPosition]);
 
   const handleScroll = useCallback<UIEventHandler<HTMLDivElement>>(
     (event) => {
@@ -203,6 +224,10 @@ export function useSessionScrollController(
       if (programmaticScrollRef.current && (userGestured || scrolledUp)) {
         programmaticScrollRef.current = false;
         clearProgrammaticScrollReset();
+        if (autoScrollRafRef.current !== undefined) {
+          window.cancelAnimationFrame(autoScrollRafRef.current);
+          autoScrollRafRef.current = undefined;
+        }
         saveScrollPosition(container);
         lastKnownScrollTopRef.current = currentTop;
         return;
@@ -210,24 +235,24 @@ export function useSessionScrollController(
 
       if (programmaticScrollRef.current) {
         lastKnownScrollTopRef.current = currentTop;
-        refreshTopClippedMessage();
+        if (!options.isStreaming) refreshTopClippedMessage();
         return;
       }
 
       if (!userGestured && !scrolledUp) {
         if (isExactlyAtBottom(container)) {
-          setStickyBottom(selectedSessionId, latestMessageTopClippedId(container));
-        } else {
+          setStickyBottom(selectedSessionId, options.isStreaming ? null : latestMessageTopClippedId(container));
+        } else if (!options.isStreaming) {
           refreshTopClippedMessage();
         }
         lastKnownScrollTopRef.current = currentTop;
         return;
       }
 
-      saveScrollPosition(container);
+      scheduleScrollPositionSave(container);
       lastKnownScrollTopRef.current = currentTop;
     },
-    [clearProgrammaticScrollReset, hasScrollGesture, refreshTopClippedMessage, saveScrollPosition, selectedSessionId, setStickyBottom],
+    [clearProgrammaticScrollReset, hasScrollGesture, options.isStreaming, refreshTopClippedMessage, scheduleScrollPositionSave, saveScrollPosition, selectedSessionId, setStickyBottom],
   );
 
   const jumpToLatest = useCallback(
@@ -281,12 +306,12 @@ export function useSessionScrollController(
         return;
       }
 
-      refreshTopClippedMessage();
+      if (!options.isStreaming) refreshTopClippedMessage();
     });
 
     observer.observe(content);
     return () => observer.disconnect();
-  }, [hasScrollGesture, options.contentRef, refreshTopClippedMessage, scrollToBottom, selectedSessionId]);
+  }, [hasScrollGesture, options.contentRef, options.isStreaming, refreshTopClippedMessage, scrollToBottom, selectedSessionId]);
 
   useEffect(() => {
     if (selectedSessionId === previousSessionIdRef.current) return;
@@ -323,13 +348,16 @@ export function useSessionScrollController(
   }, [options.containerRef, releaseProgrammaticScrollSoon, saveScrollPosition, scrollToBottom, selectedSessionId]);
 
   useEffect(() => {
+    if (options.isStreaming) return;
     void options.renderedMessages;
     queueMicrotask(refreshTopClippedMessage);
-  }, [options.renderedMessages, refreshTopClippedMessage]);
+  }, [options.isStreaming, options.renderedMessages, refreshTopClippedMessage]);
 
   useEffect(() => {
     return () => {
       clearProgrammaticScrollReset();
+      if (autoScrollRafRef.current !== undefined) window.cancelAnimationFrame(autoScrollRafRef.current);
+      if (scrollPositionRafRef.current !== undefined) window.cancelAnimationFrame(scrollPositionRafRef.current);
     };
   }, [clearProgrammaticScrollReset]);
 

@@ -79,6 +79,8 @@ animates, the pane is not recomposited, and no blur runs.
 | Streaming markdown is paced against its own measured cost instead of the token rate | `apps/app/src/components/markdown/use-streaming-render-pace.ts`, `markdown.tsx` |
 | Progress fingerprint is O(1) per flush (length + 32-char tail) | `apps/app/src/react-app/domains/session/status/session-progress.ts` |
 | Intel macOS builds drop the pane's backdrop blur; every build honours the system "Reduce transparency" setting | `apps/app/src/app/index.css`, `preload.mjs` (`omnirush-platform-mac-intel`) |
+| Streaming scroll keeps one RAF, skips geometry reads while busy, and batches manual-position writes | `apps/app/src/react-app/domains/session/surface/scroll-controller.ts` |
+| Off-screen transcript messages use browser content visibility, and the latest message has a direct DOM marker | `apps/app/src/app/index.css`, `apps/app/src/components/chat/message-list.tsx` |
 
 The pacing rule: below 2 KB a block still renders on every frame, exactly as
 before. Above it, the next publish happens after

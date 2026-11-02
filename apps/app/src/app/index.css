@@ -236,6 +236,19 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Keep long transcripts cheap to paint while off-screen. Chromium retains the
+   measured size after the first visit, so scrolling does not rebuild the layout
+   of every older message on each streamed update. */
+[data-chat-transcript] .ow-chat-message {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
+}
+
+[data-chat-transcript] .ow-chat-message[data-message-last] {
+  content-visibility: visible;
+  contain-intrinsic-size: none;
+}
+
 .markdown-content [data-omnirush-code-block] {
   background-color: var(--omnirush-code-bg, var(--gray-2, var(--dls-surface)));
   color: var(--omnirush-code-fg, var(--dls-text-primary));

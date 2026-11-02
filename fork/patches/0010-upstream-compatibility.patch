@@ -14,7 +14,7 @@ index 82a42408..0add8d71 100644
 +Fork difference registry: `FORK_DIFFS.md`. Keep updated.
 diff --git a/FORK_DIFFS.md b/FORK_DIFFS.md
 new file mode 100644
-index 00000000..7114b854
+index 00000000..7b633c57
 --- /dev/null
 +++ b/FORK_DIFFS.md
 @@ -0,0 +1,15 @@
@@ -24,7 +24,7 @@ index 00000000..7114b854
 +
 +- Intel-only macOS releases; app updates use this fork's GitHub feed.
 +- Upstream sync is maintained as a small, testable downstream patch stack.
-+- Reasoning/streaming render and transcript-progress performance optimizations; reduced Intel window blur.
++- Reasoning/streaming render, transcript-progress, and chat-scroll performance optimizations; reduced Intel window blur.
 +- Find in rendered Markdown artifact previews. Prompt Select All excludes attachment chips, and focus returns after choosing files.
 +- Markdown code blocks follow dark/custom themes; GitHub favicons adapt to light/dark mode and other site icons retain transparency.
 +- Saved desktop UI zoom (`Cmd+` / `Cmd-` / `Cmd+0`) is restored immediately on launch and preserved across route transitions.

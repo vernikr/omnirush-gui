@@ -782,7 +782,7 @@ index 54262b60..4b88d881 100644
          <ImperativeHandlePlugin editorRef={ref} />
        </div>
 diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
-index e6a4472e..3f881530 100644
+index e6a4472e..46685f7a 100644
 --- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 +++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
 @@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
@@ -905,7 +905,15 @@ index e6a4472e..3f881530 100644
  
    const handleRemovePastedText = useCallback((id: string) => {
      const target = pasteParts.find((item) => item.id === id);
-@@ -3061,6 +3082,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+@@ -3044,6 +3065,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+   const contentRef = useRef<HTMLDivElement>(null);
+   const sessionScroll = useSessionScrollController({
+     selectedSessionId: props.sessionId,
++    isStreaming: chatStreaming,
+     renderedMessages,
+     containerRef: scrollRef,
+     contentRef,
+@@ -3061,6 +3083,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
      const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
      const mod = isMac ? event.metaKey : event.ctrlKey;
      if (!mod || event.shiftKey || event.altKey || event.key?.toLowerCase() !== "f") return;

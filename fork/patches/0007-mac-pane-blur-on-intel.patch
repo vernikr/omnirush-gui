@@ -1,11 +1,24 @@
 diff --git a/apps/app/src/app/index.css b/apps/app/src/app/index.css
-index f304d6ee..cdaf6bb2 100644
+index f304d6ee..01169b60 100644
 --- a/apps/app/src/app/index.css
 +++ b/apps/app/src/app/index.css
-@@ -236,6 +236,11 @@ body {
+@@ -236,6 +236,24 @@ body {
    -moz-osx-font-smoothing: grayscale;
  }
  
++/* Keep long transcripts cheap to paint while off-screen. Chromium retains the
++   measured size after the first visit, so scrolling does not rebuild the layout
++   of every older message on each streamed update. */
++[data-chat-transcript] .ow-chat-message {
++  content-visibility: auto;
++  contain-intrinsic-size: auto 96px;
++}
++
++[data-chat-transcript] .ow-chat-message[data-message-last] {
++  content-visibility: visible;
++  contain-intrinsic-size: none;
++}
++
 +.markdown-content [data-omnirush-code-block] {
 +  background-color: var(--omnirush-code-bg, var(--gray-2, var(--dls-surface)));
 +  color: var(--omnirush-code-fg, var(--dls-text-primary));
@@ -14,7 +27,7 @@ index f304d6ee..cdaf6bb2 100644
  .markdown-content [data-omnirush-code-block] pre {
    margin: 0;
    background: transparent !important;
-@@ -263,8 +268,8 @@ body {
+@@ -263,8 +281,8 @@ body {
  }
  
  /* Theme presets and custom themes (html[data-omnirush-palette], set by app/theme.ts):
@@ -25,7 +38,7 @@ index f304d6ee..cdaf6bb2 100644
  html[data-omnirush-palette] .markdown-content [data-omnirush-code-block] {
    background-color: var(--omnirush-code-bg);
    color: var(--omnirush-code-fg);
-@@ -607,6 +612,34 @@ select:disabled {
+@@ -607,6 +625,34 @@ select:disabled {
    }
  }
  

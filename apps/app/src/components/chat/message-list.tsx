@@ -530,7 +530,7 @@ type AssistantMessageProps = {
 }
 
 const AssistantMessage = React.memo(
-  ({ message, isStreaming, hideReasoning }: AssistantMessageProps) => {
+  ({ message, isLastMessage, isStreaming, hideReasoning }: AssistantMessageProps) => {
     const { showThinking, highlightQuery } = useMessageList()
     const assistantRenderGroups = React.useMemo(
       () => {
@@ -542,8 +542,9 @@ const AssistantMessage = React.memo(
 
     return (
       <Message
-        className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 @min-[40rem]/chatpane:px-10"
+        className="ow-chat-message mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 @min-[40rem]/chatpane:px-10"
         data-message-id={message.id}
+        data-message-last={isLastMessage ? "" : undefined}
         data-message-role={message.role}
       >
         <div className="group flex w-full flex-col gap-0 space-y-2">
@@ -604,6 +605,7 @@ AssistantMessage.displayName = "AssistantMessage"
 
 type UserMessageProps = {
   message: UIMessage
+  isLastMessage: boolean
   isStreaming: boolean
 }
 
@@ -717,7 +719,7 @@ function renderUserTextWithSkillChips(text: string, highlightQuery: string | und
 }
 
 const UserMessage = React.memo(
-  ({ message, isStreaming }: UserMessageProps) => {
+  ({ message, isLastMessage, isStreaming }: UserMessageProps) => {
     const { onRevertToUserMessage, onForkAtMessage, onEditUserMessage, highlightQuery, sessionId } = useMessageList()
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
@@ -737,8 +739,9 @@ const UserMessage = React.memo(
 
     return (
       <Message
-        className="mx-auto flex w-full max-w-3xl flex-col items-end gap-2 px-2 @min-[40rem]/chatpane:px-10"
+        className="ow-chat-message mx-auto flex w-full max-w-3xl flex-col items-end gap-2 px-2 @min-[40rem]/chatpane:px-10"
         data-message-id={message.id}
+        data-message-last={isLastMessage ? "" : undefined}
         data-message-role={message.role}
       >
         <ContextMenu>
@@ -934,6 +937,7 @@ const MessageComponent = React.memo(
     return (
       <UserMessage
         message={message}
+        isLastMessage={isLastMessage}
         isStreaming={isStreaming}
       />
     )

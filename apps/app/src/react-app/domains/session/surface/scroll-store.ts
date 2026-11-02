@@ -70,7 +70,7 @@ function readPersistedSessionScrollState(): SessionScrollStateById {
   }
 }
 
-function persistSessionScrollState(sessions: SessionScrollStateById): void {
+function writePersistedSessionScrollState(sessions: SessionScrollStateById): void {
   if (globalThis.window === undefined) return;
 
   try {
@@ -78,6 +78,21 @@ function persistSessionScrollState(sessions: SessionScrollStateById): void {
   } catch {
     return;
   }
+}
+
+let pendingPersistedSessions: SessionScrollStateById | null = null;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+function persistSessionScrollState(sessions: SessionScrollStateById): void {
+  if (globalThis.window === undefined) return;
+  pendingPersistedSessions = sessions;
+  if (persistTimer !== null) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    const pending = pendingPersistedSessions;
+    pendingPersistedSessions = null;
+    if (pending) writePersistedSessionScrollState(pending);
+  }, 120);
 }
 
 export function getSessionScrollState(

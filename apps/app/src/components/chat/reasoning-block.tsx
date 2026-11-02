@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ChevronDown } from "lucide-react"
 
 import {
@@ -17,6 +17,9 @@ type ReasoningBlockProps = {
   className?: string
 }
 
+/** Matches the panel's `duration-150` close transition, plus a frame of slack. */
+const REASONING_COLLAPSE_MS = 180
+
 /**
  * Thinking is collapsed by default — a single "Thinking… / Thought"
  * line with a chevron; the full reasoning renders as markdown only
@@ -24,9 +27,23 @@ type ReasoningBlockProps = {
  */
 export function ReasoningBlock({ text, isStreaming, className }: ReasoningBlockProps) {
   const [open, setOpen] = useState(false)
+  const [closing, setClosing] = useState(false)
+
+  useEffect(() => {
+    if (!closing) return
+    const timer = window.setTimeout(() => setClosing(false), REASONING_COLLAPSE_MS)
+    return () => window.clearTimeout(timer)
+  }, [closing])
+
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next)
+    if (!next) setClosing(true)
+  }
+
+  const mounted = open || closing
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className={cn("w-full", className)} data-reasoning-block="">
+    <Collapsible open={open} onOpenChange={handleOpenChange} className={cn("w-full", className)} data-reasoning-block="">
       <CollapsibleTrigger className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
         <span className={cn(isStreaming && "animate-pulse")}>
           {isStreaming ? "Reasoning trace…" : "Reasoning trace"}
@@ -37,7 +54,7 @@ export function ReasoningBlock({ text, isStreaming, className }: ReasoningBlockP
         />
       </CollapsibleTrigger>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-        {open ? (
+        {mounted ? (
           <MessageContent
             markdown
             isStreaming={isStreaming}
