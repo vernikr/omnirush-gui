@@ -34,11 +34,31 @@ export function createPastedTextChip(text: string): PastedTextChip {
   };
 }
 
+/** Expand a quote as a Markdown block even if its chip has adjacent typed text. */
+export function replacePastedTextPlaceholder(text: string, part: Pick<PastedTextChip, "label" | "text">) {
+  const token = `[pasted text ${part.label}]`;
+  const index = text.indexOf(token);
+  if (index < 0) return text;
+  const before = text.slice(0, index);
+  const after = text.slice(index + token.length);
+  return before + pastedTextWithBoundaries(part, before, after) + after;
+}
+
+/** Apply the same quote boundaries when the draft is sent as separate text parts. */
+export function pastedTextWithBoundaries(part: Pick<PastedTextChip, "label" | "text">, before: string, after: string) {
+  const isQuote = part.label.startsWith("Quote: ") && part.text.split(/\r?\n/).every((line) => line.startsWith(">"));
+  if (!isQuote) return part.text;
+  const left = before && !before.endsWith("\n") ? "\n\n" : "";
+  // A single newline still allows Markdown's lazy blockquote continuation.
+  // Keep an existing blank line; otherwise separate following text from it.
+  const right = after && !after.startsWith("\n") ? "\n\n"
+    : /^\n(?!\n)/.test(after) ? "\n" : "";
+  return left + part.text + right;
+}
+
 export function resolvePastedTextPlaceholders(text: string, pastedText: readonly Pick<PastedTextChip, "label" | "text">[]) {
   let resolved = text;
-  for (const part of pastedText) {
-    resolved = resolved.replace(`[pasted text ${part.label}]`, part.text);
-  }
+  for (const part of pastedText) resolved = replacePastedTextPlaceholder(resolved, part);
   return resolved;
 }
 

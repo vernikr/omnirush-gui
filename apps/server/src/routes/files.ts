@@ -264,10 +264,104 @@ function normalizeUrlTarget(value: string): string | null {
   }
 }
 
+/**
+ * A reference the transcript made to a file, as spoken: `report.md`,
+ * `docs/report.md`, `src/components/button.tsx` — no leading slash, no drive,
+ * no `..`. Those name a file relative to the workspace root, so a bare name
+ * that does not sit at the root is still a workspace file, just a deeper one.
+ */
+function isWorkspaceRelativeReference(value: string): boolean {
+  if (!value || isAbsolute(value) || /^[A-Za-z]:/.test(value)) return false;
+  const segments = value.split("/").filter(Boolean);
+  return segments.length > 0 && segments.every((segment) => segment !== "." && segment !== "..");
+}
+
+const ARTIFACT_LOOKUP_MAX_ENTRIES = 20_000;
+
+/**
+ * Workspace files in breadth-first order: the root first, then each
+ * directory's entries sorted by name (files and directories interleaved, as
+ * `ls` shows them). The first path that equals a reference or ends with
+ * `/${reference}` is the highest file with that name, so `report.md` finds
+ * `report.md` before `docs/report.md` before `docs/archive/report.md`, and
+ * `components/button.tsx` before `src/components/button.tsx`.
+ *
+ * The index is built lazily — only when a target does not resolve as written —
+ * so a request whose paths all exist never pays for a walk. It is bounded so an
+ * unresolvable name cannot stall the request on an enormous workspace.
+ */
+async function workspacePathIndex(workspaceRoot: string): Promise<string[]> {
+  const rootResolved = resolve(workspaceRoot);
+  const queue = [""];
+  const paths: string[] = [];
+
+  while (queue.length && paths.length < ARTIFACT_LOOKUP_MAX_ENTRIES) {
+    const relDir = queue.shift() as string;
+    const entries = await readdir(join(rootResolved, relDir), { withFileTypes: true }).catch(() => []);
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+
+    for (const entry of entries) {
+      const relPath = relDir ? `${relDir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (entry.name !== ".git" && entry.name !== "node_modules") queue.push(relPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      paths.push(relPath);
+      if (paths.length >= ARTIFACT_LOOKUP_MAX_ENTRIES) break;
+    }
+  }
+
+  return paths;
+}
+
+const ARTIFACT_LOOKUP_INDEX_TTL_MS = 15_000;
+
+/**
+ * One workspace serves many resolve requests in a row while a chat streams;
+ * the index is reused for a moment so a transcript full of dead references
+ * does not walk the tree on every frame.
+ */
+const artifactLookupIndexes = new Map<string, { expiresAt: number; index: Promise<string[]> }>();
+
+/** The workspace file list, reused for a moment; see ARTIFACT_LOOKUP_INDEX_TTL_MS. */
+function artifactLookupIndex(workspaceRoot: string): Promise<string[]> {
+  const key = resolve(workspaceRoot);
+  const now = Date.now();
+  const cached = artifactLookupIndexes.get(key);
+  if (cached && cached.expiresAt > now) return cached.index;
+
+  const index = workspacePathIndex(workspaceRoot);
+  artifactLookupIndexes.set(key, { expiresAt: now + ARTIFACT_LOOKUP_INDEX_TTL_MS, index });
+  // A failed walk must not be cached as the answer for the whole TTL.
+  index.catch(() => {
+    if (artifactLookupIndexes.get(key)?.index === index) artifactLookupIndexes.delete(key);
+  });
+  return index;
+}
+
+/** The highest workspace file a transcript reference can mean, if any. */
+function findShallowestWorkspaceFile(paths: string[], reference: string): string | null {
+  const wanted = reference.toLowerCase().replace(/^\.\//, "").replace(/^\/+/, "");
+  if (!wanted) return null;
+
+  return paths.find((path) => {
+    const lowered = path.toLowerCase();
+    return lowered === wanted || lowered.endsWith(`/${wanted}`);
+  }) ?? null;
+}
+
 export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, input: unknown): Promise<Array<Record<string, unknown>>> {
   const targets = Array.isArray(input) ? input.slice(0, 80) : [];
   const results = new Map<string, Record<string, unknown>>();
   const workspaceResolved = resolve(workspaceRoot);
+  // Built at most once per request, and only when a reference does not
+  // resolve as written.
+  let pathIndex: Promise<string[]> | null = null;
+  const findShallowest = (reference: string) => {
+    pathIndex ??= artifactLookupIndex(workspaceRoot);
+    return pathIndex.then((paths) => findShallowestWorkspaceFile(paths, reference));
+  };
 
   for (const item of targets) {
     if (!item || typeof item !== "object") continue;
@@ -312,19 +406,27 @@ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, inp
     } catch {
       continue;
     }
-    const key = `file:${relativePath.toLowerCase()}`;
-    const absPath = resolveSafeChildPath(workspaceRoot, relativePath);
-    let existsFile = false;
-    let size: number | undefined;
-    let updatedAt: number | undefined;
-    let kindValue: "file" | "dir" | "other" | undefined;
-    if (await exists(absPath)) {
-      const info = await stat(absPath);
-      kindValue = info.isFile() ? "file" : info.isDirectory() ? "dir" : "other";
-      existsFile = info.isFile();
-      size = info.size;
-      updatedAt = info.mtimeMs;
+
+    // A transcript names files the way a person does (`report.md`, `main.ts`),
+    // not as the workspace path they happen to sit at. Keep the path when it
+    // resolves at the root; otherwise open the highest file with that name
+    // instead of reporting a file that is not there.
+    let absPath = resolveSafeChildPath(workspaceRoot, relativePath);
+    let info = await stat(absPath).catch(() => null);
+    if (info?.isFile() !== true && isWorkspaceRelativeReference(relativePath)) {
+      const shallowest = await findShallowest(relativePath);
+      if (shallowest) {
+        relativePath = shallowest;
+        absPath = resolveSafeChildPath(workspaceRoot, relativePath);
+        info = await stat(absPath).catch(() => null);
+      }
     }
+
+    const key = `file:${relativePath.toLowerCase()}`;
+    const kindValue: "file" | "dir" | "other" | undefined = info
+      ? (info.isFile() ? "file" : info.isDirectory() ? "dir" : "other")
+      : undefined;
+    const existsFile = info?.isFile() === true;
     const next = {
       id: key,
       kind: "file",
@@ -335,8 +437,8 @@ export async function resolveWorkspaceArtifactTargets(workspaceRoot: string, inp
       reason,
       exists: existsFile,
       fileKind: kindValue,
-      size,
-      updatedAt,
+      size: info?.size,
+      updatedAt: info?.mtimeMs,
       contentType: contentTypeForPath(relativePath),
     };
     const previous = results.get(key);

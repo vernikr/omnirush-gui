@@ -18,20 +18,30 @@ Failures are shown verbatim on the page, minus the `Error invoking remote method
 
 | Channel | Feed directory | Manifest read by the app |
 | --- | --- | --- |
-| Stable (the only public channel) | `https://github.com/omnirush-ai/omnirush-gui/releases/latest/download` | `latest-mac.yml`, `latest.yml` (Windows), `latest-linux.yml` |
-| Targeted recovery/rollback | `https://github.com/omnirush-ai/omnirush-gui/releases/download/v<version>` | same names |
+| Stable (the only public channel) | `https://github.com/vernikr/omnirush-gui/releases/latest/download` | `latest-mac.yml` (Intel macOS builds in this fork) |
+| Targeted recovery/rollback | `https://github.com/vernikr/omnirush-gui/releases/download/v<version>` | same names |
+
+The fork's release workflow builds Intel macOS only. electron-updater uses the
+standard `latest-mac.yml` channel file, which the single Intel build produces
+directly; there is no architecture-feed merge job. New fork releases do not
+publish Apple Silicon, Windows, or Linux installers or update manifests.
+Earlier releases keep their historical assets, but those platforms do not
+receive new builds from this fork.
 
 There is no public Alpha feed. A persisted or requested "alpha" channel is normalized back to "stable" and the channel selector stays hidden. A custom distribution can enable an Alpha channel by shipping an https feed directory in its electron-builder `extraMetadata` as `omnirushAlphaUpdateFeedUrl` (development runs may set `OMNIRUSH_DESKTOP_ALPHA_UPDATE_FEED_URL`); the Cloud and Enterprise flavors keep their parallel `cloud*.yml` / `enterprise*.yml` manifests on the stable feed.
 
 ## What a release must contain
 
-For each platform the release needs the installers **and** the electron-builder update manifest next to them, all uploaded to the same GitHub release:
+For each supported release platform the release needs the installers **and**
+the electron-builder update manifest next to them, uploaded to the same GitHub
+release. This fork currently supports new Intel macOS builds only:
 
 | Platform | Installers | Manifest |
 | --- | --- | --- |
-| macOS Apple Silicon | `omnirush-mac-arm64-<version>.zip` (+`.blockmap`), `omnirush-mac-arm64-<version>.dmg` (+`.blockmap`) | `latest-mac.yml` |
-| Windows x64 | `omnirush-win-x64-<version>.exe` (+`.blockmap`) | `latest.yml` |
-| Linux x64 | `omnirush-linux-x86_64-<version>.AppImage`, `omnirush-linux-x64-<version>.tar.gz` | `latest-linux.yml` |
+| macOS Intel | `omnirush-mac-x64-<version>.zip` (+`.blockmap`), `omnirush-mac-x64-<version>.dmg` (+`.blockmap`) | `latest-mac.yml` |
+
+Older releases may contain Apple Silicon, Windows, and Linux assets; those are
+not produced by current release jobs.
 
 The manifest is the file electron-updater reads; a release without it makes every installed app report a 404 when checking for updates (this is what happened to v1.0.2 through v1.0.4). electron-builder writes the manifest into `apps/desktop/dist-electron/` whenever a `publish` block is configured, even with `--publish never`; the release workflow verifies it with `apps/desktop/scripts/verify-update-manifest.mjs` (version, listed files, sizes, sha512 checksums, and the required installer types) and fails the job if it is missing or inconsistent, then uploads it together with the installers.
 
@@ -48,7 +58,7 @@ Squirrel.Mac, which electron-updater uses to swap the app bundle on macOS, only 
 
 The app therefore checks its own signature once at startup (`codesign -dv --verbose=2` on the bundle). When the bundle is not Developer ID signed the Updates page reports install mode `manual-dmg`:
 
-- "Download" fetches `omnirush-mac-arm64-<version>.dmg` from the same feed directory and verifies the `sha512` listed in `latest-mac.yml`.
+- "Download" fetches `omnirush-mac-<arch>-<version>.dmg` (`arm64` on Apple Silicon, `x64` on Intel) from the same feed directory and verifies the `sha512` listed in `latest-mac.yml`.
 - "Open installer" opens the verified DMG, shows "Installer opened. Drag omnirush.ai to Applications, replace the old copy, then reopen it." and quits the app after a short delay.
 
 Once releases are signed with a Developer ID (and notarized), the same code path detects the signature and uses the normal Squirrel in-place install and restart. Windows and Linux installs are in place regardless of signing.

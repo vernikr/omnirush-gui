@@ -1,0 +1,130 @@
+name: Sync upstream and release
+
+# Keeps the fork's main branch equal to upstream main plus the Intel macOS
+# port, and publishes a new release whenever upstream moved. See fork/README.md.
+
+on:
+  schedule:
+    # Daily, an hour after upstream's own nightly jobs have usually finished.
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "release: sync and publish a new version. check: sync and verify only."
+        type: choice
+        options:
+          - release
+          - check
+        default: release
+      force:
+        description: "Publish a release even when the tree did not change"
+        type: boolean
+        default: false
+
+permissions:
+  actions: write        # start the Desktop Release workflow after tagging
+  contents: write       # push the rebuilt branch and the tag
+  issues: write         # report a port that stopped applying
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync and release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the fork
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Configure git
+        run: |
+          git config user.name "fork-port[bot]"
+          git config user.email "fork-port[bot]@users.noreply.github.com"
+
+      - name: Rebuild main from upstream plus the port patches
+        id: sync
+        run: node fork/scripts/sync-upstream.mjs --upstream omnirush-ai/omnirush-gui --branch main
+
+      - name: Verify the port is intact
+        run: node fork/scripts/verify-port.mjs --repo "$GITHUB_REPOSITORY" --run-tests
+
+      - name: Push the rebuilt branch
+        if: steps.sync.outputs.changed == 'true'
+        run: git push --force-with-lease origin main
+
+      - name: Choose the next version
+        id: version
+        if: ${{ inputs.mode != 'check' && (steps.sync.outputs.changed == 'true' || inputs.force) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # /releases/latest 404s when upstream only has drafts or prereleases.
+          upstream=$(gh api repos/omnirush-ai/omnirush-gui/releases/latest --jq .tag_name 2>/dev/null | sed 's/^v//' || true)
+          if [ -z "$upstream" ]; then
+            upstream=$(gh api repos/omnirush-ai/omnirush-gui/releases --jq '.[0].tag_name' | sed 's/^v//')
+          fi
+          version=$(node fork/scripts/next-version.mjs --repo "$GITHUB_REPOSITORY" --upstream "$upstream")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "::error::tag v$version already exists - the version picker is out of sync."
+            exit 1
+          fi
+
+      - name: Tag and start the release build
+        if: steps.version.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORK_SYNC_TOKEN: ${{ secrets.FORK_SYNC_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          git tag -a "$tag" -m "OmniRush.ai ${tag}: Intel macOS port on ${{ steps.sync.outputs.upstream }}"
+          if [ -n "${FORK_SYNC_TOKEN:-}" ]; then
+            # A push made with GITHUB_TOKEN does not start another workflow, so
+            # the tag goes in with a PAT when one is configured.
+            git push "https://x-access-token:${FORK_SYNC_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$tag"
+          else
+            # GITHUB_TOKEN cannot start a workflow by pushing, so the release
+            # build is dispatched explicitly (needs the actions: write scope).
+            git push origin "$tag"
+            gh workflow run "Desktop Release" --repo "$GITHUB_REPOSITORY" --ref main -f tag="$tag"
+          fi
+          echo "Tagged $tag; the Desktop Release workflow builds the installers."
+
+      - name: Report a port that stopped applying
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          {
+            echo "The sync could not rebuild the Intel macOS port."
+            echo
+            echo "- Upstream commit: ${{ steps.sync.outputs.upstream }}"
+            echo "- Job: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            echo "To fix: check out main, make the port correct again, then run"
+            echo
+            echo "    node fork/scripts/refresh-patches.mjs --base ${{ steps.sync.outputs.upstream }}"
+            echo
+            echo "and commit the regenerated patches. Details in fork/README.md."
+          } > /tmp/port-sync-failure.md
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "Port sync failed" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file /tmp/port-sync-failure.md
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "Port sync failed: the patches no longer apply" --body-file /tmp/port-sync-failure.md
+          fi

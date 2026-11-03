@@ -21,6 +21,7 @@ const blockSentinels = [
 const rawSyntax = ["## Streamed", "**bold emphasis**", "`inline-code.ts`", "- alpha", "| gamma row", "```"];
 
 const occurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+const reasoningControl = { role: "button", label: /^(Thinking…|Thought|Reasoning trace…|Reasoning trace)$/ } as const;
 
 function expectSettledDocument(visibleText: string) {
   for (const sentinel of blockSentinels) expect(occurrences(visibleText, sentinel)).toBe(1);
@@ -69,20 +70,28 @@ test("a streaming answer renders as markdown block by block and settles to the s
 
   await step("finished blocks render as markdown while later blocks are still arriving", async () => {
     await user.see({ text: headingText }, { timeoutMs: 90_000 });
+    await user.see({ text: "Writing a response" });
     await user.notSee({ text: closingText });
     await user.notSee({ text: "## Streamed" });
     await user.notSee({ text: streamedMarkdownReasoning });
+    expect(await probe.eval(() => {
+      const status = document.querySelector<HTMLElement>('[data-testid="session-run-status"]');
+      const composer = document.querySelector<HTMLElement>("[data-composer-panel]");
+      return Boolean(status && composer && Math.abs(status.getBoundingClientRect().width - composer.getBoundingClientRect().width) < 2);
+    })).toBe(true);
+    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(0);
   });
 
   await step("live reasoning can be inspected before any reload while the answer is still streaming", async () => {
-    const reasoningControl = { role: "button", label: /^(Thinking…|Thought)$/ } as const;
     await user.see(reasoningControl);
     await user.click(reasoningControl);
     await user.see({ text: streamedMarkdownReasoning });
+    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(1);
     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
     await user.notSee({ text: closingText });
     await user.click(reasoningControl);
     await user.notSee({ text: streamedMarkdownReasoning });
+    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(0);
   });
 
   await step("sent text and finished blocks stay visible before reloading the active stream", async () => {
@@ -106,8 +115,10 @@ test("a streaming answer renders as markdown block by block and settles to the s
   });
 
   await step("the settled reasoning is collapsed and can be inspected separately", async () => {
-    await user.click({ role: "button", label: "Thought" });
+    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(0);
+    await user.click(reasoningControl);
     await user.see({ text: streamedMarkdownReasoning });
+    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(1);
     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
     expectSettledDocument(await probe.text());
   });
@@ -149,8 +160,10 @@ test("a streaming answer renders as markdown block by block and settles to the s
   });
 
   await step("reloaded reasoning stays collapsed until inspected separately", async () => {
-    await user.click({ role: "button", label: "Thought" });
+    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(0);
+    await user.click(reasoningControl);
     await user.see({ text: streamedMarkdownReasoning });
+    expect((await probe.dom("[data-reasoning-trace-content]")).elements).toHaveLength(1);
     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
     expectSettledDocument(await probe.text());
   });
