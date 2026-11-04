@@ -20,7 +20,7 @@ export type ChatContextChip = {
 
 export type ChatHandoffResult = { ok: true } | { ok: false; reason: string };
 
-export function sendToChat(sessionId: string | null, instruction: string, chips: ChatContextChip[]): ChatHandoffResult {
+export function sendToChat(sessionId: string | null, instruction: string, chips: ChatContextChip[], options?: { block?: boolean }): ChatHandoffResult {
   if (!sessionId) {
     // No chat yet: the new-task composer takes it as plain text (it has no chips). Unhandled = no composer on screen.
     const text = [instruction, ...chips.map((chip) => chip.text)].filter(Boolean).join("\n\n");
@@ -45,9 +45,9 @@ export function sendToChat(sessionId: string | null, instruction: string, chips:
     return { id: `editor-${Math.random().toString(36).slice(2)}`, label, text: chip.text, lines: chip.text.split(/\r?\n/).length };
   });
   const placeholders = made.map((part) => `[pasted text ${part.label}]`).join(" ");
-  const lead = draft.trim() ? `${draft.replace(/\s+$/, "")}\n` : "";
+  const lead = draft.trim() ? `${draft.replace(/\s+$/, "")}${options?.block ? "\n\n" : "\n"}` : "";
   store.setPasteParts(sessionId, [...parts, ...made]);
-  store.replaceDraft(sessionId, `${lead}${instruction}${instruction && placeholders ? "\n" : ""}${placeholders}`);
+  store.replaceDraft(sessionId, `${lead}${instruction}${instruction && placeholders ? "\n" : ""}${placeholders}${options?.block && placeholders ? "\n\n" : ""}`);
   // The chat panel opens if it was folded away, and the composer takes the focus.
   useEditorStore.getState().setIdeChatCollapsed(false);
   window.setTimeout(() => window.dispatchEvent(new Event("omnirush:focusPrompt")), 50);

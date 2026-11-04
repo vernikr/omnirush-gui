@@ -54,6 +54,7 @@ export type ComposerStateStore = {
   setAttachments: (sessionId: string, attachments: ComposerAttachment[]) => void;
   setMentions: (sessionId: string, mentions: Record<string, ComposerMentionKind>) => void;
   setPasteParts: (sessionId: string, pasteParts: ComposerPastePart[]) => void;
+  expandPastePart: (sessionId: string, id: string, draft: string) => void;
   appendHistory: (sessionId: string, text: string) => void;
   appendQueuedDraft: (sessionId: string, draft: ComposerDraft) => void;
   removeQueuedDraft: (sessionId: string, id: string) => void;
@@ -184,6 +185,15 @@ export const useComposerStateStore = create<ComposerStateStore>((set) => ({
     const current = getWritableSession(state, sessionId);
     if (current.pasteParts === pasteParts) return state;
     return { sessions: { ...state.sessions, [sessionId]: { ...current, pasteParts } } };
+  }),
+  expandPastePart: (sessionId, id, draft) => set((state) => {
+    const current = state.sessions[sessionId];
+    if (!current || !current.pasteParts.some((part) => part.id === id)) return state;
+    // Retain the part for Lexical undo: undo can restore the chip after an
+    // expansion. It is only sent when its placeholder is present in the draft.
+    return { sessions: { ...state.sessions, [sessionId]: {
+      ...current, draft, revertMessageId: draft ? current.revertMessageId : null,
+    } } };
   }),
   appendHistory: (sessionId, text) => set((state) => {
     const trimmed = text.trim();
