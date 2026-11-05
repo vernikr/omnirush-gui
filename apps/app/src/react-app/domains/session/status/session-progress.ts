@@ -54,6 +54,27 @@ function partFingerprint(part: UIMessage["parts"][number], value: () => unknown)
   return next;
 }
 
+/**
+ * A text part that is still streaming arrives as a new object on every flush,
+ * so the identity cache above can never hit for it: hashing its `text` meant
+ * stringifying and walking the whole answer-so-far on every animation frame,
+ * and a long reasoning trace made that quadratic in the length of the turn.
+ *
+ * Streaming text only ever appends, so its length plus a short tail identifies
+ * the revision. This value only decides whether the transcript changed since
+ * the previous flush (it feeds "last activity" bookkeeping and the activity
+ * label), so a bounded window is enough — and it is O(1) per flush.
+ */
+const STREAMING_TEXT_TAIL_CHARS = 32;
+function streamingTextFingerprint(part: { type: string; state?: unknown; text: string }): string {
+  return fingerprint([
+    part.type,
+    part.state,
+    part.text.length,
+    part.text.slice(-STREAMING_TEXT_TAIL_CHARS),
+  ]);
+}
+
 /** Only content and lifecycle changes count. Never hash polling/timing metadata. */
 export function transcriptProgress(messages: UIMessage[], previousParts: Record<string, string> = {}): Progress {
   const parts: Record<string, string> = {};
@@ -66,7 +87,7 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
       const key = `${message.id}:${isToolUIPart(part) ? part.toolCallId : index}`;
       let activity: string;
       if ((part.type === "text" || part.type === "reasoning") && part.text.trim()) {
-        parts[key] = partFingerprint(part, () => [part.type, part.text, part.state]);
+        parts[key] = streamingTextFingerprint(part);
         activity = part.type === "text" ? "Response updated" : "Reasoning activity received";
       } else if (isToolUIPart(part)) {
         parts[key] = partFingerprint(part, () => [part.state, part.input,

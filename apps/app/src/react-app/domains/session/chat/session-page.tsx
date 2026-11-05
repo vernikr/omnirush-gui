@@ -4,7 +4,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } fro
 import { usePanelRef } from "react-resizable-panels";
 import { DesktopUpdateButton } from "../../settings/state/desktop-updater-provider";
 import { BuildathonChip, useBuildathonMenuItem } from "../../buildathon/buildathon";
-import { ArrowLeft, Cloud, Code2, FileDiff, Layers, MessageSquare, LayoutGrid, Library, MessageSquareOff, PanelLeft, FileText, Gauge, Redo2, Undo2, Globe, ListChecks, Maximize2, MoreHorizontal, PanelRight, TextSearch, Trophy, X, Zap } from "lucide-react";
+import { ArrowLeft, Cloud, Code2, Download, FileDiff, Layers, MessageSquare, LayoutGrid, Library, MessageSquareOff, PanelLeft, FileText, Gauge, Redo2, Undo2, Globe, ListChecks, Maximize2, MoreHorizontal, PanelRight, TextSearch, Trophy, X, Zap } from "lucide-react";
 import { SessionCommandControls } from "../commands/session-command-controls";
 import { useSessionCommandBridge, useSessionCommandsStore } from "../commands/session-commands-store";
 
@@ -105,6 +105,7 @@ import {
   type ConversationHistoryDirection,
 } from "./conversation-tab-history";
 import { useWorkbenchStore, type WorkbenchSessionTab } from "./workbench-store";
+import { commitSidePanelWidth, MIN_SIDE_PANEL_WIDTH, scheduleSidePanelWidthCommit } from "./side-panel-width";
 import { isSameWorkbenchSession } from "./workbench-store";
 import { ReactSessionRuntime } from "../sync/runtime-sync";
 import { useSessionInteractions } from "../sync/use-session-interactions";
@@ -293,6 +294,7 @@ export type SessionPageProps = {
   onRenameSession?: (sessionId: string, title: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string) => Promise<void> | void;
   onArchiveSession?: (sessionId: string, archived: boolean) => Promise<void> | void;
+  onExportSession?: (workspaceId: string, sessionId: string) => Promise<void> | void;
   archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
@@ -689,6 +691,8 @@ export function SessionPage(props: SessionPageProps) {
     minRightWidth: 320,
   });
   const [browserPanelDefaultWidth, setBrowserPanelDefaultWidth] = useState(browserPanelWidth);
+  // Only sizes the user actually settled on may become the remembered width.
+  const lastBrowserPanelSizeRef = useRef(0);
   const sidebarProviderStyle: CSSProperties & Record<"--sidebar-width", string> = {
     "--sidebar-width": `${leftSidebarWidth}px`,
   };
@@ -699,10 +703,20 @@ export function SessionPage(props: SessionPageProps) {
   useEffect(() => {
     props.onAccessibleTargetsChange?.(accessibleTargets);
   }, [accessibleTargets, props.onAccessibleTargetsChange]);
+  // onLayoutChanged reports the *previous* width (it runs before the panel's
+  // inline style is written), so the width is read on the next frame instead.
+  const browserPanelWidthFrameRef = useRef<number | null>(null);
   const commitBrowserPanelWidth = useCallback(() => {
-    const size = browserPanelRef.current?.getSize();
-    if (size?.inPixels) setBrowserPanelWidth(Math.round(size.inPixels));
+    commitSidePanelWidth(browserPanelRef, lastBrowserPanelSizeRef, setBrowserPanelWidth);
   }, [browserPanelRef, setBrowserPanelWidth]);
+  const scheduleBrowserPanelWidthCommit = useCallback(() => {
+    scheduleSidePanelWidthCommit(browserPanelWidthFrameRef, commitBrowserPanelWidth);
+  }, [commitBrowserPanelWidth]);
+  useEffect(() => () => {
+    if (browserPanelWidthFrameRef.current === null) return;
+    cancelAnimationFrame(browserPanelWidthFrameRef.current);
+    browserPanelWidthFrameRef.current = null;
+  }, []);
   const browserUrlForTarget = useCallback((target: OpenTarget) => {
     if (/^wss?:\/\//i.test(target.value)) return target.value.replace(/^ws:/i, "http:").replace(/^wss:/i, "https:");
     return target.value;
@@ -1734,6 +1748,15 @@ export function SessionPage(props: SessionPageProps) {
                       {t("session.changes")}
                     </DropdownMenuItem>
                   ) : null}
+                  {commandSessionId && headerActions?.exportMarkdown ? (
+                    <DropdownMenuItem
+                      disabled={Boolean(headerActions.exportingMarkdown)}
+                      onClick={() => void headerActions.exportMarkdown?.()}
+                    >
+                      <Download className="size-4" />
+                      {t("session.export_markdown")}
+                    </DropdownMenuItem>
+                  ) : null}
                   {commandSessionId ? (
                     <DropdownMenuItem
                       disabled={!commandBridge || commandBridge.busy}
@@ -2129,7 +2152,7 @@ export function SessionPage(props: SessionPageProps) {
           selectedWorkspaceId={props.sidebar.selectedWorkspaceId}
           developerMode={props.sidebar.developerMode}
           selectedSessionId={props.sidebar.selectedSessionId}
-          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession)}
+          showSessionActions={Boolean(props.onRenameSession || props.onDeleteSession || props.onArchiveSession || props.onExportSession)}
           sessionStatusById={props.sidebar.sessionStatusById}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
@@ -2149,6 +2172,9 @@ export function SessionPage(props: SessionPageProps) {
           } : undefined}
           onArchiveSession={props.onArchiveSession ? (sessionId, archived) => {
             void props.onArchiveSession?.(sessionId, archived);
+          } : undefined}
+          onExportSession={props.onExportSession ? (workspaceId, sessionId) => {
+            void props.onExportSession?.(workspaceId, sessionId);
           } : undefined}
           archiveDisabledReason={props.archiveDisabledReason}
           onOpenCreateGroupModal={(workspaceId) => {
@@ -2320,7 +2346,7 @@ export function SessionPage(props: SessionPageProps) {
           <>
           <ResizablePanelGroup
             orientation="horizontal"
-            onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
+            onLayoutChanged={sidePanelOpen ? scheduleBrowserPanelWidthCommit : undefined}
             className="min-h-0 flex-1 max-lg:rounded-none lg:rounded-[14px]"
           >
             <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
@@ -2332,7 +2358,7 @@ export function SessionPage(props: SessionPageProps) {
                 <ResizablePanel
                   panelRef={browserPanelRef}
                   defaultSize={`${activeSidePanel === "extensions" ? Math.max(browserPanelDefaultWidth, 480) : activeSidePanel === "editor" ? Math.max(browserPanelDefaultWidth, 560) : browserPanelDefaultWidth}px`}
-                  minSize={activeSidePanel === "extensions" ? "420px" : activeSidePanel === "editor" ? "420px" : "320px"}
+                  minSize={activeSidePanel === "extensions" ? "420px" : activeSidePanel === "editor" ? "420px" : `${MIN_SIDE_PANEL_WIDTH}px`}
                   maxSize="70%"
                   className="min-h-0 overflow-hidden pl-2 lg:flex lg:flex-col"
                 >

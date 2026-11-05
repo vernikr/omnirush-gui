@@ -1,11 +1,12 @@
 /** @jsxImportSource react */
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, Search, X } from "lucide-react";
 
 import type { OmniRushServerClient, OmniRushWorkspaceCatalogEntry } from "@/app/lib/omnirush-server";
 import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
 import { Button } from "@/components/ui/button";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,6 +17,8 @@ import { toast } from "@/components/ui/sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
+import { captureArtifactFindShortcut, clearArtifactFindHighlights, findTextRanges, setArtifactFindHighlights } from "./artifact-find";
+import "./artifact-panel.css";
 import { isCollectibleArtifactTarget, openTargetFromWorkspaceFile, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
 import { HTMLPreview, ImagePreview, MarkdownPreview, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
 
@@ -66,6 +69,20 @@ function absoluteWorkspacePath(root: string, path: string) {
   return cleanRoot ? `${cleanRoot}/${cleanPath}` : cleanPath;
 }
 
+/**
+ * The address shown next to the file name in the panel header.
+ *
+ * A name alone hides where the file lives, so the workspace path is shown in
+ * full (and in a tooltip, since the row truncates). A file directly at the
+ * workspace root has nothing to add: showing its own name twice reads as a
+ * rendering bug.
+ */
+export function artifactHeaderPath(target: OpenTarget): string {
+  const path = target.value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
+  if (target.kind !== "file") return path;
+  return path === target.name ? "" : path;
+}
+
 function isTextContent(target: OpenTarget): boolean {
   return ["markdown", "code", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
 }
@@ -97,10 +114,19 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [treeOpen, setTreeOpen] = useState(true);
+  const treeWidthRef = useRef(160);
   const [draft, setDraft] = useState("");
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findMatchCount, setFindMatchCount] = useState(0);
+  const [findMatchIndex, setFindMatchIndex] = useState(0);
+  const previewContentRef = useRef<HTMLDivElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const findButtonRef = useRef<HTMLButtonElement>(null);
   const lastSyncedRef = useRef<string | null>(null);
   const failedDraftRef = useRef<string | null>(null);
   const isMermaidArtifact = target.kind === "file" && /\.mmd$/i.test(target.value);
+  const panelPath = artifactHeaderPath(target);
   // Plain text opens directly in CodeMirror. Markdown and HTML default to
   // their rendered previews and retain the existing Edit toggle.
   const isDirectTextEdit = isTextContent(target) && target.preview === "text";
@@ -167,6 +193,11 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   useEffect(() => {
     setEditing(false);
     setDraft("");
+    setFindOpen(false);
+    setFindQuery("");
+    setFindMatchIndex(0);
+    setFindMatchCount(0);
+    clearArtifactFindHighlights();
     lastSyncedRef.current = null;
     failedDraftRef.current = null;
   }, [target.id, workspaceId]);
@@ -273,6 +304,48 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   const isTextEditing = data?.kind === "text" && (editing || isDirectTextEdit);
   const isEditingSurface = data?.kind === "text" && (editing || isDirectTextEdit || isDirectCodeEdit);
   const isDirty = data?.kind === "text" && draft !== data.data;
+  const canFind = data?.kind === "text" && target.preview === "markdown" && !isEditingSurface;
+
+  useEffect(() => {
+    if (!canFind) {
+      setFindOpen(false);
+      clearArtifactFindHighlights();
+      return;
+    }
+
+    const handleFindShortcut = (event: KeyboardEvent) => {
+      const panel = previewContentRef.current?.closest<HTMLElement>("[data-artifact-panel]");
+      if (!panel) return;
+      captureArtifactFindShortcut(event, panel, platform.os === "macos", () => setFindOpen(true));
+    };
+
+    window.addEventListener("keydown", handleFindShortcut, true);
+    return () => window.removeEventListener("keydown", handleFindShortcut, true);
+  }, [canFind, platform.os]);
+
+  useEffect(() => {
+    if (!canFind || !findOpen || !findQuery.trim() || !previewContentRef.current) {
+      clearArtifactFindHighlights();
+      setFindMatchCount(0);
+      return;
+    }
+
+    const ranges = findTextRanges(previewContentRef.current, findQuery);
+    setFindMatchCount(ranges.length);
+    setFindMatchIndex((current) => (ranges.length ? Math.min(current, ranges.length - 1) : 0));
+    setArtifactFindHighlights(ranges, findMatchIndex);
+    const activeIndex = ranges.length ? ((findMatchIndex % ranges.length) + ranges.length) % ranges.length : -1;
+    ranges[activeIndex]?.startContainer.parentElement?.scrollIntoView({ block: "center", behavior: "smooth" });
+
+    return () => clearArtifactFindHighlights();
+  }, [canFind, findOpen, findQuery, findMatchIndex, data?.data]);
+
+  useEffect(() => {
+    if (findOpen) {
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    }
+  }, [findOpen]);
 
   useEffect(() => {
     if (
@@ -293,6 +366,17 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
     return () => window.clearTimeout(timer);
   }, [draft, data, editing, isDirectTextEdit, isDirectCodeEdit, isSaving, target.kind, mutate]);
 
+  const closeFind = () => {
+    setFindOpen(false);
+    setFindQuery("");
+    setFindMatchIndex(0);
+    window.requestAnimationFrame(() => findButtonRef.current?.focus());
+  };
+  const stepFindMatch = (direction: number) => {
+    if (!findMatchCount) return;
+    setFindMatchIndex((current) => (current + direction + findMatchCount) % findMatchCount);
+  };
+
   const saveSpreadsheetContent = async (payload: Data) => {
     if (target.kind !== "file") {
       return;
@@ -305,7 +389,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div data-artifact-panel="" className="flex h-full min-h-0 flex-col bg-background">
       <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
         <div className="flex h-10 items-center gap-2 pe-2 ps-2">
           <Tooltip>
@@ -318,10 +402,21 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
             />
             <TooltipContent>{treeOpen ? "Hide workspace files" : "Show workspace files"}</TooltipContent>
           </Tooltip>
-          <div className="min-w-0 flex-1 flex items-center gap-1.5">
-            <h3 className="min-w-0 truncate text-sm font-medium text-foreground">
+          <div className="min-w-0 flex-1 flex items-baseline gap-1.5">
+            <h3 className="max-w-[55%] shrink-0 truncate text-sm font-medium text-foreground">
               {target.name}
             </h3>
+            {/* The tab only has room for the basename; the address keeps the
+                workspace path so a file read from a nested folder is identifiable. */}
+            {panelPath ? (
+              <span
+                data-artifact-path=""
+                className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+                title={panelPath}
+              >
+                {panelPath}
+              </span>
+            ) : null}
             <span className="shrink-0 text-xs text-muted-foreground">
               {target.exists === false ? "missing" : isEditingSurface ? (isSaving || isDirty ? "Saving\u2026" : "Saved") : ""}
             </span>
@@ -335,6 +430,18 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
                   )}
                 />
                 <TooltipContent>{editing ? "Stop editing" : "Edit artifact"}</TooltipContent>
+              </Tooltip>
+            ) : null}
+            {canFind ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={(
+                    <Button ref={findButtonRef} variant="ghost" size="icon-sm" onClick={() => setFindOpen(true)} aria-label="Find in document">
+                      <Search />
+                    </Button>
+                  )}
+                />
+                <TooltipContent>Find in document (⌘F / Ctrl+F)</TooltipContent>
               </Tooltip>
             ) : null}
             {target.kind === "file" || target.kind === "url" ? (
@@ -377,10 +484,50 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
             </Tooltip>
           </div>
         </div>
+        {findOpen ? (
+          <div className="flex h-9 items-center gap-1 border-t border-border/70 px-2" data-artifact-find-ui="">
+            <Search className="ms-1 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <input
+              ref={findInputRef}
+              type="search"
+              value={findQuery}
+              onChange={(event) => {
+                setFindQuery(event.currentTarget.value);
+                setFindMatchIndex(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeFind();
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  stepFindMatch(event.shiftKey ? -1 : 1);
+                }
+              }}
+              placeholder="Find in document"
+              aria-label="Find in document"
+              className="h-7 min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+            />
+            <span className="min-w-12 text-center text-xs tabular-nums text-muted-foreground" aria-live="polite">
+              {findMatchCount ? `${findMatchIndex + 1} / ${findMatchCount}` : findQuery ? "No matches" : "0 / 0"}
+            </span>
+            <Button variant="ghost" size="icon-sm" onClick={() => stepFindMatch(-1)} disabled={!findMatchCount} aria-label="Previous match">
+              <ChevronUp />
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={() => stepFindMatch(1)} disabled={!findMatchCount} aria-label="Next match">
+              <ChevronDown />
+            </Button>
+            <Button variant="ghost" size="icon-sm" onClick={closeFind} aria-label="Close find">
+              <X />
+            </Button>
+          </div>
+        ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1 overflow-hidden">
         {treeOpen ? (
-          <Suspense fallback={<div className="w-40 shrink-0 border-r border-border bg-muted/20" />}>
+          <>
+          <ResizablePanel id="artifact-file-tree" defaultSize={`${treeWidthRef.current}px`} minSize="100px" maxSize="65%" groupResizeBehavior="preserve-pixel-size" onResize={(size) => { if (size.inPixels >= 100) treeWidthRef.current = size.inPixels; }} className="min-h-0 min-w-0">
+          <Suspense fallback={<div className="h-full w-full bg-muted/20" />}>
             <WorkspaceFileTree
               client={client}
               workspaceId={workspaceId}
@@ -398,8 +545,12 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
               ]}
             />
           </Suspense>
+          </ResizablePanel>
+          <ResizableHandle aria-label="Resize workspace file tree" />
+          </>
         ) : null}
-        <div className="min-w-0 flex-1 overflow-hidden">
+        <ResizablePanel id="artifact-preview" minSize="120px" className="min-w-0">
+        <div ref={previewContentRef} className="h-full min-w-0 overflow-hidden">
           {isLoading || (data?.kind === "binary" && !binaryObjectUrl) ? (
           <PreviewLoading />
         ) : isError ? (
@@ -439,7 +590,8 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
           <PreviewUnavailable />
           )}
         </div>
-      </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   );
 }

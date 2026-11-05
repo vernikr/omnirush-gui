@@ -11,22 +11,20 @@
 
   <p>
     <a href="https://omnirush.ai"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fomnirush.ai%2Fomnirush%2Fpublic%2Fusers-badge&style=for-the-badge&logo=rocket&logoColor=white" alt="Users" /></a>
-    <a href="https://github.com/omnirush-ai/omnirush-gui/releases"><img src="https://img.shields.io/github/downloads/omnirush-ai/omnirush-gui/total?style=for-the-badge&color=blue&label=downloads" alt="Downloads" /></a>
+    <a href="https://github.com/vernikr/omnirush-gui/releases"><img src="https://img.shields.io/github/downloads/vernikr/omnirush-gui/total?style=for-the-badge&color=blue&label=downloads" alt="Downloads" /></a>
     <a href="https://github.com/omnirush-ai/omnirush-gui"><img src="https://visitor-badge.laobi.icu/badge?page_id=omnirush-ai.omnirush-gui&left_text=views&left_color=%23555&right_color=%23f97316" height="28" alt="Views" /></a>
   </p>
   <p>
-    <a href="https://github.com/omnirush-ai/omnirush-gui/releases/latest"><img src="https://img.shields.io/github/v/release/omnirush-ai/omnirush-gui?label=latest&color=f97316" alt="Latest release" /></a>
-    <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple" alt="macOS" />
-    <img src="https://img.shields.io/badge/Linux-x64%20%7C%20arm64-FCC624?logo=linux&logoColor=black" alt="Linux" />
+    <a href="https://github.com/vernikr/omnirush-gui/releases/latest"><img src="https://img.shields.io/github/v/release/vernikr/omnirush-gui?label=latest&color=f97316" alt="Latest release" /></a>
+    <img src="https://img.shields.io/badge/macOS-Intel-black?logo=apple" alt="macOS Intel" />
     <a href="https://github.com/omnirush-ai/omnirush-gui/stargazers"><img src="https://img.shields.io/github/stars/omnirush-ai/omnirush-gui?style=social" alt="Stars" /></a>
   </p>
 
   <p>
-    <a href="https://omnirush.ai/download/mac"><img src="https://img.shields.io/badge/Download%20for%20macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS" /></a>
-    <a href="https://omnirush.ai/download/linux-appimage"><img src="https://img.shields.io/badge/Download%20for%20Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Download for Linux" /></a>
+    <a href="https://github.com/vernikr/omnirush-gui/releases/latest"><img src="https://img.shields.io/badge/Download%20for%20macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS" /></a>
   </p>
 
-  <p><a href="https://omnirush.ai">Website</a> · <a href="https://github.com/omnirush-ai/omnirush-gui/releases">Releases</a> · <a href="https://www.npmjs.com/package/omnirush">CLI</a></p>
+  <p><a href="https://omnirush.ai">Website</a> · <a href="https://github.com/vernikr/omnirush-gui/releases">Releases</a> · <a href="https://www.npmjs.com/package/omnirush">CLI</a></p>
 </div>
 
 ---
@@ -35,26 +33,50 @@ omnirush.ai is a desktop app for working with a coding agent on your own
 projects. GPT 6 Astra is the default model; GPT 6.1 Sol and the other models in
 your account's catalog are available from the model picker.
 
+## Why this fork
+
+### In chat
+
+- Adapts GitHub favicons to dark mode ([Commit](https://github.com/vernikr/omnirush-gui/commit/8f9f9c9eeb9ea03f89ed74cf9870c7b5a27345d7))
+- Preserves transparency of other favicons ([Commit](https://github.com/vernikr/omnirush-gui/commit/8f9f9c9eeb9ea03f89ed74cf9870c7b5a27345d7))
+- Keeps filenames clickable with incomplete paths ([Commit](https://github.com/vernikr/omnirush-gui/commit/ba41b3798007cc1fdee2c69e0187d95191fb70b7) · [Upstream issue](https://github.com/omnirush-ai/omnirush-gui/issues/351))
+- Improves performance during agent reasoning ([Commit](https://github.com/vernikr/omnirush-gui/commit/b3dd4621e90024c1fea4edc0946731a91e13b348))
+- Exports full chat branches to Markdown ([Commit](https://github.com/vernikr/omnirush-gui/commit/7251c393e8cd2d51392f89379ca38dabbcc10e89) · [Upstream issue](https://github.com/omnirush-ai/omnirush-gui/issues/349))
+
+### In the prompt field
+
+- Fixes quote expansion, scrolling, and undo ([Commit](https://github.com/vernikr/omnirush-gui/commit/5265256fc633e7cb5b48ad7bd2763884b3e1812b) · [Upstream issue](https://github.com/omnirush-ai/omnirush-gui/issues/354))
+- Fixes selection and focus with attachments ([Commit](https://github.com/vernikr/omnirush-gui/commit/4b2a717dc39d3bf2381393df6d8b47c1a2f0e1ff) · [Upstream issue](https://github.com/omnirush-ai/omnirush-gui/issues/285))
+
+### In the right-hand artifact panel
+
+- Makes the file tree resizable ([Commit](https://github.com/vernikr/omnirush-gui/commit/ba43b7858bbb6441fd0bf89754f02d3270b9b83d) · [Upstream issue](https://github.com/omnirush-ai/omnirush-gui/issues/355))
+- Shows nested paths in file headers ([Commit](https://github.com/vernikr/omnirush-gui/commit/cc41f0a7b1dec3680181cd86fcd5962f30a86004) · [Upstream issue](https://github.com/omnirush-ai/omnirush-gui/issues/353))
+- Remembers the panel width ([Commit](https://github.com/vernikr/omnirush-gui/commit/cc41f0a7b1dec3680181cd86fcd5962f30a86004) · [Upstream issue](https://github.com/omnirush-ai/omnirush-gui/issues/352))
+- Adds search to Markdown previews ([Commit](https://github.com/vernikr/omnirush-gui/commit/9e887bbed3142944fca36e5423dfbbef23acf2f2))
+- Adapts Markdown code blocks to themes ([Commit](https://github.com/vernikr/omnirush-gui/commit/dc35c255d59c2ef215bfb003cbfed4468af63b95) · [Upstream issue](https://github.com/omnirush-ai/omnirush-gui/issues/272))
+
+### On macOS
+
+- Supports Intel Macs ([Commit](https://github.com/vernikr/omnirush-gui/commit/1a09587781a6b9802d8d72d4fae4b59da494bf08))
+- Restores saved zoom at launch ([Commit](https://github.com/vernikr/omnirush-gui/commit/ba41b3798007cc1fdee2c69e0187d95191fb70b7) · [Upstream issue](https://github.com/omnirush-ai/omnirush-gui/issues/344))
+
+Details: [Fork differences](FORK_DIFFS.md).
+
 ## Download
 
-Download the latest build from the
-[releases page](https://github.com/omnirush-ai/omnirush-gui/releases/latest).
-File names include the version, for example `omnirush-mac-arm64-3.0.1.dmg`.
+Starting with v3.7.2, builds are limited to Intel macOS to reduce GitHub
+Actions usage. Earlier releases retain their original platform assets; no new
+Apple Silicon, Windows, or Linux installers will be produced.
 
-| Platform | File |
+| Platform | File in new releases |
 | --- | --- |
-| macOS, Apple Silicon | `omnirush-mac-arm64-<version>.dmg` (a `.zip` is also attached) |
-| Linux x64, Debian/Ubuntu | `omnirush-linux-amd64-<version>.deb` |
-| Linux x64, Arch | `omnirush-linux-x64-<version>.pacman` |
-| Linux x64, Fedora/RHEL | `omnirush-linux-x86_64-<version>.rpm` |
-| Linux x64, other | `omnirush-linux-x86_64-<version>.AppImage` or `omnirush-linux-x64-<version>.tar.gz` |
-| Linux arm64, Debian/Ubuntu | `omnirush-linux-arm64-<version>.deb` |
-| Linux arm64, Arch | `omnirush-linux-aarch64-<version>.pacman` |
-| Linux arm64, Fedora/RHEL | `omnirush-linux-aarch64-<version>.rpm` |
-| Linux arm64, other | `omnirush-linux-arm64-<version>.AppImage` or `omnirush-linux-arm64-<version>.tar.gz` |
+| macOS, Intel | `omnirush-mac-x64-<version>.dmg` (a `.zip` is also attached) |
 
-Each release includes `SHA256SUMS.txt` for verifying downloads. There is no
-build for Intel Macs.
+Download the latest build from the
+[releases page](https://github.com/vernikr/omnirush-gui/releases/latest).
+Each release includes `SHA256SUMS.txt` for verifying downloads. The Intel Mac
+build is ad-hoc signed and not notarized.
 
 ## First launch
 
@@ -104,6 +126,7 @@ account is connected.
 | MCP servers | Local MCP servers from the account's supported list, such as filesystem, git, SQLite, memory, sequential thinking, time, and Playwright on local pages. Remote and account-linked servers are not supported. Configure them in Settings > MCP. | [skills-and-mcp.md](docs/skills-and-mcp.md) |
 | Git workflows | The agent clones, branches, creates worktrees, commits, pushes, and opens and reviews pull requests with `gh`. Write commands ask once per session; destructive ones always ask. | [git-workflows.md](docs/git-workflows.md) |
 | Approvals | The composer's full-permissions toggle switches between asking and allowing every tool call. | [approvals.md](docs/approvals.md) |
+| Markdown export | Export the full contents of a chat branch — including reasoning, tool calls, and sub-agent runs — to a `.md` file from the header, sidebar, Command Palette, or `/export [filename]`. | [session-markdown-export.md](docs/session-markdown-export.md) |
 
 ## Updating
 
