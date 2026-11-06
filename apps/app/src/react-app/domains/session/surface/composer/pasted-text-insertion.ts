@@ -8,7 +8,7 @@ import {
 } from "lexical";
 import { splitPastedText } from "./pasted-text";
 
-function createPastedTextNodes(text: string) {
+export function createPastedTextNodes(text: string) {
   const nodes: LexicalNode[] = [];
   for (const segment of splitPastedText(text)) {
     if (segment.kind === "line-break") {

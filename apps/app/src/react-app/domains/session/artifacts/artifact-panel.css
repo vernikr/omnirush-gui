@@ -1,0 +1,9 @@
+::highlight(omnirush-artifact-find-match) {
+  background-color: color-mix(in srgb, var(--primary) 24%, transparent);
+  color: inherit;
+}
+
+::highlight(omnirush-artifact-find-active) {
+  background-color: color-mix(in srgb, var(--primary) 52%, transparent);
+  color: inherit;
+}

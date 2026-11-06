@@ -492,6 +492,18 @@ test("composer focus and optimistic sends preserve drafts through snapshots and 
       Object.defineProperty(input, "files", { configurable: true, value: [attachment.file] });
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    await waitFor(
+      () => container.querySelector('[data-lexical-editor="true"]')?.textContent?.includes("First hero message") ?? false,
+      "the attached prompt to remain in the composer",
+    );
+    await act(async () => {
+      const editor = container.querySelector<HTMLElement>('[data-lexical-editor="true"]');
+      if (!editor) throw new Error("Expected the prompt editor after attaching a file");
+      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(window.getSelection()?.toString()).toContain("First hero message");
+    expect(window.getSelection()?.toString()).not.toContain("photo.png");
+    expect(container.querySelector<HTMLElement>("[data-attachment-id]")?.style.getPropertyValue("user-select")).toBe("none");
     await act(async () => send());
     expect(creations).toBe(2);
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");

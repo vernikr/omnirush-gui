@@ -25,6 +25,7 @@ import {
 import { LinkActionMenu } from "./link-action-menu";
 import { useMermaidEnhancer } from "./mermaid";
 import { useSelectionStableValue } from "./selection-stability";
+import { useStreamingRenderPace } from "./use-streaming-render-pace";
 
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
 
@@ -130,16 +131,26 @@ function MarkdownBlockInner({
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
   const [streamingRenderer] = useState(() => createStreamingMarkdownRenderer("chat"));
-  const streamedBlocks = useMemo(
-    () => (streaming ? streamingRenderer.render(text) : null),
-    [streaming, streamingRenderer, text],
-  );
+  // A long block (a reasoning trace is usually one paragraph) costs a full lex,
+  // sanitize and layout per frame if it follows the token rate. The pacer keeps
+  // short answers on the per-frame path and stretches the period of long ones
+  // by what the last render actually cost, so the renderer stays inside a
+  // fixed slice of a core however far the block grows.
+  const lastRenderCostMs = useRef(0);
+  const renderedText = useStreamingRenderPace(text, streaming === true, lastRenderCostMs.current);
+  const streamedBlocks = useMemo(() => {
+    if (!streaming) return null;
+    const started = performance.now();
+    const blocks = streamingRenderer.render(renderedText);
+    lastRenderCostMs.current = performance.now() - started;
+    return blocks;
+  }, [renderedText, streaming, streamingRenderer]);
   useEffect(() => {
     if (!streaming) streamingRenderer.reset();
   }, [streaming, streamingRenderer]);
   const syncHtml = useMemo(
-    () => (streamedBlocks ? "" : renderMarkdownHtml(text)),
-    [streamedBlocks, text],
+    () => (streamedBlocks ? "" : renderMarkdownHtml(renderedText)),
+    [renderedText, streamedBlocks],
   );
   const [highlightedHtml, setHighlightedHtml] = useState<{ text: string; html: string } | null>(null);
 

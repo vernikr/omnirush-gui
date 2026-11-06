@@ -1,0 +1,1072 @@
+diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts b/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts
+new file mode 100644
+index 00000000..09fcd43b
+--- /dev/null
++++ b/apps/app/src/react-app/domains/session/artifacts/artifact-find.ts
+@@ -0,0 +1,94 @@
++export type TextMatch = { start: number; end: number };
++
++export function captureArtifactFindShortcut(
++  event: KeyboardEvent,
++  panel: HTMLElement,
++  isMac: boolean,
++  openFind: () => void,
++): boolean {
++  const modifier = isMac ? event.metaKey : event.ctrlKey;
++  if (!modifier || event.shiftKey || event.altKey || event.key.toLowerCase() !== "f") return false;
++  if (!(event.target instanceof Node) || !panel.contains(event.target)) return false;
++  event.preventDefault();
++  event.stopImmediatePropagation();
++  openFind();
++  return true;
++}
++
++export function findMatchOffsets(text: string, query: string): TextMatch[] {
++  const needle = query.trim().toLowerCase();
++  if (!needle) return [];
++  const haystack = text.toLowerCase();
++  const matches: TextMatch[] = [];
++  let from = 0;
++  while (from <= haystack.length - needle.length) {
++    const start = haystack.indexOf(needle, from);
++    if (start < 0) break;
++    matches.push({ start, end: start + needle.length });
++    from = start + needle.length;
++  }
++  return matches;
++}
++
++const BLOCK_SELECTOR = "p,li,blockquote,pre,td,th,h1,h2,h3,h4,h5,h6,dt,dd";
++const IGNORE_SELECTOR = "script,style,button,input,textarea,select,[aria-hidden='true']";
++
++export function findTextRanges(root: HTMLElement, query: string): Range[] {
++  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
++    acceptNode(node) {
++      const text = node.textContent ?? "";
++      const parent = node.parentElement;
++      return text.length && parent && !parent.closest(IGNORE_SELECTOR)
++        ? NodeFilter.FILTER_ACCEPT
++        : NodeFilter.FILTER_REJECT;
++    },
++  });
++  const segments: Array<{ node: Text; start: number; end: number }> = [];
++  let flattened = "";
++  let previousBlock: Element | null = null;
++  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
++    const textNode = node as Text;
++    const block = textNode.parentElement?.closest(BLOCK_SELECTOR) ?? textNode.parentElement;
++    if (segments.length && block !== previousBlock) flattened += " ";
++    const start = flattened.length;
++    flattened += textNode.data;
++    segments.push({ node: textNode, start, end: flattened.length });
++    previousBlock = block;
++  }
++
++  const resolve = (offset: number) => segments.find((segment) => offset >= segment.start && offset < segment.end);
++  return findMatchOffsets(flattened, query).flatMap(({ start, end }) => {
++    const first = resolve(start);
++    const last = resolve(end - 1);
++    if (!first || !last) return [];
++    const range = document.createRange();
++    range.setStart(first.node, start - first.start);
++    range.setEnd(last.node, end - last.start);
++    return [range];
++  });
++}
++
++export function setArtifactFindHighlights(ranges: Range[], activeIndex: number): void {
++  const highlightApi = (window as unknown as {
++    Highlight?: new (...ranges: Range[]) => unknown;
++    CSS?: { highlights?: { set(name: string, value: unknown): void; delete(name: string): void } };
++  });
++  const registry = highlightApi.CSS?.highlights;
++  const HighlightConstructor = highlightApi.Highlight;
++  if (!registry || !HighlightConstructor) return;
++
++  registry.delete("omnirush-artifact-find-match");
++  registry.delete("omnirush-artifact-find-active");
++  const active = ranges.length ? ((activeIndex % ranges.length) + ranges.length) % ranges.length : -1;
++  const others = ranges.filter((_range, index) => index !== active);
++  if (others.length) registry.set("omnirush-artifact-find-match", new HighlightConstructor(...others));
++  if (active >= 0) registry.set("omnirush-artifact-find-active", new HighlightConstructor(ranges[active]));
++}
++
++export function clearArtifactFindHighlights(): void {
++  const registry = (window as unknown as {
++    CSS?: { highlights?: { delete(name: string): void } };
++  }).CSS?.highlights;
++  registry?.delete("omnirush-artifact-find-match");
++  registry?.delete("omnirush-artifact-find-active");
++}
+diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.css b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.css
+new file mode 100644
+index 00000000..75204d3d
+--- /dev/null
++++ b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.css
+@@ -0,0 +1,9 @@
++::highlight(omnirush-artifact-find-match) {
++  background-color: color-mix(in srgb, var(--primary) 24%, transparent);
++  color: inherit;
++}
++
++::highlight(omnirush-artifact-find-active) {
++  background-color: color-mix(in srgb, var(--primary) 52%, transparent);
++  color: inherit;
++}
+diff --git a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
+index 738adbc6..f3831367 100644
+--- a/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
++++ b/apps/app/src/react-app/domains/session/artifacts/artifact-panel.tsx
+@@ -1,11 +1,12 @@
+ /** @jsxImportSource react */
+ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+-import { Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
++import { ChevronDown, ChevronUp, Download, Ellipsis, ExternalLink, FolderOpen, PanelLeftClose, PanelLeftOpen, Search, X } from "lucide-react";
+ 
+ import type { OmniRushServerClient, OmniRushWorkspaceCatalogEntry } from "@/app/lib/omnirush-server";
+ import { openDesktopPath, revealDesktopItemInDir } from "@/app/lib/desktop";
+ import { Button } from "@/components/ui/button";
++import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+ import {
+   DropdownMenu,
+   DropdownMenuContent,
+@@ -16,6 +17,8 @@ import { toast } from "@/components/ui/sonner";
+ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+ import { usePlatform } from "@/react-app/kernel/platform";
+ import { type ArtifactPanelTab, usePanelTabStore } from "../panel/panel-tab-store";
++import { captureArtifactFindShortcut, clearArtifactFindHighlights, findTextRanges, setArtifactFindHighlights } from "./artifact-find";
++import "./artifact-panel.css";
+ import { isCollectibleArtifactTarget, openTargetFromWorkspaceFile, type BinaryData, type Data, type OpenTarget, type TextData } from "./open-target";
+ import { HTMLPreview, ImagePreview, MarkdownPreview, PdfPreview, PlainText, PreviewError, PreviewLoading, PreviewUnavailable } from "./preview";
+ 
+@@ -66,6 +69,20 @@ function absoluteWorkspacePath(root: string, path: string) {
+   return cleanRoot ? `${cleanRoot}/${cleanPath}` : cleanPath;
+ }
+ 
++/**
++ * The address shown next to the file name in the panel header.
++ *
++ * A name alone hides where the file lives, so the workspace path is shown in
++ * full (and in a tooltip, since the row truncates). A file directly at the
++ * workspace root has nothing to add: showing its own name twice reads as a
++ * rendering bug.
++ */
++export function artifactHeaderPath(target: OpenTarget): string {
++  const path = target.value.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
++  if (target.kind !== "file") return path;
++  return path === target.name ? "" : path;
++}
++
+ function isTextContent(target: OpenTarget): boolean {
+   return ["markdown", "code", "text", "sheet", "html"].includes(target.preview) && !/\.(xlsx|xls|ods)$/i.test(target.value);
+ }
+@@ -97,10 +114,19 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+   const queryClient = useQueryClient();
+   const [editing, setEditing] = useState(false);
+   const [treeOpen, setTreeOpen] = useState(true);
++  const treeWidthRef = useRef(160);
+   const [draft, setDraft] = useState("");
++  const [findOpen, setFindOpen] = useState(false);
++  const [findQuery, setFindQuery] = useState("");
++  const [findMatchCount, setFindMatchCount] = useState(0);
++  const [findMatchIndex, setFindMatchIndex] = useState(0);
++  const previewContentRef = useRef<HTMLDivElement>(null);
++  const findInputRef = useRef<HTMLInputElement>(null);
++  const findButtonRef = useRef<HTMLButtonElement>(null);
+   const lastSyncedRef = useRef<string | null>(null);
+   const failedDraftRef = useRef<string | null>(null);
+   const isMermaidArtifact = target.kind === "file" && /\.mmd$/i.test(target.value);
++  const panelPath = artifactHeaderPath(target);
+   // Plain text opens directly in CodeMirror. Markdown and HTML default to
+   // their rendered previews and retain the existing Edit toggle.
+   const isDirectTextEdit = isTextContent(target) && target.preview === "text";
+@@ -167,6 +193,11 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+   useEffect(() => {
+     setEditing(false);
+     setDraft("");
++    setFindOpen(false);
++    setFindQuery("");
++    setFindMatchIndex(0);
++    setFindMatchCount(0);
++    clearArtifactFindHighlights();
+     lastSyncedRef.current = null;
+     failedDraftRef.current = null;
+   }, [target.id, workspaceId]);
+@@ -273,6 +304,48 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+   const isTextEditing = data?.kind === "text" && (editing || isDirectTextEdit);
+   const isEditingSurface = data?.kind === "text" && (editing || isDirectTextEdit || isDirectCodeEdit);
+   const isDirty = data?.kind === "text" && draft !== data.data;
++  const canFind = data?.kind === "text" && target.preview === "markdown" && !isEditingSurface;
++
++  useEffect(() => {
++    if (!canFind) {
++      setFindOpen(false);
++      clearArtifactFindHighlights();
++      return;
++    }
++
++    const handleFindShortcut = (event: KeyboardEvent) => {
++      const panel = previewContentRef.current?.closest<HTMLElement>("[data-artifact-panel]");
++      if (!panel) return;
++      captureArtifactFindShortcut(event, panel, platform.os === "macos", () => setFindOpen(true));
++    };
++
++    window.addEventListener("keydown", handleFindShortcut, true);
++    return () => window.removeEventListener("keydown", handleFindShortcut, true);
++  }, [canFind, platform.os]);
++
++  useEffect(() => {
++    if (!canFind || !findOpen || !findQuery.trim() || !previewContentRef.current) {
++      clearArtifactFindHighlights();
++      setFindMatchCount(0);
++      return;
++    }
++
++    const ranges = findTextRanges(previewContentRef.current, findQuery);
++    setFindMatchCount(ranges.length);
++    setFindMatchIndex((current) => (ranges.length ? Math.min(current, ranges.length - 1) : 0));
++    setArtifactFindHighlights(ranges, findMatchIndex);
++    const activeIndex = ranges.length ? ((findMatchIndex % ranges.length) + ranges.length) % ranges.length : -1;
++    ranges[activeIndex]?.startContainer.parentElement?.scrollIntoView({ block: "center", behavior: "smooth" });
++
++    return () => clearArtifactFindHighlights();
++  }, [canFind, findOpen, findQuery, findMatchIndex, data?.data]);
++
++  useEffect(() => {
++    if (findOpen) {
++      findInputRef.current?.focus();
++      findInputRef.current?.select();
++    }
++  }, [findOpen]);
+ 
+   useEffect(() => {
+     if (
+@@ -293,6 +366,17 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+     return () => window.clearTimeout(timer);
+   }, [draft, data, editing, isDirectTextEdit, isDirectCodeEdit, isSaving, target.kind, mutate]);
+ 
++  const closeFind = () => {
++    setFindOpen(false);
++    setFindQuery("");
++    setFindMatchIndex(0);
++    window.requestAnimationFrame(() => findButtonRef.current?.focus());
++  };
++  const stepFindMatch = (direction: number) => {
++    if (!findMatchCount) return;
++    setFindMatchIndex((current) => (current + direction + findMatchCount) % findMatchCount);
++  };
++
+   const saveSpreadsheetContent = async (payload: Data) => {
+     if (target.kind !== "file") {
+       return;
+@@ -305,7 +389,7 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+   };
+ 
+   return (
+-    <div className="flex h-full min-h-0 flex-col bg-background">
++    <div data-artifact-panel="" className="flex h-full min-h-0 flex-col bg-background">
+       <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+         <div className="flex h-10 items-center gap-2 pe-2 ps-2">
+           <Tooltip>
+@@ -318,10 +402,21 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+             />
+             <TooltipContent>{treeOpen ? "Hide workspace files" : "Show workspace files"}</TooltipContent>
+           </Tooltip>
+-          <div className="min-w-0 flex-1 flex items-center gap-1.5">
+-            <h3 className="min-w-0 truncate text-sm font-medium text-foreground">
++          <div className="min-w-0 flex-1 flex items-baseline gap-1.5">
++            <h3 className="max-w-[55%] shrink-0 truncate text-sm font-medium text-foreground">
+               {target.name}
+             </h3>
++            {/* The tab only has room for the basename; the address keeps the
++                workspace path so a file read from a nested folder is identifiable. */}
++            {panelPath ? (
++              <span
++                data-artifact-path=""
++                className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
++                title={panelPath}
++              >
++                {panelPath}
++              </span>
++            ) : null}
+             <span className="shrink-0 text-xs text-muted-foreground">
+               {target.exists === false ? "missing" : isEditingSurface ? (isSaving || isDirty ? "Saving\u2026" : "Saved") : ""}
+             </span>
+@@ -337,6 +432,18 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+                 <TooltipContent>{editing ? "Stop editing" : "Edit artifact"}</TooltipContent>
+               </Tooltip>
+             ) : null}
++            {canFind ? (
++              <Tooltip>
++                <TooltipTrigger
++                  render={(
++                    <Button ref={findButtonRef} variant="ghost" size="icon-sm" onClick={() => setFindOpen(true)} aria-label="Find in document">
++                      <Search />
++                    </Button>
++                  )}
++                />
++                <TooltipContent>Find in document (⌘F / Ctrl+F)</TooltipContent>
++              </Tooltip>
++            ) : null}
+             {target.kind === "file" || target.kind === "url" ? (
+               <DropdownMenu>
+                 <DropdownMenuTrigger
+@@ -377,10 +484,50 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+             </Tooltip>
+           </div>
+         </div>
++        {findOpen ? (
++          <div className="flex h-9 items-center gap-1 border-t border-border/70 px-2" data-artifact-find-ui="">
++            <Search className="ms-1 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
++            <input
++              ref={findInputRef}
++              type="search"
++              value={findQuery}
++              onChange={(event) => {
++                setFindQuery(event.currentTarget.value);
++                setFindMatchIndex(0);
++              }}
++              onKeyDown={(event) => {
++                if (event.key === "Escape") {
++                  event.preventDefault();
++                  closeFind();
++                } else if (event.key === "Enter") {
++                  event.preventDefault();
++                  stepFindMatch(event.shiftKey ? -1 : 1);
++                }
++              }}
++              placeholder="Find in document"
++              aria-label="Find in document"
++              className="h-7 min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
++            />
++            <span className="min-w-12 text-center text-xs tabular-nums text-muted-foreground" aria-live="polite">
++              {findMatchCount ? `${findMatchIndex + 1} / ${findMatchCount}` : findQuery ? "No matches" : "0 / 0"}
++            </span>
++            <Button variant="ghost" size="icon-sm" onClick={() => stepFindMatch(-1)} disabled={!findMatchCount} aria-label="Previous match">
++              <ChevronUp />
++            </Button>
++            <Button variant="ghost" size="icon-sm" onClick={() => stepFindMatch(1)} disabled={!findMatchCount} aria-label="Next match">
++              <ChevronDown />
++            </Button>
++            <Button variant="ghost" size="icon-sm" onClick={closeFind} aria-label="Close find">
++              <X />
++            </Button>
++          </div>
++        ) : null}
+       </div>
+-      <div className="flex min-h-0 flex-1 overflow-hidden">
++      <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1 overflow-hidden">
+         {treeOpen ? (
+-          <Suspense fallback={<div className="w-40 shrink-0 border-r border-border bg-muted/20" />}>
++          <>
++          <ResizablePanel id="artifact-file-tree" defaultSize={`${treeWidthRef.current}px`} minSize="100px" maxSize="65%" groupResizeBehavior="preserve-pixel-size" onResize={(size) => { if (size.inPixels >= 100) treeWidthRef.current = size.inPixels; }} className="min-h-0 min-w-0">
++          <Suspense fallback={<div className="h-full w-full bg-muted/20" />}>
+             <WorkspaceFileTree
+               client={client}
+               workspaceId={workspaceId}
+@@ -398,8 +545,12 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+               ]}
+             />
+           </Suspense>
++          </ResizablePanel>
++          <ResizableHandle aria-label="Resize workspace file tree" />
++          </>
+         ) : null}
+-        <div className="min-w-0 flex-1 overflow-hidden">
++        <ResizablePanel id="artifact-preview" minSize="120px" className="min-w-0">
++        <div ref={previewContentRef} className="h-full min-w-0 overflow-hidden">
+           {isLoading || (data?.kind === "binary" && !binaryObjectUrl) ? (
+           <PreviewLoading />
+         ) : isError ? (
+@@ -439,7 +590,8 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, isRe
+           <PreviewUnavailable />
+           )}
+         </div>
+-      </div>
++        </ResizablePanel>
++      </ResizablePanelGroup>
+     </div>
+   );
+ }
+diff --git a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
+index 76a2ff62..fa1507cf 100644
+--- a/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
++++ b/apps/app/src/react-app/domains/session/surface/composer/composer.tsx
+@@ -113,7 +113,7 @@ type ComposerProps = {
+   onPasteText: (text: string) => void;
+   onUnsupportedFileLinks: (links: string[]) => void;
+   pastedText: PastedTextChip[];
+-  onExpandPastedText: (id: string) => void;
++  onExpandPastedText: (id: string, draft: string) => void;
+   onRemovePastedText: (id: string) => void;
+   isRemoteWorkspace: boolean;
+   isSandboxWorkspace: boolean;
+@@ -747,10 +747,20 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
+     return undefined;
+   }, [loadSkills, slashOpen, toolMenuOpen, toolMenuSection]);
+ 
+-  const slashItems = useMemo<ComposerSlashCommandOption[]>(
+-    () => [...commands, ...connectSkillSlashCommandOptions(skills)],
+-    [commands, skills],
+-  );
++  const slashItems = useMemo<ComposerSlashCommandOption[]>(() => {
++    const builtinItems: ComposerSlashCommandOption[] =
++      props.sessionId && !commands.some((cmd) => cmd.name.toLowerCase() === "export")
++        ? [
++            {
++              id: "builtin:export",
++              name: "export",
++              description: t("session.cmd_export_markdown_detail"),
++              source: "command",
++            },
++          ]
++        : [];
++    return [...commands, ...builtinItems, ...connectSkillSlashCommandOptions(skills)];
++  }, [commands, props.sessionId, skills]);
+   const slashFiltered = useMemo(() => {
+     if (!slashOpen) return [];
+     if (!slashQuery) return slashItems.slice(0, 8);
+@@ -776,10 +786,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
+     [props.attachments],
+   );
+ 
+-  const handleExpandPastedText = useCallback((label: string) => {
++  const handleExpandPastedText = useCallback((label: string, draft: string) => {
+     const target = props.pastedText.find((item) => item.label === label);
+     if (!target) return;
+-    props.onExpandPastedText(target.id);
++    props.onExpandPastedText(target.id, draft);
+   }, [props.onExpandPastedText, props.pastedText]);
+ 
+   const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : null;
+@@ -1199,6 +1209,15 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
+     // Oversized images are compressed at send time (see image-compression.ts)
+     // so the chip appears instantly instead of blocking on canvas work here.
+     props.onAttachFiles(inputFiles);
++    // The native picker returns focus to its launcher. Restore the prompt now
++    // and after React commits the attachment chip so Cmd/Ctrl+A reaches Lexical.
++    const focusPrompt = () => {
++      const editable = rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']");
++      editable?.focus({ preventScroll: true });
++      editorRef.current?.focus();
++    };
++    focusPrompt();
++    requestAnimationFrame(() => requestAnimationFrame(focusPrompt));
+   };
+ 
+   const panelRoundedClass =
+diff --git a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
+index 54262b60..4b88d881 100644
+--- a/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
++++ b/apps/app/src/react-app/domains/session/surface/composer/editor.tsx
+@@ -8,12 +8,13 @@ import { OnChangePlugin } from "@lexical/react/LexicalOnChangePlugin.js";
+ import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin.js";
+ import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext.js";
+ import {
++  $addUpdateTag,
+   $applyNodeReplacement,
+   $createRangeSelection,
+   $createParagraphNode,
+   $createTextNode,
+-  $getNearestNodeFromDOMNode,
+   $getRoot,
++  $getNearestNodeFromDOMNode,
+   $getSelection,
+   $nodesOfType,
+   $setSelection,
+@@ -27,17 +28,21 @@ import {
+   KEY_BACKSPACE_COMMAND,
+   KEY_ENTER_COMMAND,
+   PASTE_COMMAND,
++  ParagraphNode,
++  SELECTION_CHANGE_COMMAND,
++  SKIP_SCROLL_INTO_VIEW_TAG,
+   type SerializedTextNode,
+   type Spread,
+   TextNode,
+   type EditorConfig,
++  type LexicalEditor,
+   type NodeKey,
+ } from "lexical";
+ import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
+ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
+ import { parseConnectSkillToken } from "./connect-skill-token";
+-import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
+-import { insertPastedText } from "./pasted-text-insertion";
++import { pastedTextWithBoundaries, shouldCollapsePastedText, splitPastedText } from "./pasted-text";
++import { createPastedTextNodes, insertPastedText } from "./pasted-text-insertion";
+ import { padInsertion } from "@/app/lib/voice-core/text";
+ 
+ type PastedTextToken = { label: string; lines: number; text: string };
+@@ -58,7 +63,7 @@ type EditorProps = {
+   placeholder: string;
+   onChange: (value: string) => void;
+   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
+-  onExpandPastedText?: (label: string) => void;
++  onExpandPastedText?: (label: string, draft: string) => void;
+   onRemoveAttachment?: (id: string) => void;
+   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
+   onPasteText?: (text: string) => void;
+@@ -68,6 +73,7 @@ type EditorProps = {
+ };
+ 
+ export type LexicalPromptEditorHandle = {
++  focus: () => void;
+   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
+   /** Voice dictation: marks the cursor with a live (dim) transcript placeholder. */
+   voiceBegin: () => void;
+@@ -469,6 +475,8 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
+   const dom = document.createElement("span");
+   dom.className = "relative mx-0.5 inline-flex h-10 max-w-[140px] shrink-0 items-center align-middle";
+   dom.contentEditable = "false";
++  dom.style.setProperty("user-select", "none");
++  dom.style.setProperty("-webkit-user-select", "none");
+   dom.setAttribute("spellcheck", "false");
+   dom.title = attachment.name;
+   dom.dataset.attachmentId = attachment.id;
+@@ -1122,21 +1130,27 @@ function pastedExpandButton(target: EventTarget | null) {
+   return button instanceof HTMLButtonElement ? button : null;
+ }
+ 
+-function replacePastedTextChip(label: string, text: string, button: HTMLButtonElement) {
+-  const nearest = $getNearestNodeFromDOMNode(button);
+-  if (nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label) {
+-    nearest.select(0, nearest.getTextContentSize());
+-    return insertPastedText(text);
+-  }
+-  for (const node of $nodesOfType(ComposerPastedTextNode)) {
+-    if (node.getPastedLabel() !== label) continue;
+-    node.select(0, node.getTextContentSize());
+-    return insertPastedText(text);
+-  }
+-  return false;
++const EXPAND_PASTED_TEXT_TAG = "composer-expand-pasted-text";
++
++/** Text around this actual node, not the first identical placeholder in the draft. */
++function textAroundPastedNode(node: ComposerPastedTextNode): { before: string; after: string } | null {
++  const root = $getRoot();
++  const paragraph = node.getParent();
++  if (!$isElementNode(paragraph) || paragraph.getParent() !== root) return null;
++  const paragraphs = root.getChildren();
++  const paragraphIndex = paragraphs.findIndex((item) => item.is(paragraph));
++  if (paragraphIndex < 0) return null;
++  const previousParagraphs = paragraphs.slice(0, paragraphIndex).map((item) => item.getTextContent());
++  const nextParagraphs = paragraphs.slice(paragraphIndex + 1).map((item) => item.getTextContent());
++  return {
++    before: (previousParagraphs.length ? `${previousParagraphs.join("\n")}\n` : "")
++      + node.getPreviousSiblings().map((item) => item.getTextContent()).join(""),
++    after: node.getNextSiblings().map((item) => item.getTextContent()).join("")
++      + (nextParagraphs.length ? `\n${nextParagraphs.join("\n")}` : ""),
++  };
+ }
+ 
+-function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string) => void }) {
++function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpandPastedText?: (label: string, draft: string) => void }) {
+   const [editor] = useLexicalComposerContext();
+   const pastedTextRef = useRef(props.pastedText);
+   const onExpandPastedTextRef = useRef(props.onExpandPastedText);
+@@ -1161,12 +1175,22 @@ function PastedTextExpandPlugin(props: { pastedText?: PastedTextToken[]; onExpan
+       event.preventDefault();
+       event.stopPropagation();
+       const target = pastedTextRef.current?.find((item) => item.label === label);
+-      if (target) {
+-        editor.update(() => {
+-          replacePastedTextChip(label, target.text, button);
+-        });
+-      }
+-      onExpandPastedTextRef.current?.(label);
++      const onExpand = onExpandPastedTextRef.current;
++      if (!target || !onExpand) return;
++      let expandedDraft: string | null = null;
++      editor.update(() => {
++        const nearest = $getNearestNodeFromDOMNode(button);
++        const node = nearest instanceof ComposerPastedTextNode && nearest.getPastedLabel() === label
++          ? nearest : $nodesOfType(ComposerPastedTextNode).find((item) => item.getPastedLabel() === label);
++        if (!node) return;
++        const surrounding = textAroundPastedNode(node);
++        if (!surrounding) return;
++        const replacement = pastedTextWithBoundaries(target, surrounding.before, surrounding.after);
++        for (const replacementNode of createPastedTextNodes(replacement)) node.insertBefore(replacementNode);
++        node.remove();
++        expandedDraft = serializePromptFromRoot();
++      }, { discrete: true, tag: [EXPAND_PASTED_TEXT_TAG, SKIP_SCROLL_INTO_VIEW_TAG] });
++      if (expandedDraft !== null) onExpand(label, expandedDraft);
+     };
+ 
+     return editor.registerRootListener((rootElement, previousRootElement) => {
+@@ -1184,13 +1208,42 @@ function MentionChipNavigationPlugin() {
+   const [editor] = useLexicalComposerContext();
+ 
+   useEffect(() => {
++    // Lexical's element-caret geometry can point at the wrong child beside a
++    // non-editable chip. Its automatic scroll then jumps away from the caret.
++    const skipChipBoundaryScroll = () => {
++      const selection = $getSelection();
++      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return;
++      const anchor = selection.anchor.getNode();
++      if (anchor instanceof ComposerPastedTextNode) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
++      else if ($isElementNode(anchor) && (
++        anchor.getChildAtIndex(selection.anchor.offset - 1) instanceof ComposerPastedTextNode
++        || anchor.getChildAtIndex(selection.anchor.offset) instanceof ComposerPastedTextNode
++      )) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
++      else if ($isTextNode(anchor) && selection.anchor.offset <= 1
++        && anchor.getPreviousSibling() instanceof ComposerPastedTextNode) $addUpdateTag(SKIP_SCROLL_INTO_VIEW_TAG);
++    };
++    const unregisterSelection = editor.registerCommand(
++      SELECTION_CHANGE_COMMAND,
++      () => { skipChipBoundaryScroll(); return false; },
++      COMMAND_PRIORITY_HIGH,
++    );
++    // Deleting the last adjacent character changes the selection as part of
++    // a text mutation, without necessarily dispatching SELECTION_CHANGE.
++    const unregisterParagraph = editor.registerNodeTransform(ParagraphNode, skipChipBoundaryScroll);
+     const unregisterBackspace = editor.registerCommand(
+       KEY_BACKSPACE_COMMAND,
+-      () => {
++      (event) => {
+         const selection = $getSelection();
+         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
+         const anchorNode = selection.anchor.getNode();
+-
++        // Chromium can report the caret just after a non-editable chip as an
++        // offset at the end of the chip's token. Delete the whole chip, not
++        // one character of the hidden placeholder.
++        if (anchorNode instanceof ComposerPastedTextNode && selection.anchor.offset > 0) {
++          event.preventDefault();
++          anchorNode.remove();
++          return true;
++        }
+         // --- Slash command chip: atomic delete ---
+         // When cursor is in the text node right after a slash chip,
+         // remove the chip (and any trailing whitespace text) in one action.
+@@ -1225,6 +1278,7 @@ function MentionChipNavigationPlugin() {
+           const previous = anchorNode.getPreviousSibling();
+           if (isComposerInlineTokenNode(previous) && !(previous instanceof ComposerSlashCommandNode)) {
+             previous.remove();
++            if (previous instanceof ComposerPastedTextNode) event.preventDefault();
+             return true;
+           }
+         }
+@@ -1233,6 +1287,7 @@ function MentionChipNavigationPlugin() {
+           const previous = anchorNode.getChildAtIndex(selection.anchor.offset - 1);
+           if (isComposerInlineTokenNode(previous)) {
+             previous.remove();
++            if (previous instanceof ComposerPastedTextNode) event.preventDefault();
+             return true;
+           }
+         }
+@@ -1288,6 +1343,8 @@ function MentionChipNavigationPlugin() {
+     );
+ 
+     return () => {
++      unregisterSelection();
++      unregisterParagraph();
+       unregisterBackspace();
+       unregisterLeft();
+       unregisterRight();
+@@ -1301,6 +1358,9 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
+   const [editor] = useLexicalComposerContext();
+ 
+   useImperativeHandle(props.editorRef, () => ({
++    focus() {
++      editor.focus();
++    },
+     insertSkillAtSelection(skillName: string, skillToken?: string) {
+       editor.update(() => insertSkillAtSelection(skillName, skillToken));
+       editor.focus();
+@@ -1332,6 +1392,81 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
+   return null;
+ }
+ 
++function selectAllPrompt(editor: LexicalEditor) {
++  const root = editor.getRootElement();
++  if (!root) return;
++  root.focus({ preventScroll: true });
++  editor.update(() => {
++    const textNodes = $getRoot().getAllTextNodes().filter((node) => !(node instanceof ComposerAttachmentNode));
++    const first = textNodes[0];
++    const last = textNodes.at(-1);
++    if (!first || !last) {
++      $setSelection(null);
++      return;
++    }
++    const lexicalSelection = $createRangeSelection();
++    lexicalSelection.anchor.set(first.getKey(), 0, "text");
++    lexicalSelection.focus.set(last.getKey(), last.getTextContentSize(), "text");
++    $setSelection(lexicalSelection);
++  }, { discrete: true });
++
++  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
++    acceptNode(node) {
++      return node.textContent && !node.parentElement?.closest("[data-attachment-id]")
++        ? NodeFilter.FILTER_ACCEPT
++        : NodeFilter.FILTER_REJECT;
++    },
++  });
++  const first = walker.nextNode() as Text | null;
++  let last = first;
++  for (let node = walker.nextNode(); node; node = walker.nextNode()) last = node as Text;
++  const selection = window.getSelection();
++  if (!selection) return;
++  selection.removeAllRanges();
++  if (!first || !last) return;
++  const range = document.createRange();
++  range.setStart(first, 0);
++  range.setEnd(last, last.length);
++  selection.addRange(range);
++}
++
++function PromptSelectAllPlugin() {
++  const [editor] = useLexicalComposerContext();
++
++  useEffect(() => {
++    const root = editor.getRootElement();
++    if (!root) return;
++    const composerRoot = root.closest<HTMLElement>("[data-composer-root]") ?? root;
++    const shouldSelectPrompt = (target: EventTarget | null) => {
++      const candidates = [
++        target instanceof Element ? target : null,
++        document.activeElement instanceof Element ? document.activeElement : null,
++      ].filter((candidate): candidate is Element => candidate !== null);
++      const insidePrompt = candidates.some((candidate) => root.contains(candidate));
++      const insideComposer = candidates.some((candidate) => composerRoot.contains(candidate));
++      const focusedOtherEditor = candidates.some((candidate) => {
++        const editorTarget = candidate.closest("input:not([type='file']), textarea, [contenteditable='true']");
++        return editorTarget !== null && !root.contains(editorTarget);
++      });
++      return insidePrompt || (insideComposer && !focusedOtherEditor);
++    };
++    const onKeyDown = (event: KeyboardEvent) => {
++      const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
++      const modifier = isMac ? event.metaKey : event.ctrlKey;
++      if (!modifier || event.shiftKey || event.altKey || event.key.toLowerCase() !== "a") return;
++      if (!shouldSelectPrompt(event.target)) return;
++      event.preventDefault();
++      event.stopPropagation();
++      event.stopImmediatePropagation();
++      selectAllPrompt(editor);
++    };
++    window.addEventListener("keydown", onKeyDown, true);
++    return () => window.removeEventListener("keydown", onKeyDown, true);
++  }, [editor]);
++
++  return null;
++}
++
+ function attachmentRemoveButton(target: EventTarget | null) {
+   if (!(target instanceof Element)) return null;
+   const button = target.closest("button[data-attachment-remove-id]");
+@@ -1402,12 +1537,13 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
+   );
+ 
+   const syncPromptFromEditorState = useCallback(
+-    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
++    (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0], _editor: LexicalEditor, tags: Set<string>) => {
+       state.read(() => {
+         const next = serializePromptFromRoot();
+         if (next === valueRef.current) return;
+         valueRef.current = next;
+-        onChangeRef.current(next);
++        // Expand commits draft and chip metadata together through its callback.
++        if (!tags.has(EXPAND_PASTED_TEXT_TAG)) onChangeRef.current(next);
+       });
+     },
+     [],
+@@ -1454,6 +1590,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
+         <PasteChipPlugin onPasteText={props.onPasteText} />
+         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
+         <AttachmentRemovePlugin onRemoveAttachment={props.onRemoveAttachment} />
++        <PromptSelectAllPlugin />
+         <MentionChipNavigationPlugin />
+         <ImperativeHandlePlugin editorRef={ref} />
+       </div>
+diff --git a/apps/app/src/react-app/domains/session/surface/session-surface.tsx b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
+index e6a4472e..46685f7a 100644
+--- a/apps/app/src/react-app/domains/session/surface/session-surface.tsx
++++ b/apps/app/src/react-app/domains/session/surface/session-surface.tsx
+@@ -55,7 +55,9 @@ import { WorkspaceRunModeMenu } from "./composer/workspace-run-mode-menu";
+ import { FullPermissionsToggle } from "./composer/full-permissions-toggle";
+ import { SandboxStatusChip } from "./composer/sandbox-status-chip";
+ import { SandboxSetupPanel } from "./sandbox-setup-panel";
++import { openExportMarkdownModal } from "@/react-app/domains/session/commands/export-session-markdown-store";
+ import { useSessionCommandsStore } from "@/react-app/domains/session/commands/session-commands-store";
++import { parseExportSlashCommand } from "@/app/lib/session-markdown-export";
+ import { SubagentModelMenu } from "./composer/subagent-model-menu";
+ import { useSessionModelSelection } from "./session-model-store";
+ import type { ProviderCatalog } from "./use-model-behavior";
+@@ -65,7 +67,7 @@ import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMe
+ import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
+ import { parseSlashCommandInvocation } from "./composer/slash-command";
+ import { parseConnectSkillToken } from "./composer/connect-skill-token";
+-import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, unresolvedPasteLabels } from "./composer/pasted-text";
++import { createPastedTextChip, draftHasLostPaste, LOST_PASTE_MESSAGE, resolvePastedTextPlaceholders, pastedTextWithBoundaries, unresolvedPasteLabels } from "./composer/pasted-text";
+ import {
+   canAdmitNextQueuedItem,
+   claimQueuedSend,
+@@ -879,7 +881,7 @@ function SessionRunStatus(props: SessionRunStatusProps) {
+       data-testid="session-run-status"
+       role={props.acceptanceUnknown ? "alert" : "status"}
+       aria-live="polite"
+-      className={`mx-3 mb-2 flex items-start gap-3 rounded-xl border px-3 py-2.5 text-xs ${tone}`}
++      className={`mx-auto mb-2 flex w-full max-w-[800px] items-start gap-3 rounded-xl border px-3 py-2.5 text-xs ${tone}`}
+     >
+       <Icon aria-hidden="true" className={`mt-0.5 size-4 shrink-0 ${iconClass}`} />
+       <div className="min-w-0 flex-1">
+@@ -1167,7 +1169,6 @@ function composerSessionHasContent(state: ComposerSessionState | undefined) {
+     state.draft
+     || state.attachments.length
+     || Object.keys(state.mentions).length
+-    || state.pasteParts.length
+     || state.revertMessageId
+   ));
+ }
+@@ -2163,7 +2164,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+       if (pasteMatch) {
+         const target = sourcePasteParts.find((item) => item.label === pasteMatch[1]);
+         if (target) {
+-          return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines } satisfies ComposerDraft["parts"][number]];
++          return [{ type: "paste", id: target.id, label: target.label, text: pastedTextWithBoundaries(target, segments[index - 1] ?? "", segments[index + 1] ?? ""), lines: target.lines } satisfies ComposerDraft["parts"][number]];
+         }
+       }
+       const connectSkill = parseConnectSkillToken(segment);
+@@ -2312,10 +2313,32 @@ export function SessionSurface(props: SessionSurfaceProps) {
+     return true;
+   }, [clearComposer, props.client, props.sessionId, props.workspaceId]);
+ 
++  // "/export [filename]": opens the Markdown export modal for the full branch
++  // (messages, reasoning, tool calls, subagents) without sending a prompt to the model.
++  const exportFromDraft = useCallback((text: string, hasAttachments = false): boolean => {
++    if (hasAttachments) return false;
++    const parsed = parseExportSlashCommand(text);
++    if (!parsed) return false;
++    setSteering(false);
++    clearComposer();
++    openExportMarkdownModal({
++      workspaceId: props.workspaceId,
++      sessionId: props.sessionId,
++      opencodeBaseUrl: props.opencodeBaseUrl,
++      token: props.omnirushToken,
++      workspaceRoot: props.workspaceRoot,
++      serverClient: props.client,
++      relativeFilename: parsed.filename,
++    });
++    return true;
++  }, [clearComposer, props.client, props.omnirushToken, props.opencodeBaseUrl, props.sessionId, props.workspaceId, props.workspaceRoot]);
++
+   // Initial send (agent idle) and explicit "Steer" follow-up (agent busy)
+   // share the same immediate path.
+   const handleSend = useCallback(async (sourceComposer?: ComposerSessionState) => {
+     if (!sourceComposer && askSideFromDraft(draft)) return;
++    if (!sourceComposer && exportFromDraft(draft, attachments.length > 0)) return;
++    if (sourceComposer && exportFromDraft(sourceComposer.draft, sourceComposer.attachments.length > 0)) return;
+     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
+     const originalDraft = sourceComposer?.draft ?? draft;
+     const sourceAttachments = sourceComposer?.attachments ?? attachments;
+@@ -2434,7 +2457,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+     } finally {
+       setAttachmentsUploading(false);
+     }
+-  }, [askSideFromDraft, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, liveStatus.type, persistedDraftKey, props.onDraftChange, props.sessionId, revertMessageId, revertedMessageCount, sendDraft, sessionOwner]);
++  }, [askSideFromDraft, attachments, baseRenderedMessages, buildDraft, clearComposer, draft, exportFromDraft, liveStatus.type, persistedDraftKey, props.onDraftChange, props.sessionId, revertMessageId, revertedMessageCount, sendDraft, sessionOwner]);
+ 
+   // A chat command from a button ("/review", "/fix 1, 3"): sent like a typed one, the composer's draft left alone.
+   const runChatCommand = useCallback(async (text: string) => {
+@@ -2486,6 +2509,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+   // sends it once the session reports idle.
+   const handleQueue = useCallback(() => {
+     if (askSideFromDraft(draft)) return;
++    if (exportFromDraft(draft, attachments.length > 0)) return;
+     if ([...pendingSendsRef.current.values()].includes(sessionOwner)) return;
+     const text = draft.trim();
+     if (!text && attachments.length === 0) return;
+@@ -2495,7 +2519,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+     if (draftHasLostPaste(queuedDraft)) { toast.error(LOST_PASTE_MESSAGE); return; }
+     appendQueuedDraft(props.sessionId, queuedDraft);
+     clearComposer();
+-  }, [appendQueuedDraft, askSideFromDraft, attachments, buildDraft, clearComposer, draft, props.sessionId, sessionOwner]);
++  }, [appendQueuedDraft, askSideFromDraft, attachments, buildDraft, clearComposer, draft, exportFromDraft, props.sessionId, sessionOwner]);
+ 
+   const removeQueuedDraft = useCallback((id: string) => {
+     const target = queuedItems.find((item) => item.id === id);
+@@ -2830,12 +2854,9 @@ export function SessionSurface(props: SessionSurfaceProps) {
+     setComposerDraft(props.sessionId, `${draft}[pasted text ${pasted.label}]`);
+   }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
+ 
+-  const handleExpandPastedText = useCallback((id: string) => {
+-    const part = pasteParts.find((item) => item.id === id);
+-    if (!part) return;
+-    setComposerDraft(props.sessionId, draft.replace(`[pasted text ${part.label}]`, part.text));
+-    setComposerPasteParts(props.sessionId, pasteParts.filter((item) => item.id !== id));
+-  }, [draft, pasteParts, props.sessionId, setComposerDraft, setComposerPasteParts]);
++  const handleExpandPastedText = useCallback((id: string, nextDraft: string) => {
++    useComposerStateStore.getState().expandPastePart(props.sessionId, id, nextDraft);
++  }, [props.sessionId]);
+ 
+   const handleRemovePastedText = useCallback((id: string) => {
+     const target = pasteParts.find((item) => item.id === id);
+@@ -3044,6 +3065,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+   const contentRef = useRef<HTMLDivElement>(null);
+   const sessionScroll = useSessionScrollController({
+     selectedSessionId: props.sessionId,
++    isStreaming: chatStreaming,
+     renderedMessages,
+     containerRef: scrollRef,
+     contentRef,
+@@ -3061,6 +3083,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
+     const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+     const mod = isMac ? event.metaKey : event.ctrlKey;
+     if (!mod || event.shiftKey || event.altKey || event.key?.toLowerCase() !== "f") return;
++    if (event.composedPath().some((target) => target instanceof Element && target.closest("[data-artifact-panel]"))) return;
+ 
+     event.preventDefault();
+     if (resolveFindOwnerSessionId() === props.sessionId) {
+diff --git a/apps/app/tests/artifact-find.test.ts b/apps/app/tests/artifact-find.test.ts
+new file mode 100644
+index 00000000..445a2521
+--- /dev/null
++++ b/apps/app/tests/artifact-find.test.ts
+@@ -0,0 +1,52 @@
++import { expect, test } from "bun:test";
++import { GlobalRegistrator } from "@happy-dom/global-registrator";
++import { captureArtifactFindShortcut, findMatchOffsets, findTextRanges } from "../src/react-app/domains/session/artifacts/artifact-find";
++
++if (typeof globalThis.window === "undefined" || typeof globalThis.document === "undefined") {
++  GlobalRegistrator.register({ url: "http://localhost/" });
++}
++
++test("Find in the focused artifact panel preempts the chat Find shortcut", () => {
++  const panel = document.createElement("div");
++  panel.dataset.artifactPanel = "";
++  const target = document.createElement("button");
++  panel.append(target);
++  document.body.append(panel);
++  let artifactOpens = 0;
++  let chatOpens = 0;
++  const artifactShortcut = (event: KeyboardEvent) => {
++    captureArtifactFindShortcut(event, panel, true, () => { artifactOpens += 1; });
++  };
++  const chatShortcut = () => { chatOpens += 1; };
++  window.addEventListener("keydown", artifactShortcut, true);
++  window.addEventListener("keydown", chatShortcut);
++  try {
++    target.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true, cancelable: true }));
++    expect(artifactOpens).toBe(1);
++    expect(chatOpens).toBe(0);
++  } finally {
++    window.removeEventListener("keydown", artifactShortcut, true);
++    window.removeEventListener("keydown", chatShortcut);
++    panel.remove();
++  }
++});
++
++test("finds case-insensitive occurrences and reports their offsets", () => {
++  expect(findMatchOffsets("Intro TARGET, target. end", "target")).toEqual([
++    { start: 6, end: 12 },
++    { start: 14, end: 20 },
++  ]);
++});
++
++test("returns no matches for a blank query or absent text", () => {
++  expect(findMatchOffsets("some text", "   ")).toEqual([]);
++  expect(findMatchOffsets("some text", "missing")).toEqual([]);
++});
++
++test("creates a DOM range for text split across inline Markdown nodes", () => {
++  const root = document.createElement("div");
++  root.innerHTML = "<p>Keep <strong>searching</strong> here.</p><button>searching</button>";
++  const matches = findTextRanges(root, "keep searching");
++  expect(matches).toHaveLength(1);
++  expect(matches[0]?.toString()).toBe("Keep searching");
++});
+diff --git a/apps/app/tests/composer-focus-continuity.test.tsx b/apps/app/tests/composer-focus-continuity.test.tsx
+index f11d5510..0fe166ef 100644
+--- a/apps/app/tests/composer-focus-continuity.test.tsx
++++ b/apps/app/tests/composer-focus-continuity.test.tsx
+@@ -492,6 +492,18 @@ test("composer focus and optimistic sends preserve drafts through snapshots and
+       Object.defineProperty(input, "files", { configurable: true, value: [attachment.file] });
+       input.dispatchEvent(new Event("change", { bubbles: true }));
+     });
++    await waitFor(
++      () => container.querySelector('[data-lexical-editor="true"]')?.textContent?.includes("First hero message") ?? false,
++      "the attached prompt to remain in the composer",
++    );
++    await act(async () => {
++      const editor = container.querySelector<HTMLElement>('[data-lexical-editor="true"]');
++      if (!editor) throw new Error("Expected the prompt editor after attaching a file");
++      editor.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true }));
++    });
++    expect(window.getSelection()?.toString()).toContain("First hero message");
++    expect(window.getSelection()?.toString()).not.toContain("photo.png");
++    expect(container.querySelector<HTMLElement>("[data-attachment-id]")?.style.getPropertyValue("user-select")).toBe("none");
+     await act(async () => send());
+     expect(creations).toBe(2);
+     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toContain("First hero message");
+diff --git a/evals/specs/artifact-code-browser.e2e.test.ts b/evals/specs/artifact-code-browser.e2e.test.ts
+index 7227108b..192981f9 100644
+--- a/evals/specs/artifact-code-browser.e2e.test.ts
++++ b/evals/specs/artifact-code-browser.e2e.test.ts
+@@ -8,6 +8,27 @@ test("artifact editor renders code with Pierre and browses workspace files", asy
+   await user.click("Select tab: overflow-tab-12.md");
+   await user.see({ placeholder: "Search files" }, { timeoutMs: 30_000 });
+ 
++  await step("The file tree can be resized with the keyboard", async () => {
++    const before = await world.artifactTreeWidth();
++    expect(before).toBeGreaterThan(0);
++    expect(await world.focusArtifactTreeSeparator()).toBe(true);
++    await user.press("ArrowRight");
++    const after = await eventually(() => world.artifactTreeWidth(), {
++      within: 5_000,
++      until: (width) => width > before,
++    });
++    expect(after).toBeGreaterThan(before);
++    evidence.recordAssertionEvidence("The artifact tree has an accessible, working resize separator", `Tree width changed from ${before}px to ${after}px.`, true);
++  });
++
++  await step("Cmd/Ctrl+F in the artifact panel opens document Find, not chat Find", async () => {
++    await user.press(process.platform === "darwin" ? "Meta+F" : "Control+F");
++    await user.see({ placeholder: "Find in document" });
++    await user.notSee({ placeholder: "Find in conversation" });
++    await user.press("Escape");
++    await user.notSee({ placeholder: "Find in document" });
++  });
++
+   await step("A TypeScript file opens beside the workspace tree", async () => {
+     await user.type({ placeholder: "Search files" }, "omnirush-artifact-proof.ts");
+     await user.press("Tab");
+diff --git a/evals/specs/attachment-upload-loading-state.e2e.test.ts b/evals/specs/attachment-upload-loading-state.e2e.test.ts
+index a864814f..89fb6790 100644
+--- a/evals/specs/attachment-upload-loading-state.e2e.test.ts
++++ b/evals/specs/attachment-upload-loading-state.e2e.test.ts
+@@ -67,6 +67,31 @@ test(`attaching an image in ${entryPoint} retains the draft until the upload is
+   expect(attached.chipStatus).toBe("ready");
+   await user.screenshot();
+ 
++  await step("Select All highlights prompt text without selecting the attachment name", async () => {
++    await user.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
++    const selected = await probe.eval(() => {
++      const chip = document.querySelector<HTMLElement>("[data-attachment-id]");
++      return {
++        text: window.getSelection()?.toString() ?? "",
++        userSelect: chip ? getComputedStyle(chip).userSelect : "missing attachment chip",
++      };
++    });
++    if (!isRecord(selected)) throw new Error(`Selection result was invalid: ${JSON.stringify(selected)}`);
++    expect(selected.text).toContain("Describe the attached image.");
++    expect(selected.text).not.toContain(attachmentName);
++    expect(selected.userSelect).toBe("none");
++  });
++
++  await step("the native Select All editing command excludes attachment names too", async () => {
++    const selected = await probe.eval(() => {
++      document.querySelector<HTMLElement>('[contenteditable="true"]')?.focus();
++      document.execCommand("selectAll");
++      return window.getSelection()?.toString() ?? "";
++    });
++    expect(selected).toContain("Describe the attached image.");
++    expect(selected).not.toContain(attachmentName);
++  });
++
+   await step("paste a video alongside the image", async () => {
+     expect(await seed.evalIn(world.app, () => {
+       const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');

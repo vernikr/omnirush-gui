@@ -44,3 +44,28 @@ A run is safe to repeat. An image or WSL asset that already exists with the same
 ## Desktop release
 
 Push a signed `v<version>` tag on `main`. `release-desktop.yml` checks the sandbox pins first, then builds, signs and publishes.
+
+### Intel-only desktop release builds
+
+To keep GitHub Actions usage low, the fork's release matrix has one leg:
+Intel macOS on `macos-15-intel` (`--mac --x64`). It builds natively for x86_64,
+so electron-builder rebuilds native modules for Intel and `prepare-sidecar`
+fetches `opencode-x86_64-apple-darwin`. The leg writes the standard
+`latest-mac.yml` update manifest directly; no architecture-feed merge job is
+needed. New releases do not build Apple Silicon, Windows, or Linux installers;
+older releases keep their original assets.
+
+`macos-15-intel` is GitHub's last x86_64 hosted image and is scheduled to be
+retired in **August 2027**. After that an Intel build needs a self-hosted Intel
+runner or a universal package.
+
+### Building without an Apple Developer ID
+
+`MAC_SIGNING` is derived from whether the `MAC_CSC_LINK` secret exists. Without
+it the release skips `macos-signing-env.sh`, the notarization step and
+`verify-macos-signing.sh`, and drops `-c.mac.forceCodeSigning=true`. The app is
+then ad-hoc signed: updates install through the DMG (`manual-dmg`), and macOS
+shows the unverified-developer warning on first open (see
+`docs/updates.md`). Add `MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPLE_API_KEY`,
+`APPLE_API_KEY_ID` and `APPLE_API_ISSUER` to turn signing and notarization back
+on; no workflow change is needed.

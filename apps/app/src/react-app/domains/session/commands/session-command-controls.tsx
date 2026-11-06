@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useEffect, useState } from "react";
-import { FileDiff, Gauge, Redo2, Undo2 } from "lucide-react";
+import { Download, FileDiff, Gauge, Redo2, Undo2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/sonner";
@@ -20,6 +20,7 @@ import { useSessionModelSelection } from "@/react-app/domains/session/surface/se
 import type { ProviderCatalog } from "@/react-app/domains/session/surface/use-model-behavior";
 import { ChangesPanel } from "./changes-panel";
 import { contextUse, sandboxLabel, uploadsLine } from "./context-usage";
+import { useExportSessionMarkdown } from "./export-session-markdown";
 import { useSessionCommandsStore } from "./session-commands-store";
 import { chatUndoKey } from "./undo-key";
 import { useCachedQueryData, useUndoRedo, visibleMessages, type SessionCommandTarget } from "./use-session-commands";
@@ -52,16 +53,24 @@ function isMac() {
  */
 export function SessionCommandControls(props: SessionCommandControlsProps) {
   const commands = useUndoRedo(props);
+  const { exporting: exportingMarkdown, exportMarkdown } = useExportSessionMarkdown(props);
   const openChanges = useSessionCommandsStore((state) => state.openChanges);
   const { undo, redo, canUndo, canRedo } = commands;
 
   const running = commands.running;
-  // The same undo / redo for the header menu (narrow windows hide these buttons).
+  // The same undo / redo / export for the header menu (narrow windows hide these buttons).
   const setHeaderActions = useSessionCommandsStore((state) => state.setHeaderActions);
   useEffect(() => {
-    setHeaderActions(props.sessionId, { canUndo, canRedo, undo, redo });
+    setHeaderActions(props.sessionId, {
+      canUndo,
+      canRedo,
+      undo,
+      redo,
+      exportMarkdown: () => exportMarkdown(),
+      exportingMarkdown,
+    });
     return () => setHeaderActions(props.sessionId, null);
-  }, [canRedo, canUndo, props.sessionId, redo, setHeaderActions, undo]);
+  }, [canRedo, canUndo, exportMarkdown, exportingMarkdown, props.sessionId, redo, setHeaderActions, undo]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const action = chatUndoKey(event, isMac(), props.sessionId);
@@ -142,6 +151,24 @@ export function SessionCommandControls(props: SessionCommandControlsProps) {
           }
         />
         <TooltipContent>{t("session.changes")}</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className={iconButton}
+              aria-label={t("session.export_markdown")}
+              data-testid="session-export-markdown"
+              disabled={exportingMarkdown}
+              onClick={() => void exportMarkdown()}
+            >
+              <Download size={16} className={cn(exportingMarkdown && "animate-pulse")} />
+            </Button>
+          }
+        />
+        <TooltipContent>{t("session.export_markdown")}</TooltipContent>
       </Tooltip>
       <StatusPopover {...props} />
       <StatusDialog {...props} />

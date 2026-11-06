@@ -34,7 +34,7 @@ import {
 } from "./recovery.mjs";
 
 const fakeApp = { getPath: (key) => (key === "home" ? "/Users/test" : `/Users/test/${key}`) };
-const STABLE_FEED = "https://github.com/omnirush-ai/omnirush-gui/releases/latest/download";
+const STABLE_FEED = "https://github.com/vernikr/omnirush-gui/releases/latest/download";
 const ALPHA_FEED = "https://updates.example.com/alpha";
 
 // Unpackaged builds resolve their version from package.json, so release bumps
@@ -160,7 +160,7 @@ describe("targetedStableUpdaterFeed", () => {
   it("builds a fixed GitHub release feed from a strict stable version", () => {
     assert.equal(
       targetedStableUpdaterFeed("0.17.22", "0.17.23"),
-      "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.23",
+      "https://github.com/vernikr/omnirush-gui/releases/download/v0.17.23",
     );
   });
 
@@ -189,7 +189,7 @@ describe("targetedStableUpdaterFeed", () => {
   it("allows only an explicit exact recovery downgrade", () => {
     assert.equal(
       targetedStableUpdaterFeed("0.17.23", "0.17.22", true),
-      "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.22",
+      "https://github.com/vernikr/omnirush-gui/releases/download/v0.17.22",
     );
     assert.throws(
       () => targetedStableUpdaterFeed("0.17.23", "0.17.23", true),
@@ -278,7 +278,7 @@ describe("recovery metadata and candidates", () => {
       platform: "darwin",
       arch: "arm64",
       distribution: "public",
-      url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3/omnirush-mac-arm64-1.2.3.dmg",
+      url: "https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3/omnirush-mac-arm64-1.2.3.dmg",
       sha512: "verified",
     });
     assert.equal(selectRecoveryArtifact(files, {
@@ -299,7 +299,7 @@ describe("recovery metadata and candidates", () => {
       const files = [{ url: fileName, sha512: `${distribution}-checksum` }];
       assert.equal(selectRecoveryArtifact(files, {
         version: "1.2.3", platform: "darwin", arch: "arm64", distribution,
-      })?.url, `https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3/${fileName}`);
+      })?.url, `https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3/${fileName}`);
       for (const otherDistribution of Object.keys(artifacts).filter((flavor) => flavor !== distribution)) {
         assert.equal(selectRecoveryArtifact(files, {
           version: "1.2.3", platform: "darwin", arch: "arm64", distribution: otherDistribution,
@@ -342,7 +342,7 @@ releaseDate: '2026-08-11T00:00:00.000Z'
       await assert.rejects(
         cacheVerifiedRecoveryArtifact({
           app: { getPath: () => userData },
-          artifact: { url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3/omnirush.dmg", sha512: "invalid" },
+          artifact: { url: "https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3/omnirush.dmg", sha512: "invalid" },
           fetchArtifact: async () => new Response("tampered"),
         }),
         /checksum did not match/,
@@ -361,7 +361,7 @@ releaseDate: '2026-08-11T00:00:00.000Z'
       platform: "darwin",
       arch: "arm64",
       distribution: "public",
-      url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3/omnirush-mac-arm64-1.2.3.dmg",
+      url: "https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3/omnirush-mac-arm64-1.2.3.dmg",
       sha512: createHash("sha512").update(bytes).digest("base64"),
     };
     try {
@@ -397,7 +397,7 @@ releaseDate: '2026-08-11T00:00:00.000Z'
       platform: "darwin",
       arch: "arm64",
       distribution: "public",
-      url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.18.18/omnirush-mac-arm64-0.18.18.dmg",
+      url: "https://github.com/vernikr/omnirush-gui/releases/download/v0.18.18/omnirush-mac-arm64-0.18.18.dmg",
       sha512: createHash("sha512").update(bytes).digest("base64"),
     };
     const expected = { platform: "darwin", arch: "arm64", distribution: "public" };
@@ -429,7 +429,7 @@ releaseDate: '2026-08-11T00:00:00.000Z'
       platform: "darwin",
       arch: "arm64",
       distribution: "public",
-      url: "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.9.0/omnirush-mac-arm64-1.9.0.dmg",
+      url: "https://github.com/vernikr/omnirush-gui/releases/download/v1.9.0/omnirush-mac-arm64-1.9.0.dmg",
       sha512: createHash("sha512").update(bytes).digest("base64"),
     };
     const handlers = new Map();
@@ -712,7 +712,7 @@ describe("macOS code signature detection", () => {
   });
 });
 
-const RELEASE_123 = "https://github.com/omnirush-ai/omnirush-gui/releases/download/v1.2.3";
+const RELEASE_123 = "https://github.com/vernikr/omnirush-gui/releases/download/v1.2.3";
 
 describe("manual installer artifacts", () => {
   const files = [
@@ -791,7 +791,7 @@ describe("macOS manual installer fallback", () => {
       assert.equal(checked.installMode, "manual-dmg");
 
       assert.deepEqual(await download(), { ok: true, mode: "manual-dmg" });
-      assert.deepEqual(fetched, ["https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.1/omnirush-mac-arm64-0.17.1.dmg"]);
+      assert.deepEqual(fetched, ["https://github.com/vernikr/omnirush-gui/releases/download/v0.17.1/omnirush-mac-arm64-0.17.1.dmg"]);
       assert.deepEqual(calls, [], "electron-updater's zip download must not run");
       const progress = sent.filter((event) => event.channel === "omnirush:updater:download-progress");
       assert.equal(progress.at(-1)?.data.transferred, bytes.length);
@@ -929,7 +929,7 @@ describe("release channel changes", () => {
       // Windows differential download: single ranges (GitHub answers multi-range
       // requests with 501) and the installed version's blockmap from its own release.
       assert.equal(feeds.at(-1)?.useMultipleRangeRequest, false);
-      assert.equal(updater.previousBlockmapBaseUrlOverride, "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.0");
+      assert.equal(updater.previousBlockmapBaseUrlOverride, "https://github.com/vernikr/omnirush-gui/releases/download/v0.17.0");
 
       const selected = await setChannel(null, "alpha");
       assert.equal(selected.channel, "stable");
@@ -1342,7 +1342,7 @@ describe("dev update feed override", () => {
   });
 });
 
-const RELEASE_0171 = "https://github.com/omnirush-ai/omnirush-gui/releases/download/v0.17.1";
+const RELEASE_0171 = "https://github.com/vernikr/omnirush-gui/releases/download/v0.17.1";
 const sha512Of = (bytes) => createHash("sha512").update(bytes).digest("base64");
 const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 
